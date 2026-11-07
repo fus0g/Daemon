@@ -1097,7 +1097,8 @@ private:
     void layoutPane(Pane& p, bool active, float promptH) {
         const float s = S(), uh = uiH();
         const float tabH = std::round(uh + 20 * s);
-        const float crumbH = (p.cur && !p.cur->path.empty()) ? std::round(uh + 8 * s) : 0;
+        // A file directly in the project root would only repeat its tab title, so it gets no breadcrumb row.
+        const float crumbH = (p.cur && !p.cur->path.empty() && crumbParts(*p.cur).size() > 1) ? std::round(uh + 8 * s) : 0;
         const Rect& r = p.rect;
         p.tabsR = {r.x, r.y, r.w, std::min(tabH, r.h)};
         p.crumbs = {r.x, p.tabsR.bottom(), r.w, std::min(crumbH, std::max(0.0f, r.h - tabH))};
@@ -1116,14 +1117,14 @@ private:
         syncTabs(p);
         p.draw.clear();
         p.hits.clear();
-        float x = p.tabsR.x + 8 * s;
+        float x = 8 * s;   // offsets are relative to the strip, so tabs move rigidly with their pane
         const float gap = 2 * s;
         int idx = 0;
         for (auto& e : p.anim) {
             e.tx = x;
             if (e.x < -0.5f) e.x = x;
             const float w = std::max(0.0f, e.w);
-            Rect t{e.x, p.tabsR.y + 5 * s, w, p.tabsR.h - 5 * s};
+            Rect t{p.tabsR.x + e.x, p.tabsR.y + 5 * s, w, p.tabsR.h - 5 * s};
             Rect c{t.right() - 28 * s, t.y, 24 * s, t.h};
             const float alpha = e.target > 0 ? std::clamp(w / e.target, 0.0f, 1.0f) : std::clamp(w / (96 * s), 0.0f, 1.0f);
             p.draw.push_back({t, c, e.ghost ? -1 : idx, e.name, alpha, e.doc});
@@ -3687,12 +3688,8 @@ private:
     }
 
     // Breadcrumbs: project-relative path of the active file.
-    void drawCrumbs() {
-        if (L_.crumbs.h <= 0 || docs_.empty()) return;
-        const Document& d = doc();
-        const Rect& c = L_.crumbs;
-        const float s = S();
-        fill(c, theme::editorBg);
+    // Path segments shown in the breadcrumb row (project-relative when a folder is open).
+    std::vector<std::string> crumbParts(const Document& d) const {
         fs::path rel = d.path;
         if (explorer_.isOpen()) {
             auto r = fs::path(d.path).lexically_relative(explorer_.rootPath());
@@ -3701,6 +3698,16 @@ private:
         std::vector<std::string> parts;
         for (const auto& p : rel) if (p != "/" && !p.empty()) parts.push_back(p.string());
         if (parts.size() > 4) parts.erase(parts.begin(), parts.end() - 4);
+        return parts;
+    }
+
+    void drawCrumbs() {
+        if (L_.crumbs.h <= 0 || docs_.empty()) return;
+        const Document& d = doc();
+        const Rect& c = L_.crumbs;
+        const float s = S();
+        fill(c, theme::editorBg);
+        const std::vector<std::string> parts = crumbParts(d);
         float x = c.x + 16 * s;
         const int cs = std::max(8, static_cast<int>(std::round(iconSize() * 0.55f)));
         for (std::size_t i = 0; i < parts.size(); ++i) {
