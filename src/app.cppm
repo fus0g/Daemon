@@ -464,6 +464,7 @@ private:
         if (!message_.empty()) consider(messageUntil_);
         if (buildEof_ || runEof_) consider(Clock::now() + std::chrono::milliseconds(30));
         if (lspFlushAt_) consider(*lspFlushAt_);
+        if (lsp_ && cmakeOpen_) consider(nextDbCheck_);
         if (hover_.pending) consider(hover_.due);
         return t;
     }
@@ -475,6 +476,14 @@ private:
             dirty_ = true;
         }
         if (!message_.empty() && now >= messageUntil_) { message_.clear(); dirty_ = true; }
+        if (lsp_ && cmakeOpen_ && now >= nextDbCheck_) {
+            // The compile database changes when CMake reconfigures (from here, CLion, or the command line):
+            // restart clangd so it picks up the new flags / files.
+            nextDbCheck_ = now + std::chrono::seconds(2);
+            std::error_code ec;
+            const auto stamp = fs::last_write_time(compileCommands(profile()), ec);
+            if (!ec && stamp != dbStamp_ && !buildProc_) { restartLsp(); }
+        }
 
         layout();
         if (!docs_.empty()) {
@@ -968,7 +977,17 @@ private:
         clangdModules_ = false;
         if (cmakeOpen_ && fs::exists(compileCommands(profile()))) {
             // GCC-style module builds get a Clang-flavoured database so clangd can build BMIs (import std; import foo;).
-            if (auto db = prepareClangdDb(profile().dir)) {
+            {
+                std::error_code ec;
+                dbStamp_ = fs::last_write_time(compileCommands(profile()), ec);
+            }
+            auto db = prepareClangdDb(profile().dir);
+            if (std::getenv("IDE_LSP_TRACE")) std::println(std::cerr, "clangd db: {} derived={}", db ? db->dir.string() : "none", db && db->derived);
+            if (db) {
+                std::error_code ec;
+                fs::create_directories(profile().dir / ".daemon", ec);
+                std::ofstream(profile().dir / ".daemon" / "clangd-start.log", std::ios::app)
+                    << "clangd db: " << db->dir.string() << " derived=" << db->derived << " sources=" << db->sources << "\n";
                 argv.push_back("--compile-commands-dir=" + profile().dir.string()); (void)db;
                 clangdModules_ = db->derived;
             } else {
@@ -3546,6 +3565,8 @@ private:
     bool panelOpen_ = false, panelDrag_ = false;
     int panelTab_ = 0;
     int compReq_ = -1;
+    fs::file_time_type dbStamp_{};
+    Clock::time_point nextDbCheck_{};
     CMakeKnowledge cmakeKb_;
     std::vector<ModuleDecl> modules_;
     bool clangdModules_ = false;

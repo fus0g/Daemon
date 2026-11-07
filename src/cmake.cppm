@@ -617,7 +617,10 @@ inline std::optional<ClangdDb> prepareClangdDb(const fs::path& buildDir) {
 
     bool gccModules = false;
     for (const auto& e : *parsed->array())
-        if (usesGccModules(entryArgs(e)) || isModuleInterfaceExt(e["file"].str())) { gccModules = true; break; }
+        {
+            const auto a = entryArgs(e);
+            if (usesGccModules(a) || !hasStdFlag(a) || isModuleInterfaceExt(e["file"].str())) { gccModules = true; break; }
+        }
     if (!gccModules) return ClangdDb{buildDir, false, static_cast<int>(parsed->array()->size())};
 
     // Up to date?
