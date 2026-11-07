@@ -93,3 +93,14 @@ Drag a tab to reorder it within its strip, or drop it on another pane's strip or
 left/right/top/bottom edge of a pane splits the editor and moves the tab into the new pane; the pane borders are
 draggable. Esc cancels a drag, and a pane disappears when its last tab is closed or dragged out. Each file lives in
 one pane at a time.
+
+## Projects: create, open, recent
+
+With no arguments Daemon starts on a welcome screen (also reachable by clicking the logo or Ctrl+Shift+P):
+
+- **New Project** (Ctrl+Shift+N): pick a template (C++ executable, C++20 modules executable, static library, C executable,
+  empty CMake project), a name, a location and a language standard, optionally with `git init`. Daemon writes a
+  `CMakeLists.txt` and sources, opens the folder, configures CMake and opens the main file.
+- **Open Folder** (Ctrl+Shift+O): an in-app folder browser with places, a path field, hidden-folder toggle and a
+  "CMake" badge on folders that contain a `CMakeLists.txt`.
+- **Recent projects** are kept in `$XDG_CONFIG_HOME/daemon/state.json` (default `~/.config/daemon/state.json`).

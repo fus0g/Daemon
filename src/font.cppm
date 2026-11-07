@@ -63,6 +63,7 @@ public:
             if (auto r2 = loadFaces(ui_, ui, false); !r2) return r2;
         }
         uiFontPath_ = ui.front().string();
+        (void)loadFaces(title_, ui, false);   // same faces, rendered larger, for headings
 
         // ---- Material Design Icons font (Apache-2.0): all file / folder / toolbar / completion icons
         std::vector<fs::path> remix;
@@ -83,6 +84,8 @@ public:
     void setSizes(float codePx, float uiPx) {
         configure(code_, codePx, true);
         configure(ui_, uiPx, false);
+        if (!title_.faces.empty()) configure(title_, uiPx * 1.85f, false);
+        titleCache_.clear();
         cache_.clear();
         uiCache_.clear();
         images_.clear();
@@ -154,6 +157,24 @@ public:
             }
         }
         return images_.emplace(key, g).first->second;
+    }
+
+    // ---- headings: the UI font at ~1.85x
+    const Glyph& titleGlyph(char32_t cp) {
+        if (title_.faces.empty()) return uiGlyph(cp);
+        if (auto it = titleCache_.find(cp); it != titleCache_.end()) return it->second;
+        return titleCache_.emplace(cp, rasterize(title_, cp)).first->second;
+    }
+    float titleLineHeight() const { return title_.faces.empty() ? ui_.lineH : title_.lineH; }
+    float titleBaseline() const { return title_.faces.empty() ? ui_.baseline : title_.baseline; }
+    float titleWidth(std::string_view s) {
+        float w = 0;
+        for (std::size_t i = 0; i < s.size();) {
+            const char32_t cp = decodeUtf8(s, i);
+            if (cp < 0x20 || cp == 0x7f) continue;
+            w += titleGlyph(cp).advance;
+        }
+        return w;
     }
 
     // Kerning between two UI glyphs of the same face, in pixels.
@@ -389,9 +410,9 @@ private:
         return g;
     }
 
-    Role code_, ui_, icons_;
+    Role code_, ui_, icons_, title_;
     float cellW_ = 9;
-    std::unordered_map<char32_t, Glyph> cache_, uiCache_;
+    std::unordered_map<char32_t, Glyph> cache_, uiCache_, titleCache_;
     std::unordered_map<std::uint64_t, Glyph> images_;
     std::vector<std::uint8_t> atlas_;
     std::string fontPath_, uiFontPath_;

@@ -91,6 +91,7 @@ target_sources(ide_core PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
   src/json.cppm
   src/process.cppm
   src/cmake.cppm
+  src/project.cppm
   src/lsp.cppm
   src/text.cppm
   src/syntax.cppm

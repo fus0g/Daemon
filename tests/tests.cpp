@@ -11,6 +11,7 @@ import ide.icons;
 import ide.json;
 import ide.process;
 import ide.cmake;
+import ide.project;
 import ide.lsp;
 import ide.font;
 import ide.draw;
@@ -504,7 +505,55 @@ static void testModules() {
     fs::remove_all(dir);
 }
 
+static void testProjects() {
+    namespace fs = std::filesystem;
+    CHECK(validateProjectName("my-app_2.0").empty());
+    CHECK(!validateProjectName("").empty() && !validateProjectName("bad name").empty() && !validateProjectName(".hidden").empty());
+    const fs::path root = fs::temp_directory_path() / "daemon-project-test";
+    fs::remove_all(root);
+    for (const auto& t : projectTemplates()) {
+        NewProjectSpec spec;
+        spec.templateId = t.id;
+        spec.name = "demo-" + t.id;
+        spec.parent = root;
+        spec.initGit = false;
+        auto r = createProject(spec);
+        CHECK(r.has_value());
+        if (!r) continue;
+        CHECK(fs::exists(r->dir / "CMakeLists.txt") && fs::exists(r->mainFile));
+        CHECK(!createProject(spec).has_value());  // refuses a non-empty directory
+    }
+    {   // the modules template builds with a real CMake + compiler when available
+        const fs::path dir = root / "demo-cpp-modules";
+        if (findExecutable("cmake") && findExecutable("ninja")) {
+            ProcessOptions o;
+            o.argv = {"cmake", "-S", dir.string(), "-B", (dir / "b").string(), "-G", "Ninja"};
+            auto cfg = Process::runCapture(o, 60000);
+            CHECK(cfg.exitCode == 0);
+            if (cfg.exitCode == 0) {
+                o.argv = {"cmake", "--build", (dir / "b").string()};
+                CHECK(Process::runCapture(o, 120000).exitCode == 0);
+            }
+        }
+    }
+    {   // recents: newest first, de-duplicated, capped
+        DaemonState st;
+        for (int i = 0; i < 20; ++i) addRecent(st, "/p/" + std::to_string(i));
+        addRecent(st, "/p/15");
+        CHECK(st.recent.size() == 12 && st.recent.front() == "/p/15");
+        CHECK(std::ranges::count(st.recent, std::string("/p/15")) == 1);
+        setenv("XDG_CONFIG_HOME", (root / "cfg").c_str(), 1);
+        st.lastLocation = "/somewhere";
+        saveState(st);
+        const auto back = loadState();
+        CHECK(back.recent == st.recent && back.lastLocation == "/somewhere");
+        unsetenv("XDG_CONFIG_HOME");
+    }
+    fs::remove_all(root);
+}
+
 int main() {
+    testProjects();
     testModules();
     testCMakeCompletion();
     testJson();
