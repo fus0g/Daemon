@@ -758,17 +758,20 @@ private:
 
     // ============================================================ activity bar (right edge)
 
-    // Buttons sit in a vertical pill: square cells, a small gap, padding inside the outline.
-    float activityCell() const { return std::round(L_.activity.w - 18 * S()); }
-    Rect activityPill() const {
+    // Two vertical pills: the Explorer toggle on its own (it is a separate window), then Output / Problems / Git.
+    float activityCell() const { return std::round(L_.activity.w - 22 * S()); }
+    Rect activityPill(int group) const {
         const Rect& a = L_.activity;
-        const float bs = activityCell(), pad = std::round(3 * S()), gap = std::round(2 * S());
-        return {a.x + (a.w - bs - 2 * pad) / 2, a.y + std::round(6 * S()), bs + 2 * pad, 4 * bs + 3 * gap + 2 * pad};
+        const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S()), between = std::round(10 * S());
+        const float w = bs + 2 * pad, x = a.x + (a.w - w) / 2, y0 = a.y + std::round(6 * S());
+        const float h0 = bs + 2 * pad;
+        if (group == 0) return {x, y0, w, h0};
+        return {x, y0 + h0 + between, w, 3 * bs + 2 * gap + 2 * pad};
     }
     Rect activityRect(int i) const {
-        const Rect pill = activityPill();
-        const float bs = activityCell(), pad = std::round(3 * S()), gap = std::round(2 * S());
-        return {pill.x + pad, pill.y + pad + static_cast<float>(i) * (bs + gap), bs, bs};
+        const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S());
+        const Rect pill = activityPill(i == 0 ? 0 : 1);
+        return {pill.x + pad, pill.y + pad + static_cast<float>(i == 0 ? 0 : i - 1) * (bs + gap), bs, bs};
     }
     int activityAt(float x, float y) const {
         if (!L_.activity.contains(x, y)) return 0;
@@ -807,18 +810,20 @@ private:
         const Rect& a = L_.activity;
         if (a.w <= 0) return;
         const float s = S(), hair = std::max(1.0f, std::round(0.8f * s));
-        const int ip = std::max(14, static_cast<int>(std::round(activityCell() * 0.7f)));
+        const int ip = std::max(16, static_cast<int>(std::round(activityCell() * 0.66f)));
         static constexpr std::array<ToolIcon, 3> icons = {ToolIcon::Files, ToolIcon::Terminal, ToolIcon::Warning};
         const bool hasErrors = !problems_.empty() ||
                                std::ranges::any_of(shownProblems_, [](const Problem& p) { return p.severity == Severity::Error; });
-        const Rect pill = activityPill();
-        fill(pill, Color::rgb(0xffffff, 34), pill.w / 2);
-        fill(pill.x + hair, pill.y + hair, pill.w - 2 * hair, pill.h - 2 * hair, Color::rgb(0x0d0e11), pill.w / 2 - hair);
+        for (int g = 0; g < 2; ++g) {   // accent-colored outline, dark fill
+            const Rect pill = activityPill(g);
+            fill(pill, theme::accent, pill.w / 2);
+            fill(pill.x + hair, pill.y + hair, pill.w - 2 * hair, pill.h - 2 * hair, Color::rgb(0x0d0e11), pill.w / 2 - hair);
+        }
         for (int i = 0; i < 4; ++i) {
             const Rect r = activityRect(i);
             const bool active = activityActive(i), hot = hoverAct_ == i + 1;
-            if (active) fill(r, Color::rgb(0xffffff, 40), r.w / 2);
-            else if (hot) fill(r, Color::rgb(0xffffff, 22), r.w / 2);
+            if (active) fill(r, theme::accent.alpha(120), r.w / 2);
+            else if (hot) fill(r, Color::rgb(0xffffff, 26), r.w / 2);
             const float ix = std::round(r.x + (r.w - static_cast<float>(ip)) / 2), iy = std::round(r.y + (r.h - static_cast<float>(ip)) / 2);
             const Color white = Color::rgb(0xffffff);
             if (i == 3) Icons::glyph(dl_, font_, ix, iy, ip, 0xF062C, white);   // source-branch
@@ -1023,7 +1028,7 @@ private:
         const float crumbH = (!docs_.empty() && !doc().path.empty()) ? std::round(uh + 8 * s) : 0;
         const float statusH = std::round(uh + 10 * s);
         const float m = std::round(5 * s);     // gap between the frame and the islands
-        const float act = std::round(44 * s);  // activity bar width
+        const float act = std::round(58 * s);  // activity bar width
         L_.rowH = std::round(uh + 14 * s);
         L_.radius = std::round(12 * s);
         const float promptH = prompt_.kind == PromptKind::None ? 0 : L_.rowH * static_cast<float>(prompt_.fields.size());
