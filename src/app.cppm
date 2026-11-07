@@ -759,7 +759,7 @@ private:
     // ============================================================ activity bar (right edge)
 
     // Two vertical pills: the right-hand island's views (Explorer, Git), then the bottom panel's (Output, Problems).
-    float activityCell() const { return std::round(L_.activity.w - 22 * S()); }
+    float activityCell() const { return std::round(L_.activity.w - 20 * S()); }
     Rect activityPill(int group) const {
         const Rect& a = L_.activity;
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S()), between = std::round(10 * S());
@@ -812,7 +812,7 @@ private:
         const Rect& a = L_.activity;
         if (a.w <= 0) return;
         const float s = S(), hair = std::max(1.0f, std::round(0.8f * s));
-        const int ip = std::max(16, static_cast<int>(std::round(activityCell() * 0.66f)));
+        const int ip = std::max(15, static_cast<int>(std::round(activityCell() * 0.64f)));
         const bool hasErrors = !problems_.empty() ||
                                std::ranges::any_of(shownProblems_, [](const Problem& p) { return p.severity == Severity::Error; });
         for (int g = 0; g < 2; ++g) {   // accent-colored outline, dark fill
@@ -826,12 +826,9 @@ private:
             if (hot && !active) fill(r, Color::rgb(0xffffff, 26), r.w / 2);
             const float ix = std::round(r.x + (r.w - static_cast<float>(ip)) / 2), iy = std::round(r.y + (r.h - static_cast<float>(ip)) / 2);
             const Color col = active ? theme::accent.mix(Color::rgb(0xffffff), 0.14f) : Color::rgb(0xffffff);   // the active view's icon takes the accent
-            switch (i) {
-                case 0: Icons::tool(dl_, font_, ix, iy, ip, ToolIcon::Files, col); break;
-                case 1: Icons::glyph(dl_, font_, ix, iy, ip, 0xF062C, col); break;   // source-branch
-                case 2: Icons::tool(dl_, font_, ix, iy, ip, ToolIcon::Terminal, col); break;
-                default: Icons::tool(dl_, font_, ix, iy, ip, ToolIcon::Warning, col); break;
-            }
+            // Filled Material Design icons: folder, git, console, alert.
+            static constexpr std::array<char32_t, 4> glyphs = {0xF024B, 0xF02A2, 0xF018D, 0xF0026};
+            Icons::glyph(dl_, font_, ix, iy, ip, glyphs[static_cast<std::size_t>(i)], col);
             if (i == 3 && hasErrors) {
                 const float d = std::round(7 * s);
                 fill(ix + static_cast<float>(ip) - d * 0.6f, iy - d * 0.2f, d, d, theme::danger, d / 2);
@@ -1032,7 +1029,7 @@ private:
         const float crumbH = (!docs_.empty() && !doc().path.empty()) ? std::round(uh + 8 * s) : 0;
         const float statusH = std::round(uh + 10 * s);
         const float m = std::round(5 * s);     // gap between the frame and the islands
-        const float act = std::round(58 * s);  // activity bar width
+        const float act = std::round(50 * s);  // activity bar width
         L_.rowH = std::round(uh + 14 * s);
         L_.radius = std::round(12 * s);
         const float promptH = prompt_.kind == PromptKind::None ? 0 : L_.rowH * static_cast<float>(prompt_.fields.size());
