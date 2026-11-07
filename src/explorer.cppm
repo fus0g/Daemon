@@ -1,4 +1,8 @@
 // ide.explorer — the file-tree model behind the sidebar (no rendering, no windowing).
+module;
+#include <sys/inotify.h>
+#include <unistd.h>
+#include <cerrno>
 export module ide.explorer;
 import std;
 
@@ -109,7 +113,20 @@ public:
 
     void markDirty() { dirty_ = true; }
 
+    // Every directory whose listing is currently cached (these are the ones that can go stale).
+    std::vector<fs::path> loadedDirs() const {
+        std::vector<fs::path> out;
+        if (root_) gather(*root_, out);
+        return out;
+    }
+
 private:
+    static void gather(const FileNode& n, std::vector<fs::path>& out) {
+        if (!n.dir || !n.loaded) return;
+        out.push_back(n.path);
+        for (const auto& k : n.kids) gather(*k, out);
+    }
+
     static std::string lower(std::string s) {
         std::ranges::transform(s, s.begin(), [](unsigned char c) { return std::tolower(c); });
         return s;
@@ -175,6 +192,58 @@ private:
     bool dirty_ = true;
 };
 
+
+// Watches a set of directories with inotify so the tree and open documents follow changes made by other programs.
+class DirWatcher {
+public:
+    DirWatcher() : fd_(::inotify_init1(IN_NONBLOCK | IN_CLOEXEC)) {}
+    ~DirWatcher() { if (fd_ >= 0) ::close(fd_); }
+    DirWatcher(const DirWatcher&) = delete;
+    DirWatcher& operator=(const DirWatcher&) = delete;
+
+    int fd() const { return fd_; }
+
+    // Makes the watched set equal to `dirs` (adds new ones, drops the others).
+    void sync(const std::set<std::string>& dirs) {
+        if (fd_ < 0) return;
+        for (auto it = byPath_.begin(); it != byPath_.end();) {
+            if (dirs.contains(it->first)) { ++it; continue; }
+            ::inotify_rm_watch(fd_, it->second);
+            it = byPath_.erase(it);
+        }
+        for (const auto& d : dirs) {
+            if (byPath_.contains(d) || byPath_.size() >= 4096) continue;
+            const int wd = ::inotify_add_watch(fd_, d.c_str(), IN_CREATE | IN_DELETE | IN_MODIFY | IN_CLOSE_WRITE | IN_MOVED_FROM | IN_MOVED_TO |
+                                                               IN_DELETE_SELF | IN_MOVE_SELF | IN_ATTRIB);
+            if (wd >= 0) byPath_[d] = wd;
+        }
+    }
+
+    // Reads pending events; true when anything happened. Watches that died with their directory are forgotten.
+    bool drain() {
+        if (fd_ < 0) return false;
+        alignas(inotify_event) char buf[16384];
+        bool any = false;
+        while (true) {
+            const ssize_t n = ::read(fd_, buf, sizeof buf);
+            if (n <= 0) break;
+            for (ssize_t off = 0; off < n;) {
+                const auto* ev = reinterpret_cast<const inotify_event*>(buf + off);
+                off += static_cast<ssize_t>(sizeof(inotify_event) + ev->len);
+                if (ev->mask & IN_IGNORED) {
+                    for (auto it = byPath_.begin(); it != byPath_.end(); ++it)
+                        if (it->second == ev->wd) { byPath_.erase(it); break; }
+                }
+                any = true;
+            }
+        }
+        return any;
+    }
+
+private:
+    int fd_ = -1;
+    std::map<std::string, int> byPath_;
+};
 
 // ---------------------------------------------------------------------------------------------
 // File operations used by the explorer. Plain functions so they can be unit-tested headless.

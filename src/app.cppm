@@ -105,6 +105,7 @@ public:
         win_.onPointerMove = [this](float x, float y) { onPointerMove(x, y); };
         win_.onPointerButton = [this](Button b, bool p, float x, float y) { onPointerButton(b, p, x, y); };
         win_.onScroll = [this](float dx, float dy, int sx, int sy) { onScroll(dx, dy, sx, sy); };
+        win_.watch(fsw_.fd(), [this] { if (fsw_.drain()) { fsPending_ = true; fsEventAt_ = Clock::now(); dirty_ = true; } });
         win_.onFocus = [this](bool f) { focused_ = f; resetCaret(); dirty_ = true; if (f) gitNextPoll_ = {}; };
         win_.onClose = [this] { requestQuit(); };
         if (auto r = win_.create("Daemon", 1280, 800); !r) return r;
@@ -468,6 +469,54 @@ private:
 
     // ---- folder / sidebar
 
+    // ---- changes made outside the IDE (inotify): the explorer, open documents and git state follow along
+
+    DirWatcher fsw_;
+    bool fsPending_ = false;
+    Clock::time_point fsEventAt_{}, fsSyncAt_{};
+
+    void syncFsWatches() {
+        std::set<std::string> dirs;
+        if (explorer_.isOpen()) for (const auto& d : explorer_.loadedDirs()) dirs.insert(d.string());
+        for (const auto& d : docs_) if (!d->path.empty()) dirs.insert(fs::path(d->path).parent_path().string());
+        fsw_.sync(dirs);
+    }
+
+    void handleFsChanges() {
+        if (explorer_.isOpen()) explorer_.refresh();
+        checkDocsOnDisk();
+        gitNextPoll_ = {};
+        syncFsWatches();
+        dirty_ = true;
+    }
+
+    void checkDocsOnDisk() {
+        for (auto& dp : docs_) {
+            Document& d = *dp;
+            if (d.path.empty()) continue;
+            std::error_code ec;
+            if (!fs::exists(d.path, ec)) {
+                if (!d.diskGone) { d.diskGone = true; setMessage(d.name + " was deleted on disk", true, 4); }
+                continue;
+            }
+            d.diskGone = false;
+            const auto t = fs::last_write_time(d.path, ec);
+            if (ec || t == d.diskTime) continue;
+            if (d.modified()) {   // keep the user's edits; just tell them once per change
+                d.diskTime = t;
+                setMessage(d.name + " changed on disk - you have unsaved edits", true, 5);
+                continue;
+            }
+            const Pos c = d.cursor, a = d.anchor;
+            const float sy = d.scrollY, ty = d.targetY;
+            if (auto r = d.load(d.path); !r) { d.diskTime = t; continue; }
+            d.cursor = d.buf.clamp(c);
+            d.anchor = d.buf.clamp(a);
+            d.scrollY = sy; d.targetY = ty;
+            setMessage("Reloaded " + d.name + " (changed on disk)", false, 2.5f);
+        }
+    }
+
     void openFolder(const std::string& raw) {
         std::string err;
         if (!explorer_.open(expandPath(raw), err)) { setMessage(err, true); return; }
@@ -596,6 +645,7 @@ private:
         if (scriptSleeping_) consider(scriptSleepUntil_);
         if (hoverTool_ >= 3 && !toolTipShown_) consider(toolHoverAt_ + std::chrono::milliseconds(390));
         if (gitRoot_ && focused_) consider(gitNextPoll_);
+        if (fsPending_) consider(fsEventAt_ + std::chrono::milliseconds(150));
         if (nextBlameWake_ > Clock::now()) consider(nextBlameWake_);
         if (lsp_ && cmakeOpen_) consider(nextDbCheck_);
         if (hover_.pending) consider(hover_.due);
@@ -603,6 +653,8 @@ private:
     }
 
     void update(Clock::time_point now, float dt) {
+        if (fsPending_ && now >= fsEventAt_ + std::chrono::milliseconds(150)) { fsPending_ = false; handleFsChanges(); }
+        if (now >= fsSyncAt_) { fsSyncAt_ = now + std::chrono::seconds(1); syncFsWatches(); }
         if (focused_ && opt_.screenshot.empty() && now >= nextBlink_) {
             caretOn_ = !caretOn_;
             nextBlink_ = now + std::chrono::milliseconds(530);

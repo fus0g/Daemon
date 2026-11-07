@@ -68,6 +68,10 @@ public:
     std::uint64_t lspSent = 0;  // buffer version last sent to the server
     bool lspOpen = false;
 
+    // Disk state at the last load / save, to notice changes made by other programs.
+    std::filesystem::file_time_type diskTime{};
+    bool diskGone = false;
+
     // ------------------------------------------------------------ files
 
     std::expected<void, std::string> load(const std::string& file) {
@@ -79,6 +83,7 @@ public:
         buf.setText(*data);
         buf.markSaved();
         setPath(file);
+        stampDisk();
         cursor = anchor = {};
         detectIndentation();
         return {};
@@ -88,7 +93,15 @@ public:
         if (path.empty()) return std::unexpected("no file name");
         if (!writeFile(path, buf.text())) return std::unexpected("cannot write " + path + ": " + std::strerror(errno));
         buf.markSaved();
+        stampDisk();
         return {};
+    }
+
+    void stampDisk() {
+        std::error_code ec;
+        auto t = std::filesystem::last_write_time(path, ec);
+        if (!ec) diskTime = t;
+        diskGone = false;
     }
 
     void setPath(const std::string& file) {
