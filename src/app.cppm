@@ -195,6 +195,11 @@ public:
                 updateDropTarget();
                 continue;
             }
+            if (tok.starts_with("tooltip:")) {   // test hook: show a toolbar tooltip (3 run, 8 debug, 4 build, 6 regenerate, 5 stop)
+                hoverTool_ = std::atoi(std::string(tok.substr(8)).c_str());
+                toolTipShown_ = true;
+                continue;
+            }
             if (tok.starts_with("gitsub:")) {   // test hook: open the Git tab on a sub-tab (0 changes, 1 history, 2 branches)
                 panelOpen_ = true; panelTab_ = 3;
                 gitSub_ = std::atoi(std::string(tok.substr(7)).c_str());
@@ -377,7 +382,7 @@ private:
         int problem = -1;  // index into problems_ when the line has a source location
     };
     struct ToolRects {
-        Rect profile, target, run, build, stop, reload, panel;
+        Rect profile, target, run, build, stop, reload, panel, debug, cluster;
     };
     enum class TaskKind { None, Configure, Build };
     struct Completion {
@@ -578,6 +583,7 @@ private:
         if (!bgQueue_.empty() && lsp_) consider(bgNext_);
         if (!jobs_.empty()) consider(Clock::now() + std::chrono::milliseconds(40));
         if (scriptSleeping_) consider(scriptSleepUntil_);
+        if (hoverTool_ >= 3 && !toolTipShown_) consider(toolHoverAt_ + std::chrono::milliseconds(390));
         if (gitRoot_ && focused_) consider(gitNextPoll_);
         if (nextBlameWake_ > Clock::now()) consider(nextBlameWake_);
         if (lsp_ && cmakeOpen_) consider(nextDbCheck_);
@@ -640,6 +646,7 @@ private:
         if (scriptPos_ < script_.size()) stepScript();
         lspSync(now);
         if (lspCrashed_) { lspCrashed_ = false; handleLspCrash(now); }
+        if (hoverTool_ >= 3 && !toolTipShown_ && now - toolHoverAt_ > std::chrono::milliseconds(380)) { toolTipShown_ = true; dirty_ = true; }
         if (lsp_ && lsp_->ready() && !bgScanned_) { bgScanned_ = true; queueProjectDiagnostics(); }
         pumpProjectDiagnostics(now);
         gitTick(now);
@@ -1051,10 +1058,16 @@ private:
             x += tool_.profile.w + std::round(6 * s);
             tool_.target = {x, cy, chipW(tn), ch};
             x += tool_.target.w + std::round(14 * s);
-            for (Rect* r : {&tool_.run, &tool_.build, &tool_.stop, &tool_.reload}) {
-                *r = {x, cy, ch, ch};
-                x += ch + std::round(2 * s);
-            }
+            // Action cluster: one pill holding Run | Debug | Build | Regenerate | Stop (groups separated by dividers).
+            const float bw = std::round(ch * 1.08f), div = std::round(9 * s), pad = std::round(2 * s);
+            const float cw_ = pad + bw * 5 + div * 2 + pad;
+            tool_.cluster = {x, cy, cw_, ch};
+            float bx = x + pad;
+            tool_.run = {bx, cy, bw, ch}; bx += bw;
+            tool_.debug = {bx, cy, bw, ch}; bx += bw + div;
+            tool_.build = {bx, cy, bw, ch}; bx += bw;
+            tool_.reload = {bx, cy, bw, ch}; bx += bw + div;
+            tool_.stop = {bx, cy, bw, ch};
         }
 
         // Editor panes: split tree inside the island, each pane with its own tab strip, breadcrumbs, gutter and minimap.
@@ -2176,7 +2189,8 @@ private:
         startBuildProc(TaskKind::Configure, configureArgv(cmakeRoot_, profile(), haveNinja_), "Configuring (" + profile().name + ")");
     }
 
-    void cmakeBuild(bool thenRun) {
+    void cmakeBuild(bool thenRun, bool debug = false) {
+        debugRun_ = thenRun && debug;
         if (!cmakeOpen_) { setMessage("No CMake project open (open a folder with a CMakeLists.txt)", true); return; }
         if (buildProc_ && buildKind_ == TaskKind::Configure) {  // CMake is still loading: build as soon as it is done
             pendingBuild_ = true;
@@ -2201,6 +2215,7 @@ private:
     }
 
     void cmakeStop() {
+        debugRun_ = false;
         pendingBuild_ = false;
         runAfterBuild_ = false;
         if (buildProc_) buildProc_->terminate();
@@ -2283,7 +2298,7 @@ private:
                 buildStatus_ = "CMake ready";
                 loadTargetsNow();
                 restartLsp();
-                if (pendingBuild_) { pendingBuild_ = false; cmakeBuild(runAfterBuild_); return; }
+                if (pendingBuild_) { pendingBuild_ = false; cmakeBuild(runAfterBuild_, debugRun_); return; }
                 setMessage("CMake configured: " + std::to_string(targets_.size()) + " targets", false, 2.5f);
             } else {
                 buildOut_.push_back({std::format("CMake failed (exit code {})", code), 2, -1});
@@ -2296,7 +2311,7 @@ private:
             if (code == 0) {
                 buildOut_.push_back({"Build finished", 5, -1});
                 buildStatus_ = "Build succeeded";
-                if (runAfterBuild_) { runAfterBuild_ = false; startRun(); return; }
+                if (runAfterBuild_) { runAfterBuild_ = false; startRun(debugRun_); debugRun_ = false; return; }
                 setMessage("Build succeeded", false, 2.5f);
             } else {
                 buildOut_.push_back({std::format("Build failed (exit code {})", code), 2, -1});
@@ -2308,7 +2323,7 @@ private:
         dirty_ = true;
     }
 
-    void startRun() {
+    void startRun(bool debug = false) {
         if (target_ < 0) return;
         const CMakeTarget& t = targets_[static_cast<std::size_t>(target_)];
         std::error_code ec;
@@ -2318,7 +2333,13 @@ private:
         runPartial_.clear();
         ProcessOptions o;
         o.usePty = true;   // the program runs on a terminal: prompts show immediately and it can read the keyboard
-        o.argv = {t.artifact.string()};
+        if (debug) {
+            // Debug = gdb on the Run panel's terminal: stops at main, then you drive it with gdb commands.
+            if (!findExecutable("gdb")) { setMessage("gdb was not found - install it to debug", true, 4); return; }
+            o.argv = {"gdb", "-q", "-ex", "set confirm off", "-ex", "set pagination off", "-ex", "break main", "-ex", "run", "--args", t.artifact.string()};
+        } else {
+            o.argv = {t.artifact.string()};
+        }
         for (auto& a : splitArgs(runArgs_)) o.argv.push_back(a);
         o.cwd = t.artifact.parent_path().string();
         std::string cmd;
@@ -2335,7 +2356,7 @@ private:
         }
         runEof_ = false;
         runFocus_ = true;   // keystrokes go to the program (Esc or a click elsewhere releases them)
-        buildStatus_ = "Running " + t.name;
+        buildStatus_ = (debug ? "Debugging " : "Running ") + t.name;
         win_.watch(runProc_->outFd(), [this] { pumpRun(); });
         dirty_ = true;
     }
@@ -2453,6 +2474,7 @@ private:
             e.emplace_back("Reload CMake", "Ctrl+Shift+R", false, [this] { cmakeReload(); });
             openCustomMenu(tool_.target.x, tool_.target.bottom() + 4 * S(), e);
         } else if (tool_.run.contains(x, y)) cmakeBuild(true);
+        else if (tool_.debug.contains(x, y)) cmakeBuild(true, true);
         else if (tool_.build.contains(x, y)) cmakeBuild(false);
         else if (tool_.stop.contains(x, y)) cmakeStop();
         else if (tool_.reload.contains(x, y)) cmakeReload();
@@ -2461,8 +2483,8 @@ private:
 
     int toolAt(float x, float y) const {
         if (!cmakeOpen_) return 0;
-        const Rect* rs[] = {&tool_.profile, &tool_.target, &tool_.run, &tool_.build, &tool_.stop, &tool_.reload, &tool_.panel};
-        for (int i = 0; i < 7; ++i)
+        const Rect* rs[] = {&tool_.profile, &tool_.target, &tool_.run, &tool_.build, &tool_.stop, &tool_.reload, &tool_.panel, &tool_.debug};
+        for (int i = 0; i < 8; ++i)
             if (rs[i]->contains(x, y)) return i + 1;
         return 0;
     }
@@ -2470,27 +2492,63 @@ private:
     void drawToolbar() {
         if (!cmakeOpen_) return;
         const float s = S(), m = std::round(8 * s);
-        const int ip = iconPx();
+        const bool busy = buildProc_ != nullptr;
+        const bool anyRunning = busy || runProc_ != nullptr;
+        const float hair = std::max(1.0f, std::round(0.8f * s));
+        auto fade = [](Color c, float a) { return c.alpha(static_cast<std::uint8_t>(static_cast<float>(c.a) * a)); };
+
+        // Configuration / target selectors: outlined pills with a chevron.
         auto chip = [&](const Rect& r, const std::string& text, bool hot) {
-            fill(r, hot ? theme::tabHover : theme::tabBg, 8 * s);
-            uiLabel(r.x + std::round(14 * s), r.y, r.h, text, theme::text, r.right() - std::round(26 * s));
+            fill(r, Color::rgb(0xffffff, hot ? 56 : 34), r.h / 2);
+            fill(r.x + hair, r.y + hair, r.w - 2 * hair, r.h - 2 * hair, hot ? Color::rgb(0x1a1c21) : Color::rgb(0x0d0e11), r.h / 2 - hair);
+            uiLabel(r.x + std::round(16 * s), r.y, r.h, text, theme::text, r.right() - std::round(30 * s));
             const int cs = std::max(8, static_cast<int>(std::round(iconSize() * 0.6f)));
-            Icons::chevron(dl_, font_, r.right() - static_cast<float>(cs) - std::round(10 * s), r.y + (r.h - static_cast<float>(cs)) / 2, cs, true, theme::dim);
+            Icons::chevron(dl_, font_, r.right() - static_cast<float>(cs) - std::round(12 * s), r.y + (r.h - static_cast<float>(cs)) / 2, cs, true, theme::dim);
         };
         chip(tool_.profile, profiles_.empty() ? "-" : profiles_[static_cast<std::size_t>(profile_)].name, hoverTool_ == 1);
         chip(tool_.target, target_ >= 0 ? targets_[static_cast<std::size_t>(target_)].name : "No target", hoverTool_ == 2);
 
-        const bool busy = buildProc_ != nullptr;
-        const bool anyRunning = busy || runProc_ != nullptr;
-        auto btn = [&](const Rect& r, ToolIcon ic, Color c, bool enabled, int id) {
-            if (hoverTool_ == id && enabled) fill(r, theme::tabHover, 8 * s);
-            Icons::tool(dl_, font_, std::round(r.x + (r.w - static_cast<float>(ip)) / 2), std::round(r.y + (r.h - static_cast<float>(ip)) / 2), ip, ic,
-                        enabled ? c : c.alpha(70));
+        // Action cluster.
+        const Rect& cl = tool_.cluster;
+        fill(cl, Color::rgb(0xffffff, 34), cl.h / 2);
+        fill(cl.x + hair, cl.y + hair, cl.w - 2 * hair, cl.h - 2 * hair, Color::rgb(0x0d0e11), cl.h / 2 - hair);
+        if (busy && buildTotal_ > 0) {   // build progress runs along the bottom edge of the pill
+            const float pw = (cl.w - 2 * hair) * static_cast<float>(buildCur_) / static_cast<float>(buildTotal_);
+            fill(cl.x + cl.h / 2, cl.bottom() - std::round(3 * s), std::max(0.0f, std::min(pw, cl.w - cl.h)), std::round(2 * s), theme::accent, s);
+        }
+        const int ip = std::max(14, static_cast<int>(std::round(cl.h * 0.52f)));
+        struct Btn { const Rect* r; char32_t glyph; Color color; bool enabled; int id; bool primary; };
+        const bool canRun = !busy && target_ >= 0;
+        const Btn btns[] = {
+            {&tool_.run, 0xF040A, Color::rgb(0xffffff), canRun, 3, true},
+            {&tool_.debug, 0xF00E4, Color::rgb(0xf0a04b), canRun, 8, false},
+            {&tool_.build, 0xF08EA, busy ? theme::accent : Color::rgb(0xd3d6dd), !busy, 4, false},
+            {&tool_.reload, 0xF145E, Color::rgb(0x8fb4ff), !busy, 6, false},
+            {&tool_.stop, 0xF04DB, theme::danger, anyRunning, 5, false},
         };
-        btn(tool_.run, ToolIcon::Play, Color::rgb(0x5fb760), !busy && (target_ >= 0), 3);
-        btn(tool_.build, ToolIcon::Build, theme::text, !busy, 4);
-        btn(tool_.stop, ToolIcon::Stop, theme::danger, anyRunning, 5);
-        btn(tool_.reload, ToolIcon::Reload, theme::text, !busy, 6);
+        for (const Btn& b : btns) {
+            const Rect& r = *b.r;
+            const bool hot = hoverTool_ == b.id && b.enabled;
+            const float d = std::round(r.h - 6 * s);
+            const Rect circle{r.x + (r.w - d) / 2, r.y + 3 * s, d, d};
+            if (b.primary) {
+                const Color g = Color::rgb(0x2f9e55);
+                fill(circle, b.enabled ? (hot ? g.mix(Color::rgb(0xffffff), 0.15f) : g) : Color::rgb(0xffffff, 22), d / 2);
+            } else if (hot) {
+                fill(circle, Color::rgb(0xffffff, 30), d / 2);
+            } else if (b.id == 4 && busy) {
+                fill(circle, theme::accent.alpha(46), d / 2);
+            }
+            const Color ic = b.enabled ? b.color : fade(b.color, 0.32f);
+            Icons::glyph(dl_, font_, std::round(r.x + (r.w - static_cast<float>(ip)) / 2), std::round(r.y + (r.h - static_cast<float>(ip)) / 2), ip, b.glyph,
+                         b.primary && !b.enabled ? theme::dim : ic);
+        }
+        // Dividers between the groups (run | build | stop).
+        for (const Rect* r : {&tool_.debug, &tool_.reload}) {
+            const float dx = r->right() + std::round(4 * s);
+            fill(dx, cl.y + std::round(8 * s), hair, cl.h - std::round(16 * s), Color::rgb(0xffffff, 30));
+        }
+        if (busy) animating_ = true;   // keeps the status bar / progress fresh
 
         // Status text with a slim progress bar while building.
         float rx = L_.toolbar.w - m - std::round(6 * s) - (L_.csd ? std::round(L_.title.h * 1.25f) * 3 + 6 * s : 0.0f);
@@ -2509,6 +2567,25 @@ private:
                 fill(rx - bw + (bw - bw * 0.3f) * t, by, bw * 0.3f, bh, theme::accent, bh / 2);
                 animating_ = true;
             }
+        }
+    }
+
+    // Tooltip for the toolbar buttons (name and shortcut), shown after the pointer rests on one.
+    void drawToolTip() {
+        if (!cmakeOpen_ || !toolTipShown_ || menu_.open || dlg_.kind != DlgKind::None) return;
+        struct Tip { int id; const Rect* r; const char* name; const char* keys; };
+        const Tip tips[] = {{3, &tool_.run, "Run", "Shift+F10"}, {8, &tool_.debug, "Debug (gdb)", "Shift+F9"}, {4, &tool_.build, "Build", "Ctrl+F9"},
+                            {6, &tool_.reload, "Regenerate CMake", "Ctrl+Shift+R"}, {5, &tool_.stop, "Stop", "Ctrl+F2"}};
+        for (const auto& t : tips) {
+            if (hoverTool_ != t.id) continue;
+            const float s = S();
+            const std::string name = t.name, keys = t.keys;
+            const float w = uiW(name) + uiW(keys) + 44 * s, h = std::round(uiH() + 14 * s);
+            const Rect r{std::min(t.r->x, L_.status.w - w - 8 * s), t.r->bottom() + 8 * s, w, h};
+            glassPanel(r, 8 * s);
+            uiLabel(r.x + 12 * s, r.y, r.h, name, theme::text);
+            uiLabelR(r.right() - 12 * s, r.y, r.h, keys, theme::dim);
+            return;
         }
     }
 
@@ -3114,6 +3191,7 @@ private:
         if (alt && !ctrl && k.key == Key::Left) { navBack(); return; }
         if (k.key == Key::F9 && ctrl) { cmakeBuild(false); scrollToCursor_ = false; return; }
         if (k.key == Key::F10 && shift) { cmakeBuild(true); scrollToCursor_ = false; return; }
+        if (k.key == Key::F9 && shift) { cmakeBuild(true, true); scrollToCursor_ = false; return; }
         if (k.key == Key::F2 && ctrl) { cmakeStop(); scrollToCursor_ = false; return; }
 
         if (ctrl && !alt && k.key == Key::Char) {
@@ -3568,12 +3646,13 @@ private:
         if (hp != hoverPane_) { hoverPane_ = hp; dirty_ = true; }
         const int hAct = activityAt(mx_, my_);
         if (hAct != hoverAct_) { hoverAct_ = hAct; dirty_ = true; }
-        const int hover = toolAt(mx_, my_);
+        const int hover = opt_.screenshot.empty() ? toolAt(mx_, my_) : hoverTool_;   // scripted captures drive the hover state themselves
         int hpr = -1;
         if (panelOpen_ && panelBody().contains(mx_, my_))
             hpr = static_cast<int>(std::floor((my_ - panelBody().y + panelScroll_[static_cast<std::size_t>(panelTab_)]) / lh()));
         if (panelOpen_ && panelTab_ == 3) gitUpdateHover();
         if (hb != hoverBtn_ || ht != hoverTab_ || hc != hoverClose_ || hover != hoverTool_ || hpr != hoverPanelRow_) {
+            if (hover != hoverTool_) { toolHoverAt_ = Clock::now(); toolTipShown_ = false; }
             hoverBtn_ = hb; hoverTab_ = ht; hoverClose_ = hc; hoverTool_ = hover; hoverPanelRow_ = hpr;
             dirty_ = true;
         }
@@ -5455,6 +5534,7 @@ private:
         drawHover();
         drawMenu();
         drawTabDrag();
+        drawToolTip();
         drawDialog();
         if (L_.csd && !win_.maximized() && !win_.fullscreen()) {  // hairline window outline
             const float s = std::max(1.0f, std::round(S() * 0.5f));
@@ -5998,6 +6078,8 @@ private:
     TaskKind buildKind_ = TaskKind::None;
     bool runFocus_ = false, scriptSleeping_ = false;
     Clock::time_point scriptSleepUntil_{};
+    bool debugRun_ = false, toolTipShown_ = false;
+    Clock::time_point toolHoverAt_{};
     bool buildEof_ = false, runEof_ = false, runAfterBuild_ = false, pendingBuild_ = false;
     std::string buildPartial_, runPartial_, buildStatus_;
     int buildCur_ = 0, buildTotal_ = 0;

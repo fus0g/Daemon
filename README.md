@@ -135,3 +135,10 @@ Daemon talks to the `git` binary (no libgit2). In a repository you get:
     to expand its full message and changed files; click a file to open it.
   - *Branches*: local and remote branches with their last commit; Checkout switches branch.
   - Fetch / Pull / Push buttons (with ahead / behind counts) sit at the right of the tab header.
+
+## Toolbar: run, debug, build, regenerate
+
+The CMake toolbar has outlined selectors for the build profile and target, and one pill of actions: **Run** (green,
+Shift+F10), **Debug** (Shift+F9), **Build** (Ctrl+F9), **Regenerate CMake** (Ctrl+Shift+R) and **Stop** (Ctrl+F2). Build
+progress runs along the bottom of the pill and hovering a button shows its name and shortcut. Debug starts `gdb` on the
+Run panel's terminal (it stops at `main`; type gdb commands there). Use the Debug profile so the program has symbols.
