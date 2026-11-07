@@ -201,7 +201,7 @@ public:
                 continue;
             }
             if (tok.starts_with("gitsub:")) {   // test hook: open the Git tab on a sub-tab (0 changes, 1 history, 2 branches)
-                panelOpen_ = true; panelTab_ = 3;
+                sidebar_ = true; sideGit_ = true;
                 gitSub_ = std::atoi(std::string(tok.substr(7)).c_str());
                 gitScroll_ = 0;
                 continue;
@@ -626,7 +626,7 @@ private:
             }
             if (stepCaret(d, dt)) { animating_ = true; dirty_ = true; }
         }
-        if (sidebar_ && explorer_.isOpen()) {
+        if (sidebar_ && explorer_.isOpen() && !sideGit_) {
             if (sideReveal_) { revealInSidebar(); sideReveal_ = false; }
             clampSide();
             float diff = sideTarget_ - sideScroll_;
@@ -758,20 +758,19 @@ private:
 
     // ============================================================ activity bar (right edge)
 
-    // Two vertical pills: the Explorer toggle on its own (it is a separate window), then Output / Problems / Git.
+    // Two vertical pills: the right-hand island's views (Explorer, Git), then the bottom panel's (Output, Problems).
     float activityCell() const { return std::round(L_.activity.w - 22 * S()); }
     Rect activityPill(int group) const {
         const Rect& a = L_.activity;
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S()), between = std::round(10 * S());
         const float w = bs + 2 * pad, x = a.x + (a.w - w) / 2, y0 = a.y + std::round(6 * S());
-        const float h0 = bs + 2 * pad;
-        if (group == 0) return {x, y0, w, h0};
-        return {x, y0 + h0 + between, w, 3 * bs + 2 * gap + 2 * pad};
+        const float h = 2 * bs + gap + 2 * pad;
+        return {x, y0 + static_cast<float>(group) * (h + between), w, h};
     }
     Rect activityRect(int i) const {
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S());
-        const Rect pill = activityPill(i == 0 ? 0 : 1);
-        return {pill.x + pad, pill.y + pad + static_cast<float>(i == 0 ? 0 : i - 1) * (bs + gap), bs, bs};
+        const Rect pill = activityPill(i / 2);
+        return {pill.x + pad, pill.y + pad + static_cast<float>(i % 2) * (bs + gap), bs, bs};
     }
     int activityAt(float x, float y) const {
         if (!L_.activity.contains(x, y)) return 0;
@@ -781,26 +780,29 @@ private:
     }
     bool activityActive(int i) const {
         switch (i) {
-            case 0: return sidebar_;
-            case 1: return panelOpen_ && panelTab_ < 2;
-            case 2: return panelOpen_ && panelTab_ == 2;
-            default: return panelOpen_ && panelTab_ == 3;
+            case 0: return sidebar_ && !sideGit_;
+            case 1: return sidebar_ && sideGit_;
+            case 2: return panelOpen_ && panelTab_ < 2;
+            default: return panelOpen_ && panelTab_ == 2;
         }
     }
     void activityClick(int i) {
         switch (i) {
-            case 0: toggleSidebar(); break;
+            case 0:
+                if (activityActive(0)) { sidebar_ = false; sideFocus_ = false; }
+                else { sidebar_ = true; sideGit_ = false; revealCurrent(); }
+                break;
             case 1:
-                if (activityActive(1)) panelOpen_ = false;
-                else { panelOpen_ = true; panelTab_ = runProc_ ? 1 : 0; }
+                if (activityActive(1)) { sidebar_ = false; gitMsgFocus_ = false; }
+                else { sidebar_ = true; sideGit_ = true; sideFocus_ = false; gitNextPoll_ = {}; }
                 break;
             case 2:
                 if (activityActive(2)) panelOpen_ = false;
-                else { panelOpen_ = true; panelTab_ = 2; }
+                else { panelOpen_ = true; panelTab_ = runProc_ ? 1 : 0; }
                 break;
             default:
                 if (activityActive(3)) panelOpen_ = false;
-                else { panelOpen_ = true; panelTab_ = 3; gitNextPoll_ = {}; }
+                else { panelOpen_ = true; panelTab_ = 2; }
                 break;
         }
         dirty_ = true;
@@ -811,7 +813,6 @@ private:
         if (a.w <= 0) return;
         const float s = S(), hair = std::max(1.0f, std::round(0.8f * s));
         const int ip = std::max(16, static_cast<int>(std::round(activityCell() * 0.66f)));
-        static constexpr std::array<ToolIcon, 3> icons = {ToolIcon::Files, ToolIcon::Terminal, ToolIcon::Warning};
         const bool hasErrors = !problems_.empty() ||
                                std::ranges::any_of(shownProblems_, [](const Problem& p) { return p.severity == Severity::Error; });
         for (int g = 0; g < 2; ++g) {   // accent-colored outline, dark fill
@@ -822,13 +823,16 @@ private:
         for (int i = 0; i < 4; ++i) {
             const Rect r = activityRect(i);
             const bool active = activityActive(i), hot = hoverAct_ == i + 1;
-            if (active) fill(r, theme::accent.alpha(120), r.w / 2);
-            else if (hot) fill(r, Color::rgb(0xffffff, 26), r.w / 2);
+            if (hot && !active) fill(r, Color::rgb(0xffffff, 26), r.w / 2);
             const float ix = std::round(r.x + (r.w - static_cast<float>(ip)) / 2), iy = std::round(r.y + (r.h - static_cast<float>(ip)) / 2);
-            const Color white = Color::rgb(0xffffff);
-            if (i == 3) Icons::glyph(dl_, font_, ix, iy, ip, 0xF062C, white);   // source-branch
-            else Icons::tool(dl_, font_, ix, iy, ip, icons[static_cast<std::size_t>(i)], white);
-            if (i == 2 && hasErrors) {
+            const Color col = active ? theme::accent.mix(Color::rgb(0xffffff), 0.14f) : Color::rgb(0xffffff);   // the active view's icon takes the accent
+            switch (i) {
+                case 0: Icons::tool(dl_, font_, ix, iy, ip, ToolIcon::Files, col); break;
+                case 1: Icons::glyph(dl_, font_, ix, iy, ip, 0xF062C, col); break;   // source-branch
+                case 2: Icons::tool(dl_, font_, ix, iy, ip, ToolIcon::Terminal, col); break;
+                default: Icons::tool(dl_, font_, ix, iy, ip, ToolIcon::Warning, col); break;
+            }
+            if (i == 3 && hasErrors) {
                 const float d = std::round(7 * s);
                 fill(ix + static_cast<float>(ip) - d * 0.6f, iy - d * 0.2f, d, d, theme::danger, d / 2);
             }
@@ -1324,7 +1328,7 @@ private:
         if (!(k.ctrl && k.key == Key::Char && k.ch == 'w')) closeArmed_ = -1;
         if (dlg_.kind != DlgKind::None) { dlgKey(k); dirty_ = true; return; }
         if (k.ctrl && !k.shift && !k.alt && k.key == Key::Char && k.ch == 'c' && copyOverlay()) { dirty_ = true; return; }
-        if (gitMsgFocus_ && panelOpen_ && panelTab_ == 3 && gitMsgKey(k)) { dirty_ = true; return; }
+        if (gitMsgFocus_ && gitView() && gitMsgKey(k)) { dirty_ = true; return; }
         if (runFocus_ && runProc_ && panelOpen_ && panelTab_ == 1 && runKey(k)) { dirty_ = true; return; }
         if (tabDrag_.active) {  // a tab is being dragged: Esc cancels, other keys are ignored
             if (k.key == Key::Escape) { tabDrag_ = {}; dirty_ = true; }
@@ -1332,7 +1336,7 @@ private:
         }
         if (menu_.open) { menuKey(k); dirty_ = true; return; }
         if (prompt_.kind != PromptKind::None) { promptKey(k); return; }
-        if (sidebar_ && sideFocus_ && explorerKey(k)) { dirty_ = true; return; }
+        if (sidebar_ && sideFocus_ && !sideGit_ && explorerKey(k)) { dirty_ = true; return; }
         editorKey(k);
         dirty_ = true;
     }
@@ -2609,7 +2613,6 @@ private:
     }
 
     std::size_t panelRowCount() const {
-        if (panelTab_ == 3) return 0;
         if (panelTab_ == 2) return shownProblems_.size();
         return panelLines().size() + (panelTab_ == 1 && runProc_ ? 1 : 0);   // + the line the program is still writing
     }
@@ -2703,7 +2706,6 @@ private:
         for (std::size_t i = 0; i < panelTabRects_.size(); ++i)
             if (panelTabRects_[i].contains(mx_, my_)) { panelTab_ = static_cast<int>(i); psel_.active = false; runFocus_ = panelTab_ == 1 && runProc_; dirty_ = true; return; }
         if (panelClose_.contains(mx_, my_)) { panelOpen_ = false; dirty_ = true; return; }
-        if (panelClear_.contains(mx_, my_) && panelTab_ == 3) { gitNextPoll_ = {}; gitRefresh(); dirty_ = true; return; }
         if (panelClear_.contains(mx_, my_)) {
             if (panelTab_ == 1) runOut_.clear(); else if (panelTab_ == 0) { buildOut_.clear(); problems_.clear(); }
             else problems_.clear();
@@ -2711,7 +2713,6 @@ private:
             return;
         }
         Rect body = panelBody();
-        if (body.contains(mx_, my_) && panelTab_ == 3) { gitPanelClick(); return; }
         if (body.contains(mx_, my_)) {
             runFocus_ = panelTab_ == 1 && runProc_;   // clicking the Run output gives the program the keyboard
             // Press starts a text selection; releasing without dragging counts as a click on the row.
@@ -2735,8 +2736,7 @@ private:
         // Body first (rows may overflow the header; the header is painted over them).
         const Rect body = panelBody();
         const std::size_t tab = static_cast<std::size_t>(panelTab_);
-        if (panelTab_ == 3) drawGitBody(body);
-        else {
+        {
         panelScroll_[tab] = std::clamp(panelFollow_[tab] ? panelMaxScroll() : panelScroll_[tab], 0.0f, panelMaxScroll());
         const float sy = std::round(panelScroll_[tab]);
         const int total = static_cast<int>(panelRowCount());
@@ -2794,12 +2794,11 @@ private:
 
         // Header: darker band, text tabs with an accent underline (no pills, no borders).
         fill(p.x, p.y, p.w, hh, theme::panelHead);
-        static constexpr std::array<std::string_view, 4> names = {"Build", "Run", "Problems", "Git"};
+        static constexpr std::array<std::string_view, 3> names = {"Build", "Run", "Problems"};
         float x = p.x + 8 * s;
-        for (std::size_t i = 0; i < 4; ++i) {
+        for (std::size_t i = 0; i < 3; ++i) {
             std::string t = std::string(names[i]);
             if (i == 2 && !shownProblems_.empty()) t += std::format("  {}", shownProblems_.size());
-            if (i == 3 && !gitEntries_.empty()) t += std::format("  {}", gitEntries_.size());
             const float w = uiW(t) + 28 * s;
             panelTabRects_[i] = {x, p.y + 4 * s, w, hh - 8 * s};
             const bool active = static_cast<int>(i) == panelTab_;
@@ -2810,7 +2809,7 @@ private:
             if (active) fill(x + 14 * s, p.y + hh - std::round(2 * s) - s, uiW(t), std::round(2 * s), i == 2 && !shownProblems_.empty() ? Color::rgb(0xf2777a) : theme::accent, std::round(s));
             x += w + 2 * s;
         }
-        const std::string clear = panelTab_ == 3 ? "Refresh" : "Clear";
+        const std::string clear = "Clear";
         const float cwid = uiW(clear) + 24 * s, xs = std::round(hh * 0.72f);
         panelClose_ = {p.right() - 8 * s - xs, p.y + (hh - xs) / 2, xs, xs};
         panelClear_ = {panelClose_.x - 6 * s - cwid, p.y + 4 * s, cwid, hh - 8 * s};
@@ -3213,7 +3212,7 @@ private:
                 case 'q': requestQuit(); break;
                 case 'f': openPrompt(PromptKind::Find); break;
                 case 'h': openPrompt(PromptKind::Replace); break;
-                case 'g': if (shift) { panelOpen_ = true; panelTab_ = 3; gitNextPoll_ = {}; dirty_ = true; scrollToCursor_ = false; } else openPrompt(PromptKind::Goto); break;
+                case 'g': if (shift) { sidebar_ = true; sideGit_ = true; sideFocus_ = false; gitNextPoll_ = {}; dirty_ = true; scrollToCursor_ = false; } else openPrompt(PromptKind::Goto); break;
                 case 'z': if (shift) d.redo(); else d.undo(); break;
                 case 'y': d.redo(); break;
                 case 'a': d.selectAll(); break;
@@ -3632,7 +3631,7 @@ private:
             dirty_ = true;
         }
         int hr = -1;
-        if (sidebar_ && L_.sideList.contains(mx_, my_)) {
+        if (sidebar_ && !sideGit_ && L_.sideList.contains(mx_, my_)) {
             hr = static_cast<int>(std::floor((my_ - L_.sideList.y + sideScroll_) / L_.sideRow));
             if (hr < 0 || hr >= static_cast<int>(explorer_.rows().size())) hr = -1;
         }
@@ -3654,7 +3653,7 @@ private:
         int hpr = -1;
         if (panelOpen_ && panelBody().contains(mx_, my_))
             hpr = static_cast<int>(std::floor((my_ - panelBody().y + panelScroll_[static_cast<std::size_t>(panelTab_)]) / lh()));
-        if (panelOpen_ && panelTab_ == 3) gitUpdateHover();
+        if (gitView()) gitUpdateHover();
         if (hb != hoverBtn_ || ht != hoverTab_ || hc != hoverClose_ || hover != hoverTool_ || hpr != hoverPanelRow_) {
             if (hover != hoverTool_) { toolHoverAt_ = Clock::now(); toolTipShown_ = false; }
             hoverBtn_ = hb; hoverTab_ = ht; hoverClose_ = hc; hoverTool_ = hover; hoverPanelRow_ = hpr;
@@ -3864,6 +3863,10 @@ private:
         sideFocus_ = sidebar_ && L_.side.contains(mx_, my_);
         if (sidebar_ && b == Button::Left && L_.split.contains(mx_, my_)) { splitDrag_ = true; return; }
         if (sidebar_ && L_.side.contains(mx_, my_)) {
+            if (sideGit_) {   // the Git view handles its own hits
+                if (b == Button::Left && L_.sideList.contains(mx_, my_)) gitPanelClick(); else gitMsgFocus_ = false;
+                return;
+            }
             if (!explorer_.isOpen()) { if (b == Button::Left) browseOpen(false); return; }
             const auto& rows = explorer_.rows();
             int row = -1;
@@ -3983,16 +3986,16 @@ private:
         if (dlg_.kind != DlgKind::None) { dlgScroll(stepsY != 0 ? static_cast<float>(stepsY) * 3 * 34 * S() : dyPx * S()); dirty_ = true; return; }
         if (menu_.open) closeMenu();
         hideHover();
-        if (panelOpen_ && L_.panel.contains(mx_, my_) && panelTab_ == 3) {
-            gitScroll_ = std::clamp(gitScroll_ + (stepsY != 0 ? static_cast<float>(stepsY) * 3 * lh() : dyPx * S()), 0.0f, gitMax_);
-            dirty_ = true;
-            return;
-        }
         if (panelOpen_ && L_.panel.contains(mx_, my_)) {
             auto t = static_cast<std::size_t>(panelTab_);
             float dy = stepsY != 0 ? static_cast<float>(stepsY) * 3 * lh() : dyPx * S();
             panelScroll_[t] = std::clamp(panelScroll_[t] + dy, 0.0f, panelMaxScroll());
             panelFollow_[t] = panelScroll_[t] >= panelMaxScroll() - 1;
+            dirty_ = true;
+            return;
+        }
+        if (gitView() && L_.side.contains(mx_, my_)) {
+            gitScroll_ = std::clamp(gitScroll_ + (stepsY != 0 ? static_cast<float>(stepsY) * 3 * lh() : dyPx * S()), 0.0f, gitMax_);
             dirty_ = true;
             return;
         }
@@ -4470,7 +4473,7 @@ private:
         const std::size_t cur = std::min(gitMsg_.cur, gitMsg_.text.size());
         std::size_t start = 0;
         while (start < cur && uiW(std::string_view(gitMsg_.text).substr(start, cur - start)) > fmax - fx0 - 4 * s) start = utf8Next(gitMsg_.text, start);
-        if (gitMsg_.text.empty()) uiLabel(fx0, field.y, field.h, gitBranch_.empty() ? "Commit message" : "Commit message  (Enter to commit to " + gitBranch_ + ")", theme::lineNum, fmax);
+        if (gitMsg_.text.empty()) uiLabel(fx0, field.y, field.h, gitBranch_.empty() || body.w < 520 * s ? "Commit message" : "Commit message  (Enter to commit to " + gitBranch_ + ")", theme::lineNum, fmax);
         else uiLabel(fx0, field.y, field.h, std::string_view(gitMsg_.text).substr(start), theme::text, fmax);
         if (gitMsgFocus_ && caretOn_ && focused_) {
             const float cx = fx0 + uiW(std::string_view(gitMsg_.text).substr(start, cur - start));
@@ -4621,7 +4624,7 @@ private:
         float x = body.x + 10 * s;
         for (std::size_t i = 0; i < 3; ++i) {
             std::string t(names[i]);
-            const float w = uiW(t) + 24 * s;
+            const float w = uiW(t) + (body.w < 560 * s ? 12 : 24) * s;
             const Rect r{x, body.y + 5 * s, w, headH - 10 * s};
             gitHits_.push_back({r, 20 + static_cast<int>(i), 0, 0});
             const bool on = gitSub_ == static_cast<int>(i), hot = r.contains(mx_, my_);
@@ -4636,15 +4639,16 @@ private:
         const std::array<B, 3> bs = {{{32, 0xF005D, gitAhead_ ? std::format("Push {}", gitAhead_) : std::string("Push")},
                                       {31, 0xF0045, gitBehind_ ? std::format("Pull {}", gitBehind_) : std::string("Pull")},
                                       {30, 0xF04E6, "Fetch"}}};
+        const bool compact = body.w < 560 * s;   // the sidebar is narrow: icons only
         for (const auto& b : bs) {
             const int ip = std::max(12, static_cast<int>(std::round(uiH() * 0.95f)));
-            const float w = uiW(b.label) + static_cast<float>(ip) + 28 * s;
+            const float w = compact ? static_cast<float>(ip) + 14 * s : uiW(b.label) + static_cast<float>(ip) + 28 * s;
             const Rect r{rx - w, body.y + 5 * s, w, headH - 10 * s};
             gitHits_.push_back({r, b.kind, 0, 0});
             const bool hot = r.contains(mx_, my_);
             fill(r, Color::rgb(0xffffff, hot ? 34 : 18), 8 * s);
-            Icons::glyph(dl_, font_, r.x + 10 * s, r.y + (r.h - static_cast<float>(ip)) / 2, ip, b.icon, hot ? theme::text : theme::dim);
-            uiLabel(r.x + 10 * s + static_cast<float>(ip) + 6 * s, r.y, r.h, b.label, hot ? theme::text : theme::dim);
+            Icons::glyph(dl_, font_, r.x + (compact ? (r.w - static_cast<float>(ip)) / 2 : 10 * s), r.y + (r.h - static_cast<float>(ip)) / 2, ip, b.icon, hot ? theme::text : theme::dim);
+            if (!compact) uiLabel(r.x + 10 * s + static_cast<float>(ip) + 6 * s, r.y, r.h, b.label, hot ? theme::text : theme::dim);
             rx -= w + 6 * s;
         }
     }
@@ -4654,7 +4658,8 @@ private:
         if (!gitLogLoaded_) { label(body.x + 14 * s, body.y + 0.5f * lh(), gitLogBusy_ ? "Loading history..." : "No commits yet", theme::lineNum); return; }
         if (gitLog_.empty()) { label(body.x + 14 * s, body.y + 0.5f * lh(), "No commits yet", theme::lineNum); return; }
         const float rowH = std::round(lh() + 10 * s), lane = std::round(14 * s);
-        const int showLanes = std::min(gitGraphWidth_, 9);
+        const bool narrow = body.w < 520 * s;
+        const int showLanes = std::min(gitGraphWidth_, narrow ? 5 : 9);
         const float gw = static_cast<float>(showLanes) * lane + 12 * s;
         const std::int64_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         const float detailLine = std::round(lh() + 2 * s);
@@ -4711,17 +4716,25 @@ private:
             // Text: refs, subject, then author / time / hash on the right.
             float x = body.x + gw + 8 * s;
             const float right = row.right() - 12 * s;
-            const std::string hashTxt = c.shortHash;
-            const float hw = uiW(hashTxt);
-            float rx = right - hw;
-            uiLabel(rx, y, rowH, hashTxt, theme::lineNum);
-            const std::string when = git::relativeTime(c.time, now);
-            rx -= uiW(when) + 16 * s;
+            float rx = right;
+            if (!narrow) {
+                const std::string hashTxt = c.shortHash;
+                rx -= uiW(hashTxt);
+                uiLabel(rx, y, rowH, hashTxt, theme::lineNum);
+            }
+            std::string when = git::relativeTime(c.time, now);
+            if (narrow) {   // "3 days ago" -> "3d"
+                const auto sp = when.find(' ');
+                when = when == "just now" ? "now" : when.substr(0, sp) + when.substr(sp + 1, 1);
+            }
+            rx -= uiW(when) + (narrow ? 0.0f : 16 * s);
             uiLabel(rx, y, rowH, when, theme::lineNum);
-            const std::string who = c.author;
-            const float ww = std::min(uiW(who), 150 * s);
-            rx -= ww + 16 * s;
-            uiLabel(rx, y, rowH, who, theme::dim, rx + ww);
+            if (!narrow) {
+                const std::string who = c.author;
+                const float ww = std::min(uiW(who), 150 * s);
+                rx -= ww + 16 * s;
+                uiLabel(rx, y, rowH, who, theme::dim, rx + ww);
+            }
             const float textMax = rx - 12 * s;
             if (!c.refs.empty()) {
                 for (std::size_t p = 0; p < c.refs.size();) {
@@ -4803,10 +4816,12 @@ private:
                         uiLabelC(br.x + br.w / 2, br.y, br.h, "Checkout", Color::rgb(0xffffff));
                         rx = br.x - 12 * s;
                     }
-                    const float sx = std::max(x + 40 * s, row.x + row.w * 0.45f);
-                    uiLabel(rx - uiW(b.hash), row.y, row.h, b.hash, theme::lineNum);
-                    rx -= uiW(b.hash) + 14 * s;
-                    uiLabel(sx, row.y, row.h, b.subject, theme::dim, rx);
+                    if (body.w >= 520 * s) {
+                        const float sx = std::max(x + 40 * s, row.x + row.w * 0.45f);
+                        uiLabel(rx - uiW(b.hash), row.y, row.h, b.hash, theme::lineNum);
+                        rx -= uiW(b.hash) + 14 * s;
+                        uiLabel(sx, row.y, row.h, b.subject, theme::dim, rx);
+                    }
                 }
                 y += rowH;
             }
@@ -5587,6 +5602,17 @@ private:
         fill(sd, theme::sideBg);
         const float headH = L_.tabs.h;
 
+        if (sideGit_) {   // Source Control instead of the file tree
+            drawGitBody(L_.sideList);
+            fill(sd.x, sd.y, sd.w, headH, theme::sideBg);
+            uiLabel(sd.x + 16 * s, sd.y, headH, "SOURCE CONTROL", theme::dim, sd.right() - 12 * s);
+            if (!gitBranch_.empty()) {
+                const std::string b = gitBranch_;
+                uiLabelR(sd.right() - 16 * s, sd.y, headH, b, theme::lineNum);
+            }
+            return;
+        }
+
         if (!explorer_.isOpen()) {
             const float y = sd.y + headH + 22 * s, lhh = std::round(uiH() + 8 * s);
             uiLabel(sd.x + 20 * s, y, lhh, "No folder open", theme::dim, sd.right() - 8 * s);
@@ -6082,6 +6108,8 @@ private:
     TaskKind buildKind_ = TaskKind::None;
     bool runFocus_ = false, scriptSleeping_ = false;
     Clock::time_point scriptSleepUntil_{};
+    bool sideGit_ = false;   // the right-hand island shows Git instead of the file explorer
+    bool gitView() const { return sidebar_ && sideGit_; }
     bool debugRun_ = false, toolTipShown_ = false;
     Clock::time_point toolHoverAt_{};
     bool buildEof_ = false, runEof_ = false, runAfterBuild_ = false, pendingBuild_ = false;
@@ -6182,7 +6210,7 @@ private:
     fs::path fileOpPath_;
     bool deleteForever_ = false;
     bool sidebar_ = false, sideFocus_ = false, sideReveal_ = false, splitDrag_ = false;
-    float sidebarWidth_ = 340;   // logical px
+    float sidebarWidth_ = 380;   // logical px
     float sideScroll_ = 0, sideTarget_ = 0;
     int hoverRow_ = -1;
     struct CaretAnim {
