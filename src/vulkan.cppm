@@ -23,6 +23,9 @@ inline constexpr std::uint32_t kFragSpv[] = {
 #include "quad.frag.inc"
 };
 
+inline constexpr std::uint32_t kEraseSpv[] = {
+#include "erase.frag.inc"
+};
 inline constexpr std::uint32_t kGlassSpv[] = {
 #include "glass.frag.inc"
 };
@@ -458,8 +461,11 @@ private:
         if (r == VK_SUCCESS) {
             // Erase variant: colour lerps to the (premultiplied) source, alpha lerps to the constant frame alpha.
             blend.srcAlphaBlendFactor = VK_BLEND_FACTOR_CONSTANT_ALPHA;
+            VkShaderModule es = makeShader(kEraseSpv, sizeof(kEraseSpv));
+            stages[1].module = es;
             if (erasePipeline_) vkDestroyPipeline(device_, erasePipeline_, nullptr);
             r = vkCreateGraphicsPipelines(device_, VK_NULL_HANDLE, 1, &pi, nullptr, &erasePipeline_);
+            vkDestroyShaderModule(device_, es, nullptr);
         }
         VkShaderModule gs = makeShader(kGlassSpv, sizeof(kGlassSpv));
         if (r == VK_SUCCESS) {

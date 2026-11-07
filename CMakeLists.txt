@@ -68,7 +68,7 @@ if(NOT GLSLC)
 endif()
 
 set(SHADER_INCS)
-foreach(sh quad.vert quad.frag glass.frag)
+foreach(sh quad.vert quad.frag glass.frag erase.frag)
   set(in  ${CMAKE_SOURCE_DIR}/shaders/${sh})
   set(out ${GEN_DIR}/${sh}.inc)
   if(GLSLC)

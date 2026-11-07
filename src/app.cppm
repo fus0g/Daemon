@@ -3502,6 +3502,7 @@ private:
         dl_.clear();
         const float W = L_.status.w, H = L_.status.bottom();
         const Rect& isl = L_.island;
+        carve({0, 0, W, H});   // frosted base for the whole window; islands are painted over it
         for (Node* n : leaves()) {
             Pane& p = *n->pane;
             fill(p.rect, theme::editorBg);
@@ -3533,6 +3534,17 @@ private:
             carve({pn.x, pn.bottom(), pn.w, H - pn.bottom()});  // rows that overflow the bottom edge
             carve(pn, -L_.radius);
         }
+        // Glass edge: a faint light line along the inner border of every island, trimmed by the rounded-corner masks.
+        auto rim = [&](const Rect& r) {
+            if (r.w < 4 || r.h < 4) return;
+            const float t = std::max(1.0f, std::round(S() * 0.6f));
+            const Color c = Color::rgb(0xffffff, 20);
+            fill(r.x, r.y, r.w, t, c); fill(r.x, r.bottom() - t, r.w, t, c);
+            fill(r.x, r.y, t, r.h, c); fill(r.right() - t, r.y, t, r.h, c);
+        };
+        for (Node* n : leaves()) rim(n->pane->rect);
+        if (L_.side.w > 1) rim(L_.side);
+        if (L_.panel.h > 0.5f) rim(L_.panel);
         for (Node* n : leaves()) carve(n->pane->rect, -L_.radius);
         if (L_.side.w > 1) {
             if (sideAnim_ > 0.002f && sideAnim_ < 0.998f) carve({L_.activity.x, L_.side.y, W - L_.activity.x, L_.side.h});  // clip content sliding past the edge
