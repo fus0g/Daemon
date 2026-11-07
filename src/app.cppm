@@ -760,17 +760,18 @@ private:
 
     // Two vertical pills: the right-hand island's views (Explorer, Git), then the bottom panel's (Output, Problems).
     float activityCell() const { return std::round(L_.activity.w - 20 * S()); }
+    float activityPadV() const { return std::round(7 * S()); }
     Rect activityPill(int group) const {
         const Rect& a = L_.activity;
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S()), between = std::round(10 * S());
         const float w = bs + 2 * pad, x = a.x + (a.w - w) / 2, y0 = a.y + std::round(6 * S());
-        const float h = 2 * bs + gap + 2 * pad;
+        const float h = 2 * bs + gap + 2 * pad + 2 * activityPadV();   // extra room above the first and below the last icon
         return {x, y0 + static_cast<float>(group) * (h + between), w, h};
     }
     Rect activityRect(int i) const {
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S());
         const Rect pill = activityPill(i / 2);
-        return {pill.x + pad, pill.y + pad + static_cast<float>(i % 2) * (bs + gap), bs, bs};
+        return {pill.x + pad, pill.y + pad + activityPadV() + static_cast<float>(i % 2) * (bs + gap), bs, bs};
     }
     int activityAt(float x, float y) const {
         if (!L_.activity.contains(x, y)) return 0;
