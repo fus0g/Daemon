@@ -173,6 +173,16 @@ public:
                 continue;
             }
             pos = next;
+            if (tok == "side") { focusSidebar(); pos = next; continue; }   // test hook: focus the explorer
+            if (tok == "filedrag") {   // test hook: show a drag of the 1st row over the 3rd
+                auto& rows = explorer_.rows();
+                if (rows.size() > 3) {
+                    fdrag_ = {}; fdrag_.path = rows[0].node->path; fdrag_.active = true;
+                    mx_ = L_.side.x + L_.side.w * 0.4f; my_ = L_.sideList.y + L_.sideRow * 2.5f;
+                    fdrag_.target = fileDropTarget();
+                }
+                pos = next; continue;
+            }
             if (tok == "menu") {  // test hook: context menu on the selected tree row (or the root)
                 layout();
                 int i = explorer_.indexOfSelected();
@@ -1039,7 +1049,7 @@ private:
         const float act = std::round(50 * s);  // activity bar width
         L_.rowH = std::round(uh + 14 * s);
         L_.radius = std::round(12 * s);
-        const float promptH = prompt_.kind == PromptKind::None ? 0 : L_.rowH * static_cast<float>(prompt_.fields.size());
+        const float promptH = (prompt_.kind == PromptKind::None || sidePrompt()) ? 0 : L_.rowH * static_cast<float>(prompt_.fields.size());
         const float tbH = cmakeOpen_ ? std::round(uh + 18 * s) : 0;
         // With client-side decorations the toolbar shares the title-bar row; otherwise it is its own row.
         L_.toolbar = L_.csd ? Rect{0, 0, W, titleH} : Rect{0, 0, W, tbH};
@@ -1063,7 +1073,7 @@ private:
         L_.side = sideShown ? Rect{L_.island.right() + m, top, std::max(0.0f, contentRight - (L_.island.right() + m)), h} : Rect{};
         L_.split = sideShown ? Rect{L_.island.right(), top, m, h} : Rect{};
         L_.sideRow = std::round(uh + 10 * s);
-        L_.sideList = sideShown ? Rect{L_.side.x, L_.side.y + tabH, L_.side.w, std::max(0.0f, L_.side.h - tabH)} : Rect{};
+        L_.sideList = sideShown ? Rect{L_.side.x, L_.side.y + tabH, L_.side.w, std::max(0.0f, L_.side.h - tabH - sideCardH())} : Rect{};
         L_.tabs = {L_.island.x, L_.island.y, L_.island.w, tabH};
         L_.panel = {L_.island.x, L_.island.bottom() + (panelH > 0 ? m * easeInOut(panelAnim_) : 0), L_.island.w, panelH};
         (void)crumbH;
@@ -2848,6 +2858,92 @@ private:
         return r.empty() || r == "." ? explorer_.rootName() : r.string();
     }
 
+    // New file / new folder / rename / delete are asked for in a card at the bottom of the sidebar (not in the editor).
+    bool sidePrompt() const {
+        return prompt_.kind == PromptKind::NewFile || prompt_.kind == PromptKind::NewFolder || prompt_.kind == PromptKind::Rename || prompt_.kind == PromptKind::Delete;
+    }
+    float sideCardH() const { return sidePrompt() ? std::round(L_.rowH * 2 + 22 * S()) : 0; }
+
+    void drawSidePrompt() {
+        if (L_.side.w <= 0 || prompt_.fields.empty()) return;
+        const float s = S(), rh = L_.rowH, hair = std::max(1.0f, std::round(0.8f * s));
+        const Rect card{L_.side.x + 8 * s, L_.side.bottom() - sideCardH() + 4 * s, L_.side.w - 16 * s, sideCardH() - 12 * s};
+        fill(card, theme::accent.alpha(90), 10 * s);
+        fill(card.x + hair, card.y + hair, card.w - 2 * hair, card.h - 2 * hair, Color::rgb(0x0d0e11), 10 * s - hair);
+        const Field& f = prompt_.fields[0];
+        const float pad = 12 * s;
+        if (prompt_.kind == PromptKind::Delete) {
+            uiLabel(card.x + pad, card.y + 4 * s, rh, f.label, theme::text, card.right() - pad);
+            uiLabel(card.x + pad, card.y + 4 * s + rh, rh, "Enter - confirm    Esc - cancel", theme::dim, card.right() - pad);
+            return;
+        }
+        uiLabel(card.x + pad, card.y + 4 * s, rh, f.label, theme::dim, card.right() - pad);
+        const Rect in{card.x + 8 * s, card.y + 4 * s + rh, card.w - 16 * s, rh - 6 * s};
+        fill(in, Color::rgb(0xffffff, 18), 6 * s);
+        const float x = in.x + 8 * s, maxX = in.right() - 8 * s;
+        std::size_t startByte = 0;
+        while (startByte < f.cur && uiW(std::string_view(f.text).substr(startByte, f.cur - startByte)) > maxX - x - 4 * s)
+            startByte = utf8Next(f.text, startByte);
+        const std::string_view shown = std::string_view(f.text).substr(startByte);
+        if (f.fresh)   // prefilled name: selected until the first edit
+            fill(x - 2 * s, in.y + 3 * s, std::min(uiW(shown), maxX - x) + 4 * s, in.h - 6 * s, theme::selection, 3 * s);
+        uiLabel(x, in.y, in.h, shown, theme::text, maxX);
+        if (caretOn_ && focused_) {
+            const float cx = x + uiW(std::string_view(f.text).substr(startByte, f.cur - startByte));
+            fill(std::round(cx), in.y + 5 * s, std::max(2.0f, std::round(1.4f * s)), in.h - 10 * s, theme::caret, s);
+        }
+    }
+
+    // ---- dragging files inside the explorer to move them
+    struct FileDrag {
+        fs::path path;
+        bool pending = false, active = false;
+        float sx = 0, sy = 0;
+        fs::path target;   // folder under the pointer (empty: not a valid drop)
+    };
+    FileDrag fdrag_;
+
+    fs::path fileDropTarget() {
+        if (!fdrag_.active || !L_.side.contains(mx_, my_) || !explorer_.isOpen()) return {};
+        fs::path dir = explorer_.rootPath();
+        if (L_.sideList.contains(mx_, my_)) {
+            const auto& rows = explorer_.rows();
+            const int row = static_cast<int>(std::floor((my_ - L_.sideList.y + sideScroll_) / L_.sideRow));
+            if (row >= 0 && row < static_cast<int>(rows.size())) {
+                const FileNode& n = *rows[static_cast<std::size_t>(row)].node;
+                dir = n.dir ? n.path : n.path.parent_path();
+            }
+        } else return {};
+        if (dir == fdrag_.path.parent_path()) return {};
+        if (dir == fdrag_.path || fsops::isInside(fdrag_.path, dir)) return {};
+        return dir;
+    }
+
+    void finishFileDrag() {
+        const fs::path src = fdrag_.path, dir = fdrag_.target;
+        fdrag_ = {};
+        dirty_ = true;
+        if (dir.empty()) return;
+        auto r = fsops::moveInto(src, dir);
+        if (!r) { setMessage(r.error(), true); return; }
+        retargetDocs(src, *r);
+        afterFsChange(*r);
+        setMessage("Moved " + src.filename().string() + " to " + relToRoot(dir) + "/");
+    }
+
+    void drawFileDrag() {
+        if (!fdrag_.active) return;
+        const float s = S();
+        const std::string name = fdrag_.path.filename().string();
+        const float h = std::round(uiH() + 12 * s), w = uiW(name) + iconSize() + 36 * s;
+        const Rect r{mx_ + 12 * s, my_ + 8 * s, w, h};
+        glassPanel(r, 9 * s);
+        std::error_code ec;
+        if (fs::is_directory(fdrag_.path, ec)) drawFolderIcon(r.x + 12 * s, r.y + (h - iconSize()) / 2, name, false);
+        else drawFileIcon(r.x + 12 * s, r.y + (h - iconSize()) / 2, name);
+        uiLabel(r.x + 12 * s + iconSize() + 8 * s, r.y, h, name, theme::text, r.right() - 10 * s);
+    }
+
     void openFileOp(PromptKind kind, const fs::path& target, std::string label, std::string text = {}, bool fresh = false) {
         Prompt p;
         p.kind = kind;
@@ -2860,6 +2956,8 @@ private:
         prompt_ = std::move(p);
         fileOpPath_ = target;
         overwriteArmed_.clear();
+        if (!sidebar_ || sideGit_) { sidebar_ = true; sideGit_ = false; }
+        sideFocus_ = false;
         dirty_ = true;
     }
 
@@ -3629,6 +3727,8 @@ private:
             else n.ratio = (my_ - n.rect.y - n.gap.h / 2) / std::max(1.0f, n.rect.h - n.gap.h);
             dirty_ = true;
         }
+        if (fdrag_.pending && !fdrag_.active && std::hypot(mx_ - fdrag_.sx, my_ - fdrag_.sy) > 6 * S()) fdrag_.active = true;
+        if (fdrag_.active) { fdrag_.target = fileDropTarget(); win_.setCursor(Cursor::Default); dirty_ = true; }
         if (tabDrag_.doc) {
             if (!tabDrag_.active && std::hypot(mx_ - tabDrag_.sx, my_ - tabDrag_.sy) > 7 * S()) tabDrag_.active = true;
             if (tabDrag_.active) { updateDropTarget(); win_.setCursor(Cursor::Default); dirty_ = true; }
@@ -3866,6 +3966,19 @@ private:
             return;
         }
         if (!pressed) {
+            if (fdrag_.pending || fdrag_.active) {
+                const bool wasDrag = fdrag_.active;
+                if (wasDrag) { fdrag_.target = fileDropTarget(); finishFileDrag(); }
+                else {
+                    fdrag_ = {};
+                    const auto& rows = explorer_.rows();
+                    if (L_.sideList.contains(mx_, my_) && dragRow_ >= 0 && dragRow_ < static_cast<int>(rows.size())
+                        && static_cast<int>(std::floor((my_ - L_.sideList.y + sideScroll_) / L_.sideRow)) == dragRow_)
+                        activateRow(*rows[static_cast<std::size_t>(dragRow_)].node);
+                }
+                dragRow_ = -1;
+                return;
+            }
             if (tsel_.dragging) { tsel_.dragging = false; if (!tsel_.moved) tsel_.active = false; }
             if (psel_.dragging) {
                 psel_.dragging = false;
@@ -3904,7 +4017,13 @@ private:
                     openMenu(mx_, my_, nullptr);
                 }
             } else if (b == Button::Left) {
-                if (row >= 0) activateRow(*rows[static_cast<std::size_t>(row)].node);
+                if (row >= 0) {   // opens / toggles on release, unless the press turns into a drag
+                    FileNode& nd = *rows[static_cast<std::size_t>(row)].node;
+                    explorer_.select(nd.path.string());
+                    fdrag_ = {};
+                    fdrag_.path = nd.path; fdrag_.pending = true; fdrag_.sx = mx_; fdrag_.sy = my_;
+                    dragRow_ = row;
+                }
                 else explorer_.select(explorer_.rootPath().string());  // header / empty area targets the root
             }
             return;
@@ -5822,7 +5941,7 @@ private:
             leavePane(p, sv);
         }
         drawPanel();
-        if (prompt_.kind != PromptKind::None) drawPrompt();
+        if (prompt_.kind != PromptKind::None) { if (sidePrompt()) drawSidePrompt(); else drawPrompt(); }
         if (L_.panel.h > 0.5f) {
             const Rect& pn = L_.panel;
             carve({pn.x, pn.bottom(), pn.w, H - pn.bottom()});  // rows that overflow the bottom edge
@@ -5850,6 +5969,7 @@ private:
         drawHover();
         drawMenu();
         drawTabDrag();
+        drawFileDrag();
         drawToolTip();
         drawDialog();
         if (L_.csd && !win_.maximized() && !win_.fullscreen()) {  // hairline window outline
@@ -5930,7 +6050,13 @@ private:
                 if (selected && sideFocus_) fill(rr, theme::selection, 6 * s);
                 else if (selected) fill(rr, theme::sideSel, 6 * s);
                 else if (active) fill(rr, theme::accent.alpha(40), 6 * s);
-                else if (i == hoverRow_) fill(rr, theme::sideHover, 6 * s);
+                else if (i == hoverRow_ && !fdrag_.active) fill(rr, theme::sideHover, 6 * s);
+                if (fdrag_.active && !fdrag_.target.empty() && nd.dir && nd.path == fdrag_.target) {
+                    fill(rr, theme::accent.alpha(46), 6 * s);
+                    const float t = std::max(1.0f, std::round(1.5f * s));
+                    fill(rr.x, rr.y, rr.w, t, theme::accent.alpha(170)); fill(rr.x, rr.bottom() - t, rr.w, t, theme::accent.alpha(170));
+                    fill(rr.x, rr.y, t, rr.h, theme::accent.alpha(170)); fill(rr.right() - t, rr.y, t, rr.h, theme::accent.alpha(170));
+                }
                 const float x = sd.x + 12 * s + static_cast<float>(row.depth) * indent;
                 for (int lvl = 0; lvl < row.depth; ++lvl)
                     fill(std::round(sd.x + 12 * s + static_cast<float>(lvl) * indent + indent * 0.5f), y, std::max(1.0f, std::round(s * 0.5f)), rh, theme::guide);
@@ -6509,7 +6635,7 @@ private:
     bool sidebar_ = false, sideFocus_ = false, sideReveal_ = false, splitDrag_ = false;
     float sidebarWidth_ = 380;   // logical px
     float sideScroll_ = 0, sideTarget_ = 0;
-    int hoverRow_ = -1;
+    int hoverRow_ = -1, dragRow_ = -1;
     struct CaretAnim {
         float xl = 0, xr = 0, yt = 0, yb = 0;
         bool init = false;

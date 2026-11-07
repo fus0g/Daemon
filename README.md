@@ -147,3 +147,8 @@ Run panel's terminal (it stops at `main`; type gdb commands there). Use the Debu
 The bottom panel has a **Terminal** tab (Ctrl+` or the terminal button in the activity bar). It runs your `$SHELL` in a real PTY
 in the project folder, with an xterm-256color / truecolor emulator (scrollback, alternate screen, bracketed paste, mouse-wheel
 scrolling). Select with the mouse; copy with Ctrl+Shift+C (or Ctrl+C while text is selected), paste with Ctrl+Shift+V.
+
+## Explorer
+
+New file / new folder / rename / delete are asked for in a card at the bottom of the sidebar. Files and folders can be dragged
+onto a folder in the tree (or the empty area for the project root) to move them; open tabs follow the moved files.
