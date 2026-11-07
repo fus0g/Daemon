@@ -45,7 +45,13 @@ inline constexpr Color lineNumActive = Color::rgb(0xaeb2bb);
 inline constexpr Color guide = Color::rgb(0x1f2126);
 inline constexpr Color caret = Color::rgb(0x7aaeff);
 inline constexpr Color titleBg = frame;
-inline constexpr Color tabBg = Color::rgb(0x121316);        // tab strip inside the island
+inline constexpr Color tabBg = Color::rgb(0x121316);
+inline constexpr Color stripBg = Color::rgb(0x060709);      // editor tab strip: darker than the editor
+inline constexpr Color sideBg = Color::rgb(0x0d0e11);       // explorer island
+inline constexpr Color sideSel = Color::rgb(0x1a1c21);
+inline constexpr Color sideHover = Color::rgb(0x121317);
+inline constexpr Color panelBg = Color::rgb(0x0b0c0f);      // output panel island
+inline constexpr Color panelHead = Color::rgb(0x07080a);        // tab strip inside the island
 inline constexpr Color tabHover = Color::rgb(0x27292e);
 inline constexpr Color tabActive = Color::rgb(0x2f3138);
 inline constexpr Color statusBg = frame;
@@ -517,6 +523,8 @@ private:
                 dirty_ = true;
             }
         }
+        if (docs_.empty()) animating_ = false;
+        if (stepAnimations(dt)) { animating_ = true; dirty_ = true; }
         pollTasks();
         if (scriptPos_ < script_.size()) stepScript();
         lspSync(now);
@@ -807,6 +815,70 @@ private:
 
     // ============================================================ layout
 
+    // ---- animations
+
+    static float easeInOut(float t) { t = std::clamp(t, 0.0f, 1.0f); return t * t * (3.0f - 2.0f * t); }
+
+    float tabNaturalW(const std::string& name) {
+        const float s = S();
+        return std::clamp(14 * s + iconSize() + 8 * s + uiW(name) + 12 * s + 22 * s + 8 * s, 96 * s, 260 * s);
+    }
+
+    // Keeps one animated entry per open document, plus ghosts for tabs that were just closed.
+    void syncTabs() {
+        std::unordered_set<const Document*> live;
+        for (const auto& d : docs_) live.insert(d.get());
+        std::vector<TabAnim> next;
+        for (auto& e : tabAnim_) {
+            if (!e.ghost && !live.contains(e.doc)) { e.ghost = true; e.target = 0; }
+            if (e.ghost && e.w < 0.6f) continue;
+            next.push_back(std::move(e));
+        }
+        for (std::size_t i = 0; i < docs_.size(); ++i) {
+            const Document* d = docs_[i].get();
+            if (std::ranges::any_of(next, [&](const TabAnim& e) { return !e.ghost && e.doc == d; })) continue;
+            auto at = next.end();
+            if (i > 0) {
+                const Document* prev = docs_[i - 1].get();
+                auto it = std::ranges::find_if(next, [&](const TabAnim& e) { return !e.ghost && e.doc == prev; });
+                if (it != next.end()) at = it + 1;
+            } else {
+                at = next.begin();
+            }
+            TabAnim e;
+            e.doc = d;
+            e.name = d->name;
+            next.insert(at, std::move(e));
+        }
+        for (auto& e : next)
+            if (!e.ghost) {
+                e.name = e.doc->name;
+                e.target = tabNaturalW(e.name);
+            }
+        tabAnim_ = std::move(next);
+        if (frames_ < 2 || (!opt_.screenshot.empty() && !std::getenv("DAEMON_ANIMATE")))
+            for (auto& e : tabAnim_) e.w = e.target;  // no animation at start-up / in captures
+    }
+
+    // Advances tab / side bar / panel animations. Returns true while anything is still moving.
+    bool stepAnimations(float dt) {
+        bool moving = false;
+        const bool snap = frames_ < 3 || (!opt_.screenshot.empty() && !std::getenv("DAEMON_ANIMATE"));
+        auto chase = [&](float& v, float target, float rate) {
+            if (snap || std::abs(target - v) < 0.002f * std::max(1.0f, std::abs(target))) { v = target; return; }
+            v += (target - v) * (1.0f - std::exp(-dt * rate));
+            moving = true;
+        };
+        chase(panelAnim_, panelOpen_ ? 1.0f : 0.0f, 14.0f);
+        chase(sideAnim_, sidebar_ ? 1.0f : 0.0f, 14.0f);
+        for (auto& e : tabAnim_) {
+            if (snap || std::abs(e.target - e.w) < 0.4f) { e.w = e.target; continue; }
+            e.w += (e.target - e.w) * (1.0f - std::exp(-dt * 16.0f));
+            moving = true;
+        }
+        return moving;
+    }
+
     void layout() {
         const float W = static_cast<float>(wLog_ * scale_), H = static_cast<float>(hLog_ * scale_);
         const float s = S(), uh = uiH();
@@ -830,23 +902,25 @@ private:
         const float h = std::max(0.0f, L_.status.y - top);
         // The output panel is its own island below the editor island.
         float panelH = 0;
-        if (panelOpen_) panelH = std::clamp(std::round(panelH_ * s), 90 * s, std::max(90 * s, h * 0.6f));
-        const float panelTotal = panelH > 0 ? panelH + m : 0;
+        const bool panelShown = panelOpen_ || panelAnim_ > 0.002f;
+        if (panelShown) panelH = std::round(std::clamp(std::round(panelH_ * s), 90 * s, std::max(90 * s, h * 0.6f)) * easeInOut(panelAnim_));
+        const float panelTotal = panelH > 0 ? panelH + m * easeInOut(panelAnim_) : 0;
         const float contentRight = W - act;
         L_.activity = {contentRight, top, act, h};
         float sbW = 0;
-        if (sidebar_) sbW = std::clamp(sidebarWidth_ * s, 150 * s, std::max(150 * s, W * 0.5f));
-        const float mainW = std::max(120 * s, contentRight - m - (sidebar_ ? sbW + m : 0));
+        const bool sideShown = sidebar_ || sideAnim_ > 0.002f;
+        if (sideShown) sbW = std::clamp(sidebarWidth_ * s, 150 * s, std::max(150 * s, W * 0.5f)) * easeInOut(sideAnim_);
+        const float mainW = std::max(120 * s, contentRight - m - (sideShown ? sbW + m * easeInOut(sideAnim_) : 0));
         L_.island = {m, top, mainW, std::max(0.0f, h - panelTotal)};
-        L_.side = sidebar_ ? Rect{L_.island.right() + m, top, std::max(0.0f, contentRight - (L_.island.right() + m)), h} : Rect{};
-        L_.split = sidebar_ ? Rect{L_.island.right(), top, m, h} : Rect{};
+        L_.side = sideShown ? Rect{L_.island.right() + m, top, std::max(0.0f, contentRight - (L_.island.right() + m)), h} : Rect{};
+        L_.split = sideShown ? Rect{L_.island.right(), top, m, h} : Rect{};
         L_.sideRow = std::round(uh + 10 * s);
-        L_.sideList = sidebar_ ? Rect{L_.side.x, L_.side.y + tabH, L_.side.w, std::max(0.0f, L_.side.h - tabH)} : Rect{};
+        L_.sideList = sideShown ? Rect{L_.side.x, L_.side.y + tabH, L_.side.w, std::max(0.0f, L_.side.h - tabH)} : Rect{};
         L_.tabs = {L_.island.x, L_.island.y, L_.island.w, tabH};
         L_.crumbs = {L_.island.x, L_.tabs.bottom(), L_.island.w, crumbH};
         L_.prompt = {L_.island.x, L_.island.bottom() - promptH, L_.island.w, promptH};
         float edTop = L_.crumbs.bottom();
-        L_.panel = {L_.island.x, L_.island.bottom() + (panelH > 0 ? m : 0), L_.island.w, panelH};
+        L_.panel = {L_.island.x, L_.island.bottom() + (panelH > 0 ? m * easeInOut(panelAnim_) : 0), L_.island.w, panelH};
         L_.editor = {L_.island.x, edTop, L_.island.w, std::max(0.0f, L_.prompt.y - edTop)};
         const float mapW = L_.island.w > 640 * s ? std::round(92 * s) : 0;
         L_.minimap = {L_.editor.right() - mapW, L_.editor.y, mapW, L_.editor.h};
@@ -875,16 +949,21 @@ private:
         L_.textX = L_.editor.x + L_.gutterW;
         L_.textW = std::max(0.0f, L_.editor.w - L_.gutterW - mapW - 12 * s);
 
-        // Tabs: rounded pills inside the tab strip.
+        // Tabs: animated entries laid out left to right (closed tabs shrink away as ghosts).
+        syncTabs();
         tabHits_.clear();
+        tabDraw_.clear();
         float x = L_.tabs.x + 8 * s;
-        const float gap = 4 * s;
-        for (std::size_t i = 0; i < docs_.size(); ++i) {
-            float w = 12 * s + iconSize() + 8 * s + uiW(docs_[i]->name) + 10 * s + 22 * s + 6 * s;
-            w = std::clamp(w, 110 * s, 280 * s);
-            Rect t{x, L_.tabs.y + 6 * s, w, tabH - 12 * s};
-            Rect c{t.right() - 26 * s, t.y, 22 * s, t.h};
-            tabHits_.push_back({t, c});
+        const float gap = 2 * s;
+        int docIdx = 0;
+        for (const auto& e : tabAnim_) {
+            const float w = std::max(0.0f, e.w);
+            Rect t{x, L_.tabs.y + 5 * s, w, tabH - 5 * s};
+            Rect c{t.right() - 28 * s, t.y, 24 * s, t.h};
+            const float alpha = e.target > 0 ? std::clamp(w / e.target, 0.0f, 1.0f) : std::clamp(w / (96 * s), 0.0f, 1.0f);
+            TabDraw td{t, c, e.ghost ? -1 : docIdx, e.name, alpha};
+            tabDraw_.push_back(td);
+            if (!e.ghost) { tabHits_.push_back({t, c}); ++docIdx; }
             x += w + gap;
         }
     }
@@ -1993,10 +2072,10 @@ private:
     }
 
     void drawPanel() {
-        if (!panelOpen_ || L_.panel.h <= 0) return;
+        if (L_.panel.h <= 0.5f) return;
         const Rect& p = L_.panel;
-        const float s = S(), hair = std::max(1.0f, std::round(s * 0.5f)), hh = panelHeadH();
-        fill(p, Color::rgb(0x101114));
+        const float s = S(), hh = panelHeadH();
+        fill(p, theme::panelBg);
 
         // Body first (rows may overflow the header; the header is painted over them).
         const Rect body = panelBody();
@@ -2038,27 +2117,27 @@ private:
             fill(body.right() - 9 * s, thumbY, 5 * s, thumbH, theme::scrollbar, 2.5f * s);
         }
 
-        // Header.
-        fill(p.x, p.y, p.w, hh, theme::tabBg);
-        fill(p.x, p.y + hh - hair, p.w, hair, theme::border);
+        // Header: darker band, text tabs with an accent underline (no pills, no borders).
+        fill(p.x, p.y, p.w, hh, theme::panelHead);
         static constexpr std::array<std::string_view, 3> names = {"Build", "Run", "Problems"};
-        float x = p.x + 10 * s;
+        float x = p.x + 8 * s;
         for (std::size_t i = 0; i < 3; ++i) {
             std::string t = std::string(names[i]);
             if (i == 2 && !problems_.empty()) t += std::format("  {}", problems_.size());
             const float w = uiW(t) + 28 * s;
-            panelTabRects_[i] = {x, p.y + 5 * s, w, hh - 10 * s};
+            panelTabRects_[i] = {x, p.y + 4 * s, w, hh - 8 * s};
             const bool active = static_cast<int>(i) == panelTab_;
-            if (active) fill(panelTabRects_[i], theme::tabActive, 7 * s);
-            Color c = active ? theme::text : theme::dim;
+            const bool hot = panelTabRects_[i].contains(mx_, my_);
+            Color c = active ? theme::text : (hot ? Color::rgb(0xb4b8c1) : theme::dim);
             if (i == 2 && !problems_.empty()) c = active ? Color::rgb(0xf2777a) : Color::rgb(0xc86a6c);
             uiLabel(x + 14 * s, p.y, hh, t, c);
-            x += w + 4 * s;
+            if (active) fill(x + 14 * s, p.y + hh - std::round(2 * s) - s, uiW(t), std::round(2 * s), i == 2 && !problems_.empty() ? Color::rgb(0xf2777a) : theme::accent, std::round(s));
+            x += w + 2 * s;
         }
         const std::string clear = "Clear";
         const float cwid = uiW(clear) + 24 * s, xs = std::round(hh * 0.72f);
         panelClose_ = {p.right() - 8 * s - xs, p.y + (hh - xs) / 2, xs, xs};
-        panelClear_ = {panelClose_.x - 6 * s - cwid, p.y + 5 * s, cwid, hh - 10 * s};
+        panelClear_ = {panelClose_.x - 6 * s - cwid, p.y + 4 * s, cwid, hh - 8 * s};
         uiLabel(panelClear_.x + 12 * s, p.y, hh, clear, theme::dim);
         const int ci = std::max(8, static_cast<int>(std::round(uiH() * 0.7f)));
         Icons::tool(dl_, font_, std::round(panelClose_.x + (xs - static_cast<float>(ci)) / 2), std::round(panelClose_.y + (xs - static_cast<float>(ci)) / 2), ci,
@@ -3091,19 +3170,22 @@ private:
         carve({0, isl.bottom(), W, H - isl.bottom()});
         carve({0, isl.y, isl.x, isl.h});
         carve({isl.right(), isl.y, W - isl.right(), isl.h});
-        if (sidebar_) drawSidebar();
+        if (L_.side.w > 1) drawSidebar();
         drawActivityBar();
         drawTabs();
         drawCrumbs();
         drawPanel();
         if (prompt_.kind != PromptKind::None) drawPrompt();
-        if (panelOpen_ && L_.panel.h > 0) {
+        if (L_.panel.h > 0.5f) {
             const Rect& pn = L_.panel;
             carve({pn.x, pn.bottom(), pn.w, H - pn.bottom()});  // rows that overflow the bottom edge
             carve(pn, -L_.radius);
         }
         carve(isl, -L_.radius);
-        if (sidebar_) carve(L_.side, -L_.radius);  // inverted rounded rect = clips the four corners
+        if (L_.side.w > 1) {
+            if (sideAnim_ > 0.002f && sideAnim_ < 0.998f) carve({L_.activity.x, L_.side.y, W - L_.activity.x, L_.side.h});  // clip content sliding past the edge
+            carve(L_.side, -L_.radius);
+        }  // inverted rounded rect = clips the four corners
         if (L_.csd) drawTitleBar();
         drawToolbar();
         drawStatus();
@@ -3153,8 +3235,8 @@ private:
 
     void drawSidebar() {
         const Rect& sd = L_.side;
-        const float s = S(), hair = std::max(1.0f, std::round(s * 0.5f)), rh = L_.sideRow;
-        fill(sd, theme::bg);
+        const float s = S(), rh = L_.sideRow;
+        fill(sd, theme::sideBg);
         const float headH = L_.tabs.h;
 
         if (!explorer_.isOpen()) {
@@ -3175,9 +3257,9 @@ private:
                 const bool selected = nd.path.string() == explorer_.selected();
                 const bool active = !activePath.empty() && nd.path.string() == activePath;
                 if (selected && sideFocus_) fill(rr, theme::selection, 6 * s);
-                else if (selected) fill(rr, theme::tabActive, 6 * s);
+                else if (selected) fill(rr, theme::sideSel, 6 * s);
                 else if (active) fill(rr, theme::accent.alpha(40), 6 * s);
-                else if (i == hoverRow_) fill(rr, theme::tabHover, 6 * s);
+                else if (i == hoverRow_) fill(rr, theme::sideHover, 6 * s);
                 const float x = sd.x + 12 * s + static_cast<float>(row.depth) * indent;
                 for (int lvl = 0; lvl < row.depth; ++lvl)
                     fill(std::round(sd.x + 12 * s + static_cast<float>(lvl) * indent + indent * 0.5f), y, std::max(1.0f, std::round(s * 0.5f)), rh, theme::guide);
@@ -3206,8 +3288,7 @@ private:
         }
 
         // Header (opaque, so scrolled rows disappear beneath it).
-        fill(sd.x, sd.y, sd.w, headH, theme::tabBg);
-        fill(sd.x, sd.y + headH - hair, sd.w, hair, theme::border);
+        fill(sd.x, sd.y, sd.w, headH, theme::sideBg);
         std::string title = explorer_.isOpen() ? explorer_.rootName() : "Explorer";
         for (auto& ch : title) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
         const float hx = sd.x + 16 * s;
@@ -3215,28 +3296,37 @@ private:
     }
 
     void drawTabs() {
-        const float s = S(), hair = std::max(1.0f, std::round(s * 0.5f));
-        fill(L_.tabs, theme::tabBg);
-        fill(L_.tabs.x, L_.tabs.bottom() - hair, L_.tabs.w, hair, theme::border);
+        const float s = S();
+        fill(L_.tabs, theme::stripBg);
         const int xs = std::max(8, static_cast<int>(std::round(uiH() * 0.62f)));
-        for (std::size_t i = 0; i < tabHits_.size(); ++i) {
-            const auto& h = tabHits_[i];
-            const bool active = static_cast<int>(i) == cur_;
-            const bool hover = static_cast<int>(i) == hoverTab_;
-            if (active || hover) fill(h.tab, active ? theme::tabActive : theme::tabHover, 8 * s);
-            if (active) fill(h.tab.x + 14 * s, L_.tabs.bottom() - hair - std::round(2 * s), h.tab.w - 28 * s, std::round(2 * s), theme::accent, std::round(s));
-            const Document& d = *docs_[i];
-            drawFileIcon(h.tab.x + 12 * s, h.tab.y + (h.tab.h - iconSize()) / 2, d.name, active ? 1.0f : 0.75f);
-            const Color tc = active ? theme::text : theme::dim;
-            uiLabel(h.tab.x + 12 * s + iconSize() + 8 * s, h.tab.y, h.tab.h, d.name, tc, h.close.x - 2 * s);
-            const bool overClose = hoverClose_ == static_cast<int>(i);
+        auto fade = [](Color c, float a) { return c.alpha(static_cast<std::uint8_t>(static_cast<float>(c.a) * a)); };
+        for (const auto& e : tabDraw_) {
+            const Rect& t = e.tab;
+            if (t.w < 2) continue;
+            const bool live = e.index >= 0;
+            const bool active = live && e.index == cur_;
+            const bool hover = live && e.index == hoverTab_;
+            if (active) {
+                fill(t, fade(theme::editorBg, e.alpha), 9 * s);
+                fill(t.x, t.y + t.h - 12 * s, t.w, 12 * s, fade(theme::editorBg, e.alpha));  // square off the bottom: merges with the editor
+                fill(t.x + 12 * s, t.y, std::max(0.0f, t.w - 24 * s), std::round(2 * s), fade(theme::accent, e.alpha), std::round(s));
+            } else if (hover) {
+                fill(t.x + 1 * s, t.y + 3 * s, t.w - 2 * s, t.h - 3 * s, fade(Color::rgb(0x15171b), e.alpha), 8 * s);
+            }
+            const float ix = t.x + 14 * s;
+            drawFileIcon(ix, t.y + (t.h - iconSize()) / 2 + s, e.name, (active ? 1.0f : 0.7f) * e.alpha);
+            const Color tc = fade(active ? theme::text : theme::dim, e.alpha);
+            uiLabel(ix + iconSize() + 8 * s, t.y + s, t.h, e.name, tc, e.close.x - 2 * s);
+            if (!live) continue;
+            const Document& d = *docs_[static_cast<std::size_t>(e.index)];
+            const bool overClose = hoverClose_ == e.index;
             if (d.modified() && !overClose) {
                 const float dot = std::round(7 * s);
-                fill(h.close.x + (h.close.w - dot) / 2, h.tab.y + (h.tab.h - dot) / 2, dot, dot, theme::accent, dot / 2);
+                fill(e.close.x + (e.close.w - dot) / 2, t.y + (t.h - dot) / 2 + s, dot, dot, fade(theme::accent, e.alpha), dot / 2);
             } else if (active || hover) {
                 const float bs = std::round(18 * s);
-                if (overClose) fill(h.close.x + (h.close.w - bs) / 2, h.tab.y + (h.tab.h - bs) / 2, bs, bs, theme::border, 5 * s);
-                Icons::tool(dl_, font_, std::round(h.close.x + (h.close.w - static_cast<float>(xs)) / 2), std::round(h.tab.y + (h.tab.h - static_cast<float>(xs)) / 2), xs,
+                if (overClose) fill(e.close.x + (e.close.w - bs) / 2, t.y + (t.h - bs) / 2 + s, bs, bs, Color::rgb(0xffffff, 28), 5 * s);
+                Icons::tool(dl_, font_, std::round(e.close.x + (e.close.w - static_cast<float>(xs)) / 2), std::round(t.y + (t.h - static_cast<float>(xs)) / 2 + s), xs,
                             ToolIcon::Close, overClose ? Color::rgb(0xffffff) : theme::dim);
             }
         }
@@ -3564,6 +3654,17 @@ private:
     std::vector<Problem> problems_;
     bool panelOpen_ = false, panelDrag_ = false;
     int panelTab_ = 0;
+    // ---- animation state (tabs, side bar, bottom panel)
+    struct TabAnim {
+        const Document* doc = nullptr;
+        std::string name;
+        float x = 0, w = 0, target = 0;
+        bool ghost = false;   // closed tab still shrinking away
+    };
+    struct TabDraw { Rect tab, close; int index = -1; std::string name; float alpha = 1; };
+    std::vector<TabAnim> tabAnim_;
+    std::vector<TabDraw> tabDraw_;
+    float panelAnim_ = 0, sideAnim_ = 0;
     int compReq_ = -1;
     fs::file_time_type dbStamp_{};
     Clock::time_point nextDbCheck_{};
