@@ -3,7 +3,10 @@ module;
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <stdlib.h>
+#include <sys/ioctl.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
 #include <cerrno>
 export module ide.process;
@@ -18,6 +21,8 @@ struct ProcessOptions {
     std::string cwd;
     bool pipeStdin = false;       // give the child a pipe on stdin (otherwise /dev/null)
     bool mergeStderr = true;      // stderr shares the stdout pipe (otherwise stderr is discarded)
+    bool usePty = false;          // run on a pseudo-terminal: the program behaves as in a terminal (prompts, line-buffered
+                                  // output, echoed input) and stdin / stdout / stderr are all the terminal
 };
 
 // Finds an executable by name on $PATH (or checks a path with a slash).
@@ -61,8 +66,23 @@ public:
         ::signal(SIGPIPE, SIG_IGN);
 
         int out[2] = {-1, -1}, in[2] = {-1, -1};
-        if (::pipe2(out, O_CLOEXEC) < 0) return std::unexpected(std::strerror(errno));
-        if (o.pipeStdin && ::pipe2(in, O_CLOEXEC) < 0) { ::close(out[0]); ::close(out[1]); return std::unexpected(std::strerror(errno)); }
+        int master = -1, slave = -1;
+        if (o.usePty) {
+            master = ::posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+            if (master < 0) return std::unexpected(std::strerror(errno));
+            char name[128];
+            if (::grantpt(master) != 0 || ::unlockpt(master) != 0 || ::ptsname_r(master, name, sizeof name) != 0 ||
+                (slave = ::open(name, O_RDWR | O_NOCTTY | O_CLOEXEC)) < 0) {
+                const std::string e = std::strerror(errno);
+                ::close(master);
+                return std::unexpected(e);
+            }
+            winsize ws{30, 120, 0, 0};
+            ::ioctl(master, TIOCSWINSZ, &ws);
+        } else {
+            if (::pipe2(out, O_CLOEXEC) < 0) return std::unexpected(std::strerror(errno));
+            if (o.pipeStdin && ::pipe2(in, O_CLOEXEC) < 0) { ::close(out[0]); ::close(out[1]); return std::unexpected(std::strerror(errno)); }
+        }
 
         std::vector<char*> argv;
         for (const auto& a : o.argv) argv.push_back(const_cast<char*>(a.c_str()));
@@ -70,9 +90,23 @@ public:
 
         pid_t pid = ::fork();
         if (pid < 0) {
-            ::close(out[0]); ::close(out[1]);
-            if (in[0] >= 0) { ::close(in[0]); ::close(in[1]); }
-            return std::unexpected(std::strerror(errno));
+            const std::string e = std::strerror(errno);
+            if (o.usePty) { ::close(master); ::close(slave); }
+            else {
+                ::close(out[0]); ::close(out[1]);
+                if (in[0] >= 0) { ::close(in[0]); ::close(in[1]); }
+            }
+            return std::unexpected(e);
+        }
+        if (pid == 0 && o.usePty) {  // child on a pseudo-terminal
+            ::setsid();
+            ::ioctl(slave, TIOCSCTTY, 0);
+            ::dup2(slave, 0);
+            ::dup2(slave, 1);
+            ::dup2(slave, 2);
+            if (!o.cwd.empty() && ::chdir(o.cwd.c_str()) != 0) ::_exit(126);
+            ::execv(exe->c_str(), argv.data());
+            ::_exit(127);
         }
         if (pid == 0) {  // child
             ::setsid();  // own process group: lets us signal the whole tree
@@ -85,6 +119,14 @@ public:
             ::_exit(127);
         }
         pid_ = pid;
+        if (o.usePty) {
+            ::close(slave);
+            outFd_ = master;
+            inFd_ = ::fcntl(master, F_DUPFD_CLOEXEC, 3);   // a second handle for writing keystrokes
+            ::fcntl(outFd_, F_SETFL, ::fcntl(outFd_, F_GETFL) | O_NONBLOCK);   // (shared with inFd_)
+            exited_ = false;
+            return {};
+        }
         ::close(out[1]);
         outFd_ = out[0];
         ::fcntl(outFd_, F_SETFL, ::fcntl(outFd_, F_GETFL) | O_NONBLOCK);

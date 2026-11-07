@@ -552,7 +552,31 @@ static void testProjects() {
     fs::remove_all(root);
 }
 
+static void testPty() {
+    Process p;
+    ProcessOptions o;
+    o.argv = {"sh", "-c", "printf 'Name: '; read x; echo \"got $x\"; exit 3"};
+    o.usePty = true;
+    CHECK(p.start(o).has_value());
+    std::string out;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (out.find("Name: ") == std::string::npos && std::chrono::steady_clock::now() < deadline) {
+        pollfd pf{p.outFd(), POLLIN, 0};
+        if (::poll(&pf, 1, 100) > 0) p.read(out);
+    }
+    CHECK(out.find("Name: ") != std::string::npos);   // the prompt arrives before any input (no pipe buffering)
+    CHECK(p.write("bob\n"));
+    while (out.find("got bob") == std::string::npos && std::chrono::steady_clock::now() < deadline) {
+        pollfd pf{p.outFd(), POLLIN, 0};
+        if (::poll(&pf, 1, 100) > 0 && p.read(out) == 0) break;
+    }
+    CHECK(out.find("got bob") != std::string::npos);
+    for (int i = 0; i < 100 && !p.tryWait(); ++i) { p.read(out); std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
+    CHECK(p.tryWait().value_or(-1) == 3);
+}
+
 int main() {
+    testPty();
     testProjects();
     testModules();
     testCMakeCompletion();

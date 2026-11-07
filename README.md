@@ -104,3 +104,10 @@ With no arguments Daemon starts on a welcome screen (also reachable by clicking 
 - **Open Folder** (Ctrl+Shift+O): an in-app folder browser with places, a path field, hidden-folder toggle and a
   "CMake" badge on folders that contain a `CMakeLists.txt`.
 - **Recent projects** are kept in `$XDG_CONFIG_HOME/daemon/state.json` (default `~/.config/daemon/state.json`).
+
+## Running programs
+
+Programs started with Run (Shift+F10) run on a pseudo-terminal, so they behave as in a terminal: prompts appear
+immediately (no output buffering), and `std::cin` / `scanf` read what you type. While a program runs, keystrokes in
+the Run panel go to it (Esc or a click elsewhere releases them; Ctrl+C interrupts, Ctrl+D ends input). Click the Run
+output to give the keyboard back to the program.

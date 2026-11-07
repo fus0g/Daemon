@@ -151,6 +151,11 @@ public:
             auto bar = spec.find('|', pos);
             std::string_view tok = spec.substr(pos, bar == std::string_view::npos ? bar : bar - pos);
             const std::size_t next = bar == std::string_view::npos ? spec.size() : bar + 1;
+            if (tok == "waitrun") {   // test hook: until the program is running (or nothing is going to run)
+                if (!runProc_ && (buildProc_ || pendingBuild_)) return;
+                pos = next;
+                continue;
+            }
             if (tok == "wait") {
                 if (!scriptReady()) return;  // retried from update()
                 pos = next;
@@ -1198,11 +1203,35 @@ private:
 
     // ============================================================ input: keyboard
 
+    // Keystrokes for the running program (it sits on a pseudo-terminal, so the kernel echoes and line-edits).
+    // Returns false for keys that should keep their normal (global) meaning.
+    bool runKey(const KeyEvent& k) {
+        if (k.alt || k.super) return false;
+        if (k.key == Key::Escape) { runFocus_ = false; return true; }
+        if (k.ctrl) {
+            if (k.key != Key::Char) return false;
+            if (k.ch == 'c' && !k.shift) { runProc_->write("\x03"); return true; }   // interrupt
+            if (k.ch == 'd' && !k.shift) { runProc_->write("\x04"); return true; }   // end of input
+            if (k.ch == 'v' && !k.shift) { std::string c = win_.clipboard(); std::erase(c, '\r'); runProc_->write(c); return true; }
+            return false;
+        }
+        switch (k.key) {
+            case Key::Enter: runProc_->write("\n"); return true;
+            case Key::Backspace: runProc_->write("\x7f"); return true;
+            case Key::Tab: runProc_->write("\t"); return true;
+            case Key::Left: case Key::Right: case Key::Up: case Key::Down: case Key::Home: case Key::End:
+            case Key::PageUp: case Key::PageDown: case Key::Delete: case Key::Insert: return true;
+            case Key::Char: if (!k.text.empty()) runProc_->write(k.text); return true;
+            default: return false;   // function keys (build / run / stop ...) keep working
+        }
+    }
+
     void onKey(const KeyEvent& k) {
         resetCaret();
         if (!(k.ctrl && k.key == Key::Char && k.ch == 'q')) quitArmed_ = false;
         if (!(k.ctrl && k.key == Key::Char && k.ch == 'w')) closeArmed_ = -1;
         if (dlg_.kind != DlgKind::None) { dlgKey(k); dirty_ = true; return; }
+        if (runFocus_ && runProc_ && panelOpen_ && panelTab_ == 1 && runKey(k)) { dirty_ = true; return; }
         if (tabDrag_.active) {  // a tab is being dragged: Esc cancels, other keys are ignored
             if (k.key == Key::Escape) { tabDrag_ = {}; dirty_ = true; }
             return;
@@ -1979,6 +2008,18 @@ private:
 
     bool tasksRunning() const { return buildProc_ || runProc_; }
 
+    // Terminal text -> plain text: strips ANSI sequences and applies backspaces (the echo of a deleted character
+    // arrives as "\b \b"); other control characters are dropped.
+    static std::string cleanTerm(std::string_view raw) {
+        const std::string t = stripAnsi(raw);
+        std::string out;
+        for (char c : t) {
+            if (c == '\b') { if (!out.empty()) out.erase(utf8Prev(out, out.size())); }
+            else if (c == '\t' || static_cast<unsigned char>(c) >= 0x20) out += c;
+        }
+        return out;
+    }
+
     static std::vector<std::string> takeLines(std::string& partial, std::string_view chunk) {
         partial.append(chunk);
         std::vector<std::string> lines;
@@ -2075,6 +2116,7 @@ private:
         runOut_.clear();
         runPartial_.clear();
         ProcessOptions o;
+        o.usePty = true;   // the program runs on a terminal: prompts show immediately and it can read the keyboard
         o.argv = {t.artifact.string()};
         for (auto& a : splitArgs(runArgs_)) o.argv.push_back(a);
         o.cwd = t.artifact.parent_path().string();
@@ -2091,6 +2133,7 @@ private:
             return;
         }
         runEof_ = false;
+        runFocus_ = true;   // keystrokes go to the program (Esc or a click elsewhere releases them)
         buildStatus_ = "Running " + t.name;
         win_.watch(runProc_->outFd(), [this] { pumpRun(); });
         dirty_ = true;
@@ -2101,7 +2144,7 @@ private:
         std::string chunk;
         long n = runProc_->read(chunk);
         if (!chunk.empty()) {
-            for (auto& l : takeLines(runPartial_, chunk)) runOut_.push_back({stripAnsi(l), 0, -1});
+            for (auto& l : takeLines(runPartial_, chunk)) runOut_.push_back({cleanTerm(l), 0, -1});
             if (runOut_.size() > 30000) runOut_.erase(runOut_.begin(), runOut_.begin() + 5000);
         }
         dirty_ = true;
@@ -2113,7 +2156,8 @@ private:
     }
 
     void finishRun(int code) {
-        if (!runPartial_.empty()) { runOut_.push_back({stripAnsi(runPartial_), 0, -1}); runPartial_.clear(); }
+        if (!runPartial_.empty()) { runOut_.push_back({cleanTerm(runPartial_), 0, -1}); runPartial_.clear(); }
+        runFocus_ = false;
         runOut_.push_back({"", 0, -1});
         runOut_.push_back({std::format("Process finished with exit code {}", code), code == 0 ? 5 : 2, -1});
         runProc_.reset();
@@ -2267,7 +2311,10 @@ private:
         }
     }
 
-    std::size_t panelRowCount() const { return panelTab_ == 2 ? shownProblems_.size() : panelLines().size(); }
+    std::size_t panelRowCount() const {
+        if (panelTab_ == 2) return shownProblems_.size();
+        return panelLines().size() + (panelTab_ == 1 && runProc_ ? 1 : 0);   // + the line the program is still writing
+    }
     float panelHeadH() const { return std::round(font_.uiLineHeight() + 14 * S()); }
     Rect panelBody() const {
         const Rect& p = L_.panel;
@@ -2278,9 +2325,10 @@ private:
     void panelClick(Button b) {
         const Rect& p = L_.panel;
         if (b != Button::Left) return;
+        runFocus_ = false;
         if (my_ < p.y + 6 * S()) { panelDrag_ = true; return; }  // splitter at the top edge
         for (std::size_t i = 0; i < panelTabRects_.size(); ++i)
-            if (panelTabRects_[i].contains(mx_, my_)) { panelTab_ = static_cast<int>(i); dirty_ = true; return; }
+            if (panelTabRects_[i].contains(mx_, my_)) { panelTab_ = static_cast<int>(i); runFocus_ = panelTab_ == 1 && runProc_; dirty_ = true; return; }
         if (panelClose_.contains(mx_, my_)) { panelOpen_ = false; dirty_ = true; return; }
         if (panelClear_.contains(mx_, my_)) {
             if (panelTab_ == 1) runOut_.clear(); else if (panelTab_ == 0) { buildOut_.clear(); problems_.clear(); }
@@ -2290,6 +2338,7 @@ private:
         }
         Rect body = panelBody();
         if (body.contains(mx_, my_)) {
+            runFocus_ = panelTab_ == 1 && runProc_;   // clicking the Run output gives the program the keyboard
             int row = static_cast<int>(std::floor((my_ - body.y + panelScroll_[static_cast<std::size_t>(panelTab_)]) / lh()));
             if (panelTab_ == 2) {
                 if (row >= 0 && row < static_cast<int>(shownProblems_.size())) gotoProblem(shownProblems_[static_cast<std::size_t>(row)]);
@@ -2328,10 +2377,18 @@ private:
                 sev = pr.severity == Severity::Error ? 2 : pr.severity == Severity::Warning ? 1 : 3;
                 clickable = true;
             } else {
-                const OutLine& ol = panelLines()[static_cast<std::size_t>(i)];
-                text = ol.text;
-                sev = ol.sev;
-                clickable = ol.problem >= 0;
+                if (panelTab_ == 1 && static_cast<std::size_t>(i) >= runOut_.size()) {   // live line: partial output + caret
+                    text = cleanTerm(runPartial_);
+                    if (runFocus_ && caretOn_ && focused_) {
+                        const float cx = body.x + 14 * s + static_cast<float>(utf8Length(text)) * cw();
+                        fill(std::round(cx), y + 2 * s, std::max(2.0f, std::round(cw() * 0.55f)), lh() - 4 * s, theme::caret.alpha(210));
+                    }
+                } else {
+                    const OutLine& ol = panelLines()[static_cast<std::size_t>(i)];
+                    text = ol.text;
+                    sev = ol.sev;
+                    clickable = ol.problem >= 0;
+                }
             }
             if (clickable && i == hoverPanelRow_) fill(body.x + 4 * s, y, body.w - 8 * s, lh(), theme::tabHover, 4 * s);
             label(body.x + 14 * s, y, text, outColor(sev), body.right() - 10 * s);
@@ -2369,6 +2426,8 @@ private:
         panelClose_ = {p.right() - 8 * s - xs, p.y + (hh - xs) / 2, xs, xs};
         panelClear_ = {panelClose_.x - 6 * s - cwid, p.y + 4 * s, cwid, hh - 8 * s};
         uiLabel(panelClear_.x + 12 * s, p.y, hh, clear, theme::dim);
+        if (runProc_ && panelTab_ == 1)
+            uiLabelR(panelClear_.x - 14 * s, p.y, hh, runFocus_ ? "Typing goes to the program  \xC2\xB7  Esc to release" : "Click here to type input", runFocus_ ? theme::accent : theme::lineNum);
         const int ci = std::max(8, static_cast<int>(std::round(uiH() * 0.7f)));
         Icons::tool(dl_, font_, std::round(panelClose_.x + (xs - static_cast<float>(ci)) / 2), std::round(panelClose_.y + (xs - static_cast<float>(ci)) / 2), ci,
                     ToolIcon::Close, theme::dim);
@@ -3359,6 +3418,7 @@ private:
             if (pressed) dlgClick(b, mx_, my_);
             return;
         }
+        if (pressed && !(panelOpen_ && L_.panel.contains(mx_, my_))) runFocus_ = false;
         if (menu_.open) {  // the menu captures the click; clicking outside just dismisses it
             if (pressed) {
                 int i = menuItemAt(mx_, my_);
@@ -4696,6 +4756,7 @@ private:
     std::string runArgs_;
     std::unique_ptr<Process> buildProc_, runProc_;
     TaskKind buildKind_ = TaskKind::None;
+    bool runFocus_ = false;
     bool buildEof_ = false, runEof_ = false, runAfterBuild_ = false, pendingBuild_ = false;
     std::string buildPartial_, runPartial_, buildStatus_;
     int buildCur_ = 0, buildTotal_ = 0;
