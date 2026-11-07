@@ -833,8 +833,8 @@ private:
             if (hot && !active) fill(r, Color::rgb(0xffffff, 26), r.w / 2);
             const float ix = std::round(r.x + (r.w - static_cast<float>(ip)) / 2), iy = std::round(r.y + (r.h - static_cast<float>(ip)) / 2);
             const Color col = active ? theme::accent.mix(Color::rgb(0xffffff), 0.14f) : Color::rgb(0xffffff);   // the active view's icon takes the accent
-            // Material Design icons: folder, source-branch, terminal, alert.
-            static constexpr std::array<char32_t, 5> glyphs = {0xF0256, 0xF062C, 0xF09ED, 0xF018D, 0xF002A};
+            // Material Design icons: file-tree, source-branch, script-text-play (output), console-line (terminal), alert.
+            static constexpr std::array<char32_t, 5> glyphs = {0xF13D2, 0xF062C, 0xF1728, 0xF07B7, 0xF002A};
             Icons::glyph(dl_, font_, ix, iy, ip, glyphs[static_cast<std::size_t>(i)], col);
             if (i == 4 && hasErrors) {
                 const float d = std::round(7 * s);
