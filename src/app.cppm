@@ -2512,10 +2512,6 @@ private:
         const Rect& cl = tool_.cluster;
         fill(cl, Color::rgb(0xffffff, 34), cl.h / 2);
         fill(cl.x + hair, cl.y + hair, cl.w - 2 * hair, cl.h - 2 * hair, Color::rgb(0x0d0e11), cl.h / 2 - hair);
-        if (busy && buildTotal_ > 0) {   // build progress runs along the bottom edge of the pill
-            const float pw = (cl.w - 2 * hair) * static_cast<float>(buildCur_) / static_cast<float>(buildTotal_);
-            fill(cl.x + cl.h / 2, cl.bottom() - std::round(3 * s), std::max(0.0f, std::min(pw, cl.w - cl.h)), std::round(2 * s), theme::accent, s);
-        }
         const int ip = std::max(14, static_cast<int>(std::round(cl.h * 0.6f)));
         struct Btn { const Rect* r; char32_t glyph; Color color; bool enabled; int id; bool primary; };
         const bool canRun = !busy && target_ >= 0;
