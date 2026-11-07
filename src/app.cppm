@@ -4139,7 +4139,7 @@ private:
     fs::path fileOpPath_;
     bool deleteForever_ = false;
     bool sidebar_ = false, sideFocus_ = false, sideReveal_ = false, splitDrag_ = false;
-    float sidebarWidth_ = 280;   // logical px
+    float sidebarWidth_ = 340;   // logical px
     float sideScroll_ = 0, sideTarget_ = 0;
     int hoverRow_ = -1;
     struct CaretAnim {
