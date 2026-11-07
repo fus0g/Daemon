@@ -74,3 +74,15 @@ Daemon draws the window chrome (title bar, status bar, gaps between panels) tran
 what is behind it (`ext-background-effect-v1`, supported by GNOME 51+ and KWin). The panels themselves ("islands") are
 opaque, and the code editor is near-black. Without alpha support or the protocol the chrome falls back to a solid colour;
 set `DAEMON_OPAQUE=1` to force that.
+
+## C++20 modules IntelliSense
+
+Daemon starts clangd with `--experimental-modules-support` and `--completion-parse=always`. CMake + GCC projects that
+use modules (`-fmodules-ts`, `import std;`) get a derived, Clang-flavoured compile database in
+`<build>/.daemon/clangd/` (same sources, defines and includes, driven by `clang++` with libstdc++, duplicate BMI
+entries folded away, libstdc++'s `bits/std.cc` kept as the `std` module source). clangd then builds its own BMIs, so
+`import std;` and `import your.module;` resolve, and completion, diagnostics, hover and go-to-definition see through them.
+The status bar shows `clangd · modules` when this is active.
+
+On top of clangd: `import` statements complete project module names (and `std`, `std.compat`), and Go to Definition
+on a module name jumps to its interface unit. `IDE_LSP_TRACE=1` prints the LSP traffic to stderr.

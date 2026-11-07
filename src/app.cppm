@@ -85,6 +85,7 @@ struct Rect {
 class App {
 public:
     explicit App(Options opts) : opt_(std::move(opts)) {}
+    ~App() { lsp_.reset(); }  // while the members its callbacks touch are still alive
 
     std::expected<void, std::string> init() {
         fontSize_ = opt_.fontSize;
@@ -288,6 +289,7 @@ private:
         std::vector<int> shown;   // indices into all, filtered and ranked
         int sel = 0, scroll = 0;
         Pos anchor;               // start of the identifier being completed
+        bool dotted = false;      // module names: "." and ":" belong to the word
     };
     struct Hover {
         bool pending = false, show = false;
@@ -424,6 +426,7 @@ private:
         if (auto r = d.save(); r) {
             setMessage("Saved " + d.name);
             if (lsp_ && d.lspOpen) lsp_->didSave(d.path);
+            if (isCppDoc(d) && !modules_.empty()) refreshModules();  // a module may have been renamed
             if (explorer_.isOpen()) explorer_.refresh();
             if (cmakeOpen_ && (d.name == "CMakeLists.txt" || d.name.ends_with(".cmake")) && !buildProc_) cmakeReload();
         } else setMessage(r.error(), true);
@@ -959,8 +962,20 @@ private:
             }
             return;
         }
-        std::vector<std::string> argv = {*exe, "--background-index", "--header-insertion=never", "--log=error"};
-        if (cmakeOpen_ && fs::exists(compileCommands(profile()))) argv.push_back("--compile-commands-dir=" + profile().dir.string());
+        std::vector<std::string> argv = {*exe, "--background-index", "--header-insertion=never", "--log=error",
+                                         "--experimental-modules-support",
+                                         "--completion-parse=always"};  // real AST completions, never the text-based fallback
+        clangdModules_ = false;
+        if (cmakeOpen_ && fs::exists(compileCommands(profile()))) {
+            // GCC-style module builds get a Clang-flavoured database so clangd can build BMIs (import std; import foo;).
+            if (auto db = prepareClangdDb(profile().dir)) {
+                argv.push_back("--compile-commands-dir=" + profile().dir.string()); (void)db;
+                clangdModules_ = db->derived;
+            } else {
+                argv.push_back("--compile-commands-dir=" + profile().dir.string());
+            }
+            refreshModules();
+        }
         std::string root = cmakeOpen_ ? cmakeRoot_.string() : (explorer_.isOpen() ? explorer_.rootPath().string() : fs::current_path().string());
         lsp_ = std::make_unique<LspClient>();
         lsp_->onDiagnostics = [this](const std::string& path, std::vector<LspDiag> d) {
@@ -968,7 +983,7 @@ private:
             dirty_ = true;
         };
         lsp_->onState = [this](LspClient::State st) {
-            lspStatus_ = st == LspClient::State::Ready ? "clangd" : st == LspClient::State::Starting ? "clangd starting" : "clangd stopped";
+            lspStatus_ = st == LspClient::State::Ready ? (clangdModules_ ? "clangd \xC2\xB7 modules" : "clangd") : st == LspClient::State::Starting ? "clangd starting" : "clangd stopped";
             dirty_ = true;
         };
         if (auto r = lsp_->start(argv, root); !r) {
@@ -982,6 +997,67 @@ private:
         for (auto& d : docs_) attachLsp(*d);  // queued by the client until the handshake completes
     }
 
+    // ---- C++20 modules: project module list (for `import` completion and navigation)
+
+    void refreshModules() {
+        modules_.clear();
+        if (!cmakeOpen_) return;
+        modules_ = scanModules(compileCommands(profile()));
+    }
+
+    const ModuleDecl* findModule(const std::string& name) const {
+        for (const auto& m : modules_) if (m.interface && m.name == name) return &m;
+        return nullptr;
+    }
+
+    // Completion inside `import <name>;`: module names from the project (and std).
+    bool completeImport(Document& d) {
+        const std::string& ln = d.buf.line(d.cursor.line);
+        auto start = importNameStart(ln, static_cast<std::size_t>(d.cursor.col));
+        if (!start || modules_.empty()) return false;
+        std::vector<LspCompletion> items;
+        for (const auto& m : modules_) {
+            if (!m.interface) continue;
+            LspCompletion it;
+            it.label = m.name;
+            it.kind = 9;
+            const bool lib = m.name == "std" || m.name == "std.compat";
+            it.detail = lib ? "standard library" : (m.name.find(':') != std::string::npos ? "partition" : "module");
+            it.sortText = (lib ? "1" : "0") + m.name;
+            items.push_back(std::move(it));
+        }
+        if (items.empty()) return false;
+        showCompletion(std::move(items), d.cursor, static_cast<int>(*start));
+        return true;
+    }
+
+    bool gotoModule(Document& d) {
+        auto name = importNameAt(d.buf.line(d.cursor.line), static_cast<std::size_t>(d.cursor.col));
+        if (!name) return false;
+        std::string full = *name;
+        if (full.starts_with(':')) {  // partition of the current module: ide.app + :part
+            for (const auto& m : modules_)
+                if (m.path == fs::path(d.path)) { full = m.name.substr(0, m.name.find(':')) + full; break; }
+        }
+        const ModuleDecl* m = findModule(full);
+        if (!m) return false;
+        navBack_.push_back({d.path, d.cursor});
+        const std::string path = m->path.string();
+        openFile(path);
+        if (docs_.empty()) return true;
+        Document& nd = doc();
+        for (int i = 0; i < nd.buf.lineCount(); ++i) {
+            const std::string& l = nd.buf.line(i);
+            if (l.find("module") != std::string::npos && l.find(full) != std::string::npos && l.find(';') != std::string::npos) {
+                nd.setCursor({i, 0});
+                break;
+            }
+        }
+        scrollToCursor_ = true;
+        dirty_ = true;
+        return true;
+    }
+
     void pumpLsp() {
         if (!lsp_) return;
         lsp_->pump();
@@ -993,6 +1069,7 @@ private:
         if (lspFd_ >= 0) win_.unwatch(lspFd_);
         lspFd_ = -1;
         lsp_.reset();
+        compReq_ = -1;
         diags_.clear();
         closeCompletion();
         for (auto& d : docs_) d->lspOpen = false;
@@ -1065,7 +1142,9 @@ private:
     void closeCompletion() { if (comp_.open) { comp_ = {}; dirty_ = true; } }
 
     void requestCompletion(int triggerKind) {
-        if (!lsp_ || !lsp_->ready() || docs_.empty()) return;
+        if (docs_.empty()) return;
+        if (isCppDoc(doc()) && completeImport(doc())) return;
+        if (!lsp_ || !lsp_->ready()) return;
         Document& d = doc();
         if (!isCppDoc(d) || !d.lspOpen) return;
         flushDoc(d);
@@ -1073,7 +1152,8 @@ private:
         const Document* dp = &d;
         const std::uint64_t seq = ++compSeq_;
         auto [l, c] = lspPos(d, at);
-        lsp_->completion(d.path, l, c, triggerKind, [this, seq, at, dp](std::vector<LspCompletion> items) {
+        lsp_->cancel(compReq_);  // a newer keystroke supersedes the pending request
+        compReq_ = lsp_->completion(d.path, l, c, triggerKind, [this, seq, at, dp](std::vector<LspCompletion> items) {
             if (seq != compSeq_ || docs_.empty() || &doc() != dp) return;
             Document& d = doc();
             const std::string& ln = d.buf.line(at.line);
@@ -1084,15 +1164,17 @@ private:
         });
     }
 
-    void showCompletion(std::vector<LspCompletion> items, Pos at) {
+    void showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol = -1) {
         Document& d = doc();
         const std::string& ln = d.buf.line(at.line);
         int a = at.col;
-        while (a > 0 && identChar(ln[static_cast<std::size_t>(a - 1)])) --a;
+        if (anchorCol >= 0) a = anchorCol;
+        else while (a > 0 && identChar(ln[static_cast<std::size_t>(a - 1)])) --a;
         std::ranges::stable_sort(items, [](const LspCompletion& x, const LspCompletion& y) { return x.sortText < y.sortText; });
         comp_ = {};
         comp_.all = std::move(items);
         comp_.anchor = {at.line, a};
+        comp_.dotted = anchorCol >= 0;
         comp_.open = true;
         refilterCompletion();
         dirty_ = true;
@@ -1132,7 +1214,8 @@ private:
         if (d.cursor.line != comp_.anchor.line || d.cursor.col < comp_.anchor.col) { closeCompletion(); return; }
         const std::string& ln = d.buf.line(comp_.anchor.line);
         const std::string prefix = ln.substr(static_cast<std::size_t>(comp_.anchor.col), static_cast<std::size_t>(d.cursor.col - comp_.anchor.col));
-        if (!std::ranges::all_of(prefix, [](char c) { return identChar(c); })) { closeCompletion(); return; }
+        const bool dotted = comp_.dotted;
+        if (!std::ranges::all_of(prefix, [dotted](char c) { return identChar(c) || (dotted && (c == '.' || c == ':')); })) { closeCompletion(); return; }
         std::vector<std::pair<int, int>> scored;
         for (int i = 0; i < static_cast<int>(comp_.all.size()); ++i) {
             const auto& it = comp_.all[static_cast<std::size_t>(i)];
@@ -1204,6 +1287,14 @@ private:
             else if (c == ' ' || c == '(') requestCMakeCompletion();
             else closeCompletion();
             return;
+        }
+        if (isCppDoc(d) && !modules_.empty() && !k.ctrl && !k.alt && !k.text.empty() && d.buf.version() != verBefore) {
+            const char c = k.text.back();
+            if ((identChar(c) || c == '.' || c == ':' || c == ' ') &&
+                importNameStart(d.buf.line(d.cursor.line), static_cast<std::size_t>(d.cursor.col))) {
+                if (!comp_.open) requestCompletion(1);
+                return;
+            }
         }
         if (!lsp_ || !lsp_->ready() || !isCppDoc(d)) return;
         if (k.ctrl && !k.alt && k.key == Key::Char && k.ch == ' ') { requestCompletion(1); return; }
@@ -1423,6 +1514,7 @@ private:
     void gotoDefinition() {
         if (docs_.empty()) return;
         Document& d = doc();
+        if (isCppDoc(d) && gotoModule(d)) return;  // `import ide.json;` jumps to the module interface
         if (!lsp_ || !lsp_->ready() || !isCppDoc(d) || !d.lspOpen) { setMessage("Language server not ready", true, 2.5f); return; }
         flushDoc(d);
         auto [l, c] = lspPos(d, d.cursor);
@@ -1487,7 +1579,7 @@ private:
         buildStatus_.clear();
         if (isConfigured(profile())) loadTargetsNow();
         if (targets_.empty()) cmakeReload();  // like CLion: load the project automatically
-        else buildStatus_ = "CMake ready";
+        else { buildStatus_ = "CMake ready"; restartLsp(); }  // pick up the project's compile database
         dirty_ = true;
     }
 
@@ -3451,7 +3543,10 @@ private:
     std::vector<Problem> problems_;
     bool panelOpen_ = false, panelDrag_ = false;
     int panelTab_ = 0;
+    int compReq_ = -1;
     CMakeKnowledge cmakeKb_;
+    std::vector<ModuleDecl> modules_;
+    bool clangdModules_ = false;
     float panelH_ = 230;   // logical px
     std::array<float, 3> panelScroll_{};
     std::array<bool, 3> panelFollow_{true, true, true};

@@ -88,7 +88,12 @@ public:
     std::function<void(const std::string& path, std::vector<LspDiag>)> onDiagnostics;
     std::function<void(State)> onState;
 
-    ~LspClient() { stop(); }
+    // Callbacks usually capture their owner, which may already be partly destroyed when we are: never fire them from here.
+    ~LspClient() {
+        onState = nullptr;
+        onDiagnostics = nullptr;
+        stop();
+    }
 
     // `argv[0]` is the server executable, e.g. {"clangd", "--compile-commands-dir=build"}.
     std::expected<void, std::string> start(std::vector<std::string> argv, const std::string& rootPath) {
@@ -193,11 +198,18 @@ public:
 
     // ---- requests
 
-    void completion(const std::string& path, int line, int col, int triggerKind,
-                    std::function<void(std::vector<LspCompletion>)> cb) {
+    // Tells the server a request is no longer wanted (its late answer is dropped).
+    void cancel(int id) {
+        if (id < 0 || !pending_.erase(id)) return;
+        notify("$/cancelRequest", json::object().set("id", id));
+    }
+
+    // Returns the request id (for cancel()).
+    int completion(const std::string& path, int line, int col, int triggerKind,
+                   std::function<void(std::vector<LspCompletion>)> cb) {
         auto params = positionParams(path, line, col);
         params.set("context", json::object().set("triggerKind", triggerKind));
-        request("textDocument/completion", std::move(params), [cb = std::move(cb)](const json::Value& r, bool err) {
+        return request("textDocument/completion", std::move(params), [cb = std::move(cb)](const json::Value& r, bool err) {
             std::vector<LspCompletion> out;
             if (!err) {
                 const json::Value* items = &r;
@@ -283,7 +295,10 @@ private:
     }
     static std::string frame(const std::string& body) { return std::format("Content-Length: {}\r\n\r\n{}", body.size(), body); }
 
+    static bool trace() { static const bool on = std::getenv("IDE_LSP_TRACE") != nullptr; return on; }
+
     void send(const std::string& framed) {
+        if (trace()) std::println(std::cerr, ">> {}", framed.substr(framed.find("\r\n\r\n") + 4, 240));
         if (proc_ && !proc_->write(framed)) setState(State::Failed);
     }
 
@@ -298,12 +313,13 @@ private:
         post(frame(json::dump(makeNotification(method, std::move(params)))), immediate);
     }
 
-    void request(const std::string& method, json::Value params, std::function<void(const json::Value&, bool)> cb,
-                 bool immediate = false) {
-        if (!proc_) { cb(json::Value(), true); return; }
+    int request(const std::string& method, json::Value params, std::function<void(const json::Value&, bool)> cb,
+                bool immediate = false) {
+        if (!proc_) { cb(json::Value(), true); return -1; }
         int id = nextId_++;
         pending_[id] = std::move(cb);
         post(frame(json::dump(makeRequest(method, std::move(params), id))), immediate);
+        return id;
     }
 
     void parseBuffer() {
@@ -336,6 +352,7 @@ private:
     }
 
     void handle(const json::Value& msg) {
+        if (trace()) std::println(std::cerr, "<< {}", json::dump(msg).substr(0, 240));
         const bool hasMethod = msg["method"].isString();
         const bool hasId = !msg["id"].isNull();
         if (hasMethod && hasId) {  // server -> client request: acknowledge so the server never stalls

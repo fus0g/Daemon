@@ -534,4 +534,197 @@ inline std::vector<CMakeItem> cmakeCompletions(const CMakeKnowledge& kb, std::st
     return out;
 }
 
+// ---------------------------------------------------------------------------------------------
+// C++20 modules support for clangd.
+//
+// CMake + GCC writes a compile_commands.json full of GCC-only module flags (-fmodules-ts,
+// -fmodule-mapper, p1689 dependency output, duplicate "synthesized BMI" entries), which clangd can
+// not interpret: `import foo;` and `import std;` stay unresolved. clangd (with
+// --experimental-modules-support) can however build its own Clang BMIs from the module sources, as
+// long as the compile database describes them in Clang's terms. So we derive such a database:
+// same sources, same defines / include paths / standard, driven by clang++ with libstdc++. The
+// `std` module is included because CMake lists libstdc++'s bits/std.cc as a module source.
+
+inline bool isModuleInterfaceExt(const fs::path& p) {
+    const std::string e = p.extension().string();
+    return e == ".cppm" || e == ".ixx" || e == ".mpp" || e == ".ccm" || e == ".cxxm" || e == ".c++m";
+}
+
+namespace cmake_detail {
+
+inline std::vector<std::string> entryArgs(const json::Value& e) {
+    std::vector<std::string> a;
+    if (auto* arr = e["arguments"].array()) {
+        for (const auto& x : *arr) a.push_back(x.str());
+    } else {
+        a = splitArgs(e["command"].str());
+    }
+    return a;
+}
+
+inline bool usesGccModules(const std::vector<std::string>& args) {
+    return std::ranges::any_of(args, [](const std::string& a) {
+        return a == "-fmodules-ts" || a.starts_with("-fmodule-mapper=") || a.starts_with("-fdeps-format=");
+    });
+}
+
+}  // namespace cmake_detail
+
+struct ClangdDb {
+    fs::path dir;          // value for --compile-commands-dir
+    bool derived = false;  // true when a Clang-flavoured copy was generated
+    int sources = 0;
+};
+
+// Returns the compile-database directory clangd should use for `buildDir`, generating the derived
+// module-aware database under <buildDir>/.daemon/clangd when the CMake one targets GCC modules.
+inline std::optional<ClangdDb> prepareClangdDb(const fs::path& buildDir) {
+    using namespace cmake_detail;
+    const fs::path src = buildDir / "compile_commands.json";
+    std::error_code ec;
+    if (!fs::is_regular_file(src, ec)) return std::nullopt;
+    const fs::path outDir = buildDir / ".daemon" / "clangd";
+    const fs::path out = outDir / "compile_commands.json";
+    auto parsed = readJson(src);
+    if (!parsed || !parsed->array()) return ClangdDb{buildDir, false, 0};
+
+    bool gccModules = false;
+    for (const auto& e : *parsed->array())
+        if (usesGccModules(entryArgs(e))) { gccModules = true; break; }
+    if (!gccModules) return ClangdDb{buildDir, false, static_cast<int>(parsed->array()->size())};
+
+    // Up to date?
+    if (fs::is_regular_file(out, ec) && fs::last_write_time(out, ec) >= fs::last_write_time(src, ec))
+        return ClangdDb{outDir, true, 0};
+
+    auto clang = findExecutable("clang++");
+    if (!clang) return ClangdDb{buildDir, false, 0};
+
+    std::vector<std::string> order;
+    std::unordered_map<std::string, json::Value> entries;
+    std::unordered_map<std::string, bool> viaBmiOnly;
+    for (const auto& e : *parsed->array()) {
+        const std::string file = e["file"].str();
+        if (file.empty()) continue;
+        const auto args = entryArgs(e);
+        if (args.empty()) continue;
+        bool bmiOnly = false;
+        std::vector<std::string> out_{*clang};
+        for (std::size_t i = 1; i < args.size(); ++i) {
+            const std::string& a = args[i];
+            if (a == "-o" || a == "-MT" || a == "-MF" || a == "-MQ") { ++i; continue; }
+            if (a == "-c" || a == "-MD" || a == "-MMD" || a == "-fmodules-ts") continue;
+            if (a == "-fmodule-only") { bmiOnly = true; continue; }
+            if (a.starts_with("-fmodule-mapper=") || a.starts_with("-fdeps-") || a.starts_with("-fdiagnostics-color") ||
+                a.starts_with("-fcolor-diagnostics") || a == "-fconcepts-diagnostics-depth")
+                continue;
+            if (a == file) continue;
+            out_.push_back(a);
+        }
+        const std::string name = fs::path(file).filename().string();
+        const bool moduleSource = isModuleInterfaceExt(file) || name == "std.cc" || name == "std.compat.cc";
+        if (moduleSource) {
+            bool replaced = false;
+            for (std::size_t i = 0; i + 1 < out_.size(); ++i)
+                if (out_[i] == "-x" && out_[i + 1] == "c++") { out_[i + 1] = "c++-module"; replaced = true; }
+            if (!replaced) { out_.push_back("-x"); out_.push_back("c++-module"); }
+        }
+        out_.push_back("-stdlib=libstdc++");
+        out_.push_back(file);
+
+        json::Value entry = json::object();
+        entry.set("directory", e["directory"].str());
+        json::Value arr = json::array();
+        for (auto& x : out_) arr.push(x);
+        entry.set("arguments", std::move(arr));
+        entry.set("file", file);
+
+        auto it = entries.find(file);
+        if (it == entries.end()) { order.push_back(file); entries.emplace(file, std::move(entry)); viaBmiOnly[file] = bmiOnly; }
+        else if (viaBmiOnly[file] && !bmiOnly) { it->second = std::move(entry); viaBmiOnly[file] = false; }
+    }
+
+    json::Value db = json::array();
+    for (const auto& f : order) db.push(entries[f]);
+    fs::create_directories(outDir, ec);
+    {
+        std::ofstream o(out, std::ios::binary | std::ios::trunc);
+        if (!o) return ClangdDb{buildDir, false, 0};
+        o << json::dump(db);
+    }
+    return ClangdDb{outDir, true, static_cast<int>(order.size())};
+}
+
+struct ModuleDecl {
+    std::string name;       // "ide.json", or "ide.app:part" for partitions
+    fs::path path;
+    bool interface = true;  // `export module` (vs. an implementation unit `module x;`)
+};
+
+// Finds module declarations in the sources named by a compile database.
+inline std::vector<ModuleDecl> scanModules(const fs::path& compileCommandsJson) {
+    std::vector<ModuleDecl> out;
+    auto db = readJson(compileCommandsJson);
+    if (!db || !db->array()) return out;
+    static const std::regex re(R"(^[ \t]*(export[ \t]+)?module[ \t]+([A-Za-z_][A-Za-z0-9_.]*(?::[A-Za-z_][A-Za-z0-9_.]*)?)[ \t]*(?:\[\[[^\n]*\]\])?[ \t]*;)",
+                               std::regex::multiline);
+    std::unordered_set<std::string> seen;
+    for (const auto& e : *db->array()) {
+        const fs::path file = e["file"].str();
+        if (file.empty() || !seen.insert(file.string()).second) continue;
+        const std::string n = file.filename().string();
+        if (n == "std.cc" || n == "std.compat.cc") {
+            out.push_back({n == "std.cc" ? "std" : "std.compat", file, true});
+            continue;
+        }
+        auto text = readFile(file);
+        if (!text) continue;
+        std::smatch m;
+        // Only the leading part of a file can hold the module declaration (after the global fragment).
+        const std::string head = text->substr(0, std::min<std::size_t>(text->size(), 64 * 1024));
+        if (std::regex_search(head, m, re)) out.push_back({m[2].str(), file, m[1].matched});
+    }
+    return out;
+}
+
+// If `line` is an import / module declaration, returns the column where the module name starts.
+inline std::optional<std::size_t> importNameStart(std::string_view line, std::size_t col) {
+    std::size_t i = 0;
+    auto skipWs = [&] { while (i < line.size() && (line[i] == ' ' || line[i] == '\t')) ++i; };
+    auto word = [&](std::string_view w) {
+        if (line.substr(i, w.size()) == w && (i + w.size() >= line.size() || !(std::isalnum(static_cast<unsigned char>(line[i + w.size()])) || line[i + w.size()] == '_'))) {
+            i += w.size();
+            return true;
+        }
+        return false;
+    };
+    skipWs();
+    if (word("export")) skipWs();
+    if (!word("import")) return std::nullopt;
+    if (i >= line.size() || (line[i] != ' ' && line[i] != '\t')) return std::nullopt;
+    skipWs();
+    if (i > col) return std::nullopt;
+    for (std::size_t k = i; k < col && k < line.size(); ++k) {
+        const char c = line[k];
+        if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == ':')) return std::nullopt;
+    }
+    return i;
+}
+
+// The module name (possibly with ':partition') under or around `col` on an import line.
+inline std::optional<std::string> importNameAt(std::string_view line, std::size_t col) {
+    auto start = importNameStart(line, std::min(col, line.size()));
+    if (!start) {
+        // cursor might be past the name: retry at the end of the name
+        std::size_t i = line.find("import");
+        if (i == std::string_view::npos) return std::nullopt;
+        start = importNameStart(line, line.size());
+        if (!start) return std::nullopt;
+    }
+    std::size_t e = *start;
+    while (e < line.size() && (std::isalnum(static_cast<unsigned char>(line[e])) || line[e] == '_' || line[e] == '.' || line[e] == ':')) ++e;
+    if (e == *start) return std::nullopt;
+    return std::string(line.substr(*start, e - *start));
+}
+
 }  // namespace ide

@@ -466,7 +466,46 @@ void testCMakeCompletion() {
     CHECK(has(at(doc + "target_link_libraries(app PRIVATE ${x})\nad"), "add_library"));  // closed paren: statement start again
 }
 
+static void testModules() {
+    // import-name detection
+    CHECK(importNameStart("import ide.js", 12) == std::optional<std::size_t>(7));
+    CHECK(importNameStart("export import std;", 14) == std::optional<std::size_t>(14));
+    CHECK(!importNameStart("int import_x = 1;", 10).has_value());
+    CHECK(!importNameStart("import <vector>;", 10).has_value());
+    CHECK(importNameAt("import ide.json;", 9) == std::optional<std::string>("ide.json"));
+    CHECK(importNameAt("import :part;", 10) == std::optional<std::string>(":part"));
+
+    // Derived clangd database from a GCC-module-flavoured CMake one.
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / "daemon-modules-test";
+    fs::remove_all(dir);
+    fs::create_directories(dir);
+    {
+        std::ofstream o(dir / "compile_commands.json");
+        o << R"([
+ {"directory":"/b","command":"/usr/bin/c++ -DX=1 -Iinc -std=c++23 -fmodules-ts -fmodule-mapper=a.modmap -MD -fdeps-format=p1689r5 -x c++ -o a.o -c /src/a.cppm","file":"/src/a.cppm"},
+ {"directory":"/b","command":"/usr/bin/c++ -std=c++23 -fmodule-only -fmodules-ts -fmodule-mapper=a2.modmap -MD -x c++ -o a.bmi -c /src/a.cppm","file":"/src/a.cppm"},
+ {"directory":"/b","command":"/usr/bin/c++ -std=c++23 -fmodules-ts -x c++ -o std.o -c /usr/include/c++/16/bits/std.cc","file":"/usr/include/c++/16/bits/std.cc"}])";
+    }
+    if (findExecutable("clang++")) {
+        auto db = prepareClangdDb(dir);
+        CHECK(db && db->derived && db->sources == 2);  // duplicate BMI-only entry folded away
+        auto j = readJson(dir / ".daemon/clangd/compile_commands.json");
+        CHECK(j && j->array() && j->array()->size() == 2);
+        if (j && j->array() && j->array()->size() == 2) {
+            const auto& args = (*j)[0]["arguments"];
+            std::string all;
+            for (const auto& a : *args.array()) all += a.str() + " ";
+            CHECK(all.find("-fmodules-ts") == std::string::npos && all.find("-fmodule-mapper") == std::string::npos);
+            CHECK(all.find("-x c++-module") != std::string::npos && all.find("-DX=1") != std::string::npos);
+            CHECK(all.find("-std=c++23") != std::string::npos);
+        }
+    }
+    fs::remove_all(dir);
+}
+
 int main() {
+    testModules();
     testCMakeCompletion();
     testJson();
     testProcess();
