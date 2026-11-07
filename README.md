@@ -111,3 +111,9 @@ Programs started with Run (Shift+F10) run on a pseudo-terminal, so they behave a
 immediately (no output buffering), and `std::cin` / `scanf` read what you type. While a program runs, keystrokes in
 the Run panel go to it (Esc or a click elsewhere releases them; Ctrl+C interrupts, Ctrl+D ends input). Click the Run
 output to give the keyboard back to the program.
+
+## Project-wide problems
+
+clangd only reports diagnostics for files it has open, so Daemon quietly opens every source file of the project in the
+language server (no tabs; a few per tick, up to 400 files). The Problems tab therefore lists errors and warnings from
+the whole project, and the file explorer marks affected files (red / amber name and a count badge) and their folders.

@@ -185,6 +185,10 @@ public:
                 updateDropTarget();
                 continue;
             }
+            if (tok.starts_with("sleep:")) {   // test hook: let asynchronous work (language server) catch up before the capture
+                settleUntil_ = Clock::now() + std::chrono::milliseconds(std::atoi(std::string(tok.substr(6)).c_str()));
+                continue;
+            }
             if (tok == "panelsel") {   // test hook: select rows 1..2 of the output panel and copy
                 psel_ = {}; psel_.active = psel_.moved = true; psel_.tab = panelTab_;
                 psel_.ar = 1; psel_.ac = 2; psel_.cr = 2; psel_.cc = 12;
@@ -545,6 +549,7 @@ private:
         if (!message_.empty()) consider(messageUntil_);
         if (buildEof_ || runEof_) consider(Clock::now() + std::chrono::milliseconds(30));
         if (lspFlushAt_) consider(*lspFlushAt_);
+        if (!bgQueue_.empty() && lsp_) consider(bgNext_);
         if (lsp_ && cmakeOpen_) consider(nextDbCheck_);
         if (hover_.pending) consider(hover_.due);
         return t;
@@ -604,6 +609,8 @@ private:
         pollTasks();
         if (scriptPos_ < script_.size()) stepScript();
         lspSync(now);
+        if (lsp_ && lsp_->ready() && !bgScanned_) { bgScanned_ = true; queueProjectDiagnostics(); }
+        pumpProjectDiagnostics(now);
         hoverTick(now);
         if (panelOpen_) {
             auto t = static_cast<std::size_t>(panelTab_);
@@ -1422,6 +1429,7 @@ private:
         lsp_.reset();
         compReq_ = -1;
         diags_.clear();
+        bgQueue_.clear(); bgOpen_.clear(); bgSources_.clear(); bgScanned_ = false;
         closeCompletion();
         for (auto& d : docs_) d->lspOpen = false;
     }
@@ -1440,8 +1448,75 @@ private:
         if (!lsp_) startLsp(); else attachLsp(d);
     }
 
+    // ---- project-wide diagnostics: clangd only reports on open files, so every source file of the project is opened
+    // in the language server in the background (no tab, text read from disk), a few per tick.
+
+    static bool isSourcePath(const fs::path& p) {
+        static const std::unordered_set<std::string> ext = {".c", ".cc", ".cpp", ".cxx", ".c++", ".cppm", ".ixx", ".mpp", ".ccm", ".cxxm"};
+        return ext.contains(p.extension().string());
+    }
+
+    std::vector<std::string> projectSources() {
+        std::vector<std::string> out;
+        std::unordered_set<std::string> seen;
+        std::error_code ec;
+        auto inside = [&](const fs::path& root, const fs::path& p) {
+            auto r = p.lexically_relative(root);
+            return !r.empty() && *r.begin() != "..";
+        };
+        auto add = [&](const fs::path& f, const fs::path& root, const fs::path* skip) {
+            const fs::path n = f.lexically_normal();
+            if (!inside(root, n) || (skip && inside(*skip, n)) || !isSourcePath(n)) return;
+            if (seen.insert(n.string()).second) out.push_back(n.string());
+        };
+        constexpr std::size_t kMax = 400;
+        if (cmakeOpen_ && fs::exists(compileCommands(profile()), ec)) {
+            if (auto db = readJson(compileCommands(profile())); db && db->array())
+                for (const auto& e : *db->array()) { add(e["file"].str(), cmakeRoot_, &profile().dir); if (out.size() >= kMax) break; }
+        }
+        if (out.empty() && explorer_.isOpen()) {
+            for (fs::recursive_directory_iterator it(explorer_.rootPath(), fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+                const std::string name = it->path().filename().string();
+                if (it->is_directory(ec) && (name.starts_with('.') || name.starts_with("cmake-build") || name == "build" || name == "node_modules" || name == "third_party")) {
+                    it.disable_recursion_pending();
+                    continue;
+                }
+                if (it->is_regular_file(ec)) add(it->path(), explorer_.rootPath(), nullptr);
+                if (out.size() >= kMax) break;
+            }
+        }
+        return out;
+    }
+
+    bool openInEditor(const std::string& path) const {
+        return std::ranges::any_of(docs_, [&](const auto& d) { return d->path == path; });
+    }
+
+    void queueProjectDiagnostics() {
+        bgQueue_.clear();
+        bgOpen_.clear();
+        bgSources_.clear();
+        for (auto& p : projectSources()) { bgQueue_.push_back(p); bgSources_.insert(p); }
+        bgNext_ = Clock::now();
+    }
+
+    void pumpProjectDiagnostics(Clock::time_point now) {
+        if (!lsp_ || !lsp_->ready() || bgQueue_.empty() || now < bgNext_) return;
+        for (int n = 0; n < 3 && !bgQueue_.empty(); ++n) {
+            const std::string path = bgQueue_.front();
+            bgQueue_.pop_front();
+            if (openInEditor(path) || bgOpen_.contains(path)) continue;
+            auto text = readFile(path);
+            if (!text) continue;
+            lsp_->didOpen(path, path.ends_with(".c") ? "c" : "cpp", 1, *text);
+            bgOpen_.insert(path);
+        }
+        bgNext_ = now + std::chrono::milliseconds(150);
+    }
+
     void attachLsp(Document& d) {
         if (!lsp_ || !isCppDoc(d) || d.lspOpen) return;
+        if (bgOpen_.erase(d.path)) lsp_->didClose(d.path);   // the editor takes over from the background copy
         lsp_->didOpen(d.path, languageId(d), ++d.lspVersion, d.buf.text());
         d.lspOpen = true;
         d.lspSent = d.buf.version();
@@ -1451,6 +1526,7 @@ private:
         if (lsp_ && d.lspOpen) lsp_->didClose(d.path);
         d.lspOpen = false;
         diags_.erase(d.path);
+        if (lsp_ && bgSources_.contains(d.path)) bgQueue_.push_back(d.path);   // keep watching it in the background
     }
 
     void flushDoc(Document& d) {
@@ -2259,7 +2335,22 @@ private:
         out.insert(out.end(), live.begin(), live.end());
         const bool changed = out.size() != shownProblems_.size() ||
             !std::ranges::equal(out, shownProblems_, [](const Problem& a, const Problem& b) { return a.file == b.file && a.line == b.line && a.message == b.message && a.severity == b.severity; });
-        if (changed) { shownProblems_ = std::move(out); dirty_ = true; }
+        if (changed) {
+            shownProblems_ = std::move(out);
+            problemCounts_.clear();
+            for (const auto& pr : shownProblems_) {
+                if (pr.severity == Severity::Note) continue;
+                const bool err = pr.severity == Severity::Error;
+                fs::path f = pr.file.lexically_normal();
+                const fs::path root = explorer_.isOpen() ? explorer_.rootPath() : fs::path();
+                for (fs::path q = f; !q.empty() && q != q.parent_path(); q = q.parent_path()) {
+                    auto& c = problemCounts_[q.string()];
+                    (err ? c.first : c.second)++;
+                    if (!root.empty() && q == root) break;
+                }
+            }
+            dirty_ = true;
+        }
     }
 
     void gotoProblem(const Problem& p) {
@@ -4543,6 +4634,19 @@ private:
                     fill(std::round(sd.x + 12 * s + static_cast<float>(lvl) * indent + indent * 0.5f), y, std::max(1.0f, std::round(s * 0.5f)), rh, theme::guide);
                 Color nameColor = nd.name.starts_with('.') ? theme::dim : (nd.dir ? theme::text : Color::rgb(0xb9bdc6));
                 if (active) nameColor = Color::rgb(0xffffff).mix(theme::accent, 0.25f);
+                float nameMax = sd.right() - 10 * s;
+                if (auto pc = problemCounts_.find(nd.path.string()); pc != problemCounts_.end()) {   // problems in this file / folder
+                    const auto [errs, warns] = pc->second;
+                    const Color pcol = errs > 0 ? Color::rgb(0xf2777a) : Color::rgb(0xe5c07b);
+                    if (!nd.dir) nameColor = pcol;
+                    const int cnt = errs + warns;
+                    const std::string txt = cnt > 99 ? "99+" : std::to_string(cnt);
+                    const float bw = std::max(uiW(txt) + 12 * s, 20 * s), bh = std::round(uiH() + 2 * s);
+                    const Rect badge{sd.right() - 22 * s - bw, y + (rh - bh) / 2, bw, bh};
+                    fill(badge, pcol.alpha(46), bh / 2);
+                    uiLabelC(badge.x + badge.w / 2, badge.y, badge.h, txt, pcol);
+                    nameMax = badge.x - 6 * s;
+                }
                 const bool cutPending = fileClip_.cut && std::ranges::find(fileClip_.paths, nd.path) != fileClip_.paths.end();
                 if (cutPending) nameColor = nameColor.alpha(110);
                 const float fade = cutPending ? 0.45f : (nd.name.starts_with('.') ? 0.7f : 1.0f);
@@ -4554,7 +4658,7 @@ private:
                 const float ix = x + indent, iy = y + (rh - iconSize()) / 2;
                 if (nd.dir) drawFolderIcon(ix, iy, nd.name, nd.expanded, fade);
                 else drawFileIcon(ix, iy, nd.name, fade);
-                uiLabel(ix + iconSize() + 8 * s, y, rh, nd.name, nameColor, sd.right() - 10 * s);
+                uiLabel(ix + iconSize() + 8 * s, y, rh, nd.name, nameColor, nameMax);
             }
             const float contentH = static_cast<float>(rows.size()) * rh, listH = L_.sideList.h;
             if (contentH > listH) {
@@ -4939,6 +5043,7 @@ private:
     int buildCur_ = 0, buildTotal_ = 0;
     std::vector<OutLine> buildOut_, runOut_;
     std::vector<Problem> problems_;        // from the last build / configure
+    std::unordered_map<std::string, std::pair<int, int>> problemCounts_;   // path -> (errors, warnings), files and their folders
     std::vector<Problem> shownProblems_;   // build problems + live clangd diagnostics (the Problems tab)
     bool panelOpen_ = false, panelDrag_ = false;
     int panelTab_ = 0;
@@ -4989,6 +5094,10 @@ private:
     Pane* hoverPane_ = nullptr;
     bool drawActive_ = true;
     float panelAnim_ = 0, sideAnim_ = 0;
+    std::deque<std::string> bgQueue_;
+    std::unordered_set<std::string> bgOpen_, bgSources_;
+    Clock::time_point bgNext_{};
+    bool bgScanned_ = false;
     int compReq_ = -1;
     fs::file_time_type dbStamp_{};
     Clock::time_point nextDbCheck_{};
