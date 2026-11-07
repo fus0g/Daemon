@@ -185,6 +185,26 @@ public:
                 updateDropTarget();
                 continue;
             }
+            if (tok == "panelsel") {   // test hook: select rows 1..2 of the output panel and copy
+                psel_ = {}; psel_.active = psel_.moved = true; psel_.tab = panelTab_;
+                psel_.ar = 1; psel_.ac = 2; psel_.cr = 2; psel_.cc = 12;
+                copyOverlay();
+                continue;
+            }
+            if (tok == "hoverfake") {   // test hook: show a sample error tooltip near the cursor
+                layout();
+                hover_ = {};
+                hover_.show = true;
+                hover_.px = L_.textX + 120 * S();
+                hover_.py = L_.editor.y + 60 * S();
+                hover_.lines = {{"Use of undeclared identifier 'undefined_fn'", 1}, {"in function 'main' at a.cpp:2:5", 0}};
+                continue;
+            }
+            if (tok == "hoversel" && hover_.show) {   // test hook: select the tooltip's text
+                hsel_ = {}; hsel_.active = hsel_.moved = true;
+                hsel_.ar = 0; hsel_.ac = 0; hsel_.cr = static_cast<int>(hover_.lines.size()) - 1; hsel_.cc = 1000;
+                continue;
+            }
             if (tok.starts_with("dlg:")) {   // test hook: open a project dialog
                 const auto which = tok.substr(4);
                 if (which == "new") newProjectOpen();
@@ -1231,6 +1251,7 @@ private:
         if (!(k.ctrl && k.key == Key::Char && k.ch == 'q')) quitArmed_ = false;
         if (!(k.ctrl && k.key == Key::Char && k.ch == 'w')) closeArmed_ = -1;
         if (dlg_.kind != DlgKind::None) { dlgKey(k); dirty_ = true; return; }
+        if (k.ctrl && !k.shift && !k.alt && k.key == Key::Char && k.ch == 'c' && copyOverlay()) { dirty_ = true; return; }
         if (runFocus_ && runProc_ && panelOpen_ && panelTab_ == 1 && runKey(k)) { dirty_ = true; return; }
         if (tabDrag_.active) {  // a tab is being dragged: Esc cancels, other keys are ignored
             if (k.key == Key::Escape) { tabDrag_ = {}; dirty_ = true; }
@@ -1733,7 +1754,7 @@ private:
     // ---- hover (diagnostics + clangd documentation)
 
     void hideHover() {
-        if (hover_.pending || hover_.show) { hover_.pending = hover_.show = false; ++hoverSeq_; dirty_ = true; }
+        if (hover_.pending || hover_.show) { hover_.pending = hover_.show = false; ++hoverSeq_; hsel_ = {}; dirty_ = true; }
     }
 
     void hoverMoved() {
@@ -1809,23 +1830,63 @@ private:
         dirty_ = true;
     }
 
+    // ---- tooltip text selection
+
+    Rect hoverRect_, hoverCopyRect_;
+
+    std::pair<int, int> hoverPosAt(float x, float y) {
+        const float s = S(), line = std::round(uiH() + 3 * s);
+        const int n = static_cast<int>(hover_.lines.size());
+        const int row = std::clamp(static_cast<int>(std::floor((y - (hoverRect_.y + 8 * s)) / line)), 0, std::max(0, n - 1));
+        return {row, static_cast<int>(caretFromX(hover_.lines[static_cast<std::size_t>(row)].first, x - (hoverRect_.x + 13 * s)))};
+    }
+    void hoverSelAnchor() {
+        const auto [r, c] = hoverPosAt(mx_, my_);
+        hsel_.ar = hsel_.cr = r;
+        hsel_.ac = hsel_.cc = c;
+        hsel_.sx = mx_; hsel_.sy = my_;
+    }
+    void hoverSelUpdate() {
+        const auto [r, c] = hoverPosAt(mx_, my_);
+        hsel_.cr = r; hsel_.cc = c;
+        if (std::hypot(mx_ - hsel_.sx, my_ - hsel_.sy) > 3 * S()) hsel_.moved = true;
+    }
+
     void drawHover() {
         if (!hover_.show || hover_.lines.empty() || menu_.open) return;
         const float s = S(), line = std::round(uiH() + 3 * s);
         float tw = 0;
         for (const auto& [t, sev] : hover_.lines) tw = std::max(tw, uiW(t));
-        const float w = tw + 26 * s, h = static_cast<float>(hover_.lines.size()) * line + 16 * s;
+        const float w = tw + 26 * s + 24 * s, h = static_cast<float>(hover_.lines.size()) * line + 16 * s;
         const float W = L_.status.w, H = L_.status.bottom();
         float x = std::min(hover_.px + 12 * s, W - w - 6 * s);
         float y = hover_.py + 22 * s;
         if (y + h > H - 6 * s) y = hover_.py - h - 10 * s;
         x = std::max(6 * s, x);
         glassPanel({x, y, w, h}, 10 * s);
+        hoverRect_ = {x, y, w, h};
         float ty = y + 8 * s;
+        int row = 0;
+        int r0 = hsel_.ar, c0 = hsel_.ac, r1 = hsel_.cr, c1 = hsel_.cc;
+        if (!selOrdered(hsel_)) { std::swap(r0, r1); std::swap(c0, c1); }
         for (const auto& [t, sev] : hover_.lines) {
+            if (hsel_.active && hsel_.moved && row >= r0 && row <= r1) {
+                const std::size_t a = row == r0 ? std::min<std::size_t>(static_cast<std::size_t>(c0), t.size()) : 0;
+                const std::size_t e = row == r1 ? std::min<std::size_t>(static_cast<std::size_t>(c1), t.size()) : t.size();
+                const float x0 = x + 13 * s + uiW(std::string_view(t).substr(0, a)), x1 = x + 13 * s + uiW(std::string_view(t).substr(0, e));
+                if (x1 > x0) fill(x0, ty, x1 - x0, line, Color::rgb(0x3a4152));
+            }
             uiLabel(x + 13 * s, ty, line, t, sev == 0 ? theme::text : diagColor(sev));
             ty += line;
+            ++row;
         }
+        // Copy-all button in the corner.
+        const float bs = std::round(22 * s);
+        hoverCopyRect_ = {x + w - bs - 6 * s, y + 6 * s, bs, bs};
+        const bool hot = hoverCopyRect_.contains(mx_, my_);
+        if (hot) fill(hoverCopyRect_, Color::rgb(0xffffff, 40), 6 * s);
+        const int ip = std::max(12, static_cast<int>(std::round(bs * 0.7f)));
+        Icons::glyph(dl_, font_, hoverCopyRect_.x + (bs - static_cast<float>(ip)) / 2, hoverCopyRect_.y + (bs - static_cast<float>(ip)) / 2, ip, 0xF018F, hot ? Color::rgb(0xffffff) : theme::dim);
     }
 
     // ---- navigation
@@ -2322,13 +2383,88 @@ private:
     }
     float panelMaxScroll() const { return std::max(0.0f, static_cast<float>(panelRowCount()) * lh() - panelBody().h); }
 
+    // ---- selecting and copying output text
+
+    struct TextSel {
+        bool active = false, dragging = false, moved = false;
+        int tab = -1;
+        int ar = 0, ac = 0, cr = 0, cc = 0;   // anchor / cursor: row and byte column
+        float sx = 0, sy = 0;
+    };
+    TextSel psel_, hsel_;
+
+    std::string panelRowText(int i) const {
+        if (panelTab_ == 2) {
+            const Problem& pr = shownProblems_[static_cast<std::size_t>(i)];
+            std::string rel = pr.file.lexically_relative(cmakeRoot_).string();
+            if (rel.empty() || rel.starts_with("..")) rel = pr.file.string();
+            return std::format("{}:{}:{}  {}", rel, pr.line, pr.col, pr.message);
+        }
+        if (panelTab_ == 1 && static_cast<std::size_t>(i) >= runOut_.size()) return cleanTerm(runPartial_);
+        return panelLines()[static_cast<std::size_t>(i)].text;
+    }
+
+    // Row and byte column under a pointer position inside the panel body.
+    std::pair<int, int> panelPosAt(float x, float y) const {
+        const Rect body = panelBody();
+        const int total = static_cast<int>(panelRowCount());
+        if (total == 0) return {0, 0};
+        int row = static_cast<int>(std::floor((y - body.y + panelScroll_[static_cast<std::size_t>(panelTab_)]) / lh()));
+        row = std::clamp(row, 0, total - 1);
+        const int cell = std::max(0, static_cast<int>(std::lround((x - (body.x + 14 * S())) / cw())));
+        return {row, byteColAt(panelRowText(row), cell, 4)};
+    }
+
+    static bool selOrdered(const TextSel& t) { return t.ar < t.cr || (t.ar == t.cr && t.ac <= t.cc); }
+    static std::string selectedOf(const TextSel& t, const std::function<std::string(int)>& rowText, int rows) {
+        int r0 = t.ar, c0 = t.ac, r1 = t.cr, c1 = t.cc;
+        if (!selOrdered(t)) { std::swap(r0, r1); std::swap(c0, c1); }
+        std::string out;
+        for (int r = r0; r <= r1 && r < rows; ++r) {
+            const std::string line = rowText(r);
+            const std::size_t a = r == r0 ? std::min<std::size_t>(static_cast<std::size_t>(c0), line.size()) : 0;
+            const std::size_t b = r == r1 ? std::min<std::size_t>(static_cast<std::size_t>(c1), line.size()) : line.size();
+            if (r > r0) out += '\n';
+            if (b > a) out += line.substr(a, b - a);
+        }
+        return out;
+    }
+
+    // Ctrl+C: output selection first, then the hover popup. Returns true when it handled the key.
+    bool copyOverlay() {
+        if (psel_.active && psel_.moved && panelOpen_) {
+            const std::string t = selectedOf(psel_, [&](int r) { return panelRowText(r); }, static_cast<int>(panelRowCount()));
+            if (!t.empty()) { win_.setClipboard(t); setMessage("Copied", false, 1.2f); return true; }
+        }
+        if (hover_.show && !hover_.lines.empty()) {
+            std::string t;
+            if (hsel_.active && hsel_.moved)
+                t = selectedOf(hsel_, [&](int r) { return hover_.lines[static_cast<std::size_t>(r)].first; }, static_cast<int>(hover_.lines.size()));
+            else if (docs_.empty() || !doc().hasSelection())
+                for (std::size_t i = 0; i < hover_.lines.size(); ++i) t += (i ? "\n" : "") + hover_.lines[i].first;
+            if (!t.empty()) { win_.setClipboard(t); setMessage("Copied", false, 1.2f); return true; }
+        }
+        return false;
+    }
+
+    void panelRowClick(int row) {
+        if (panelTab_ == 2) {
+            if (row >= 0 && row < static_cast<int>(shownProblems_.size())) gotoProblem(shownProblems_[static_cast<std::size_t>(row)]);
+        } else {
+            const auto& lines = panelLines();
+            if (row >= 0 && row < static_cast<int>(lines.size()) && lines[static_cast<std::size_t>(row)].problem >= 0)
+                gotoProblem(problems_[static_cast<std::size_t>(lines[static_cast<std::size_t>(row)].problem)]);
+        }
+    }
+
     void panelClick(Button b) {
         const Rect& p = L_.panel;
         if (b != Button::Left) return;
         runFocus_ = false;
+        psel_.active = false;
         if (my_ < p.y + 6 * S()) { panelDrag_ = true; return; }  // splitter at the top edge
         for (std::size_t i = 0; i < panelTabRects_.size(); ++i)
-            if (panelTabRects_[i].contains(mx_, my_)) { panelTab_ = static_cast<int>(i); runFocus_ = panelTab_ == 1 && runProc_; dirty_ = true; return; }
+            if (panelTabRects_[i].contains(mx_, my_)) { panelTab_ = static_cast<int>(i); psel_.active = false; runFocus_ = panelTab_ == 1 && runProc_; dirty_ = true; return; }
         if (panelClose_.contains(mx_, my_)) { panelOpen_ = false; dirty_ = true; return; }
         if (panelClear_.contains(mx_, my_)) {
             if (panelTab_ == 1) runOut_.clear(); else if (panelTab_ == 0) { buildOut_.clear(); problems_.clear(); }
@@ -2339,14 +2475,15 @@ private:
         Rect body = panelBody();
         if (body.contains(mx_, my_)) {
             runFocus_ = panelTab_ == 1 && runProc_;   // clicking the Run output gives the program the keyboard
-            int row = static_cast<int>(std::floor((my_ - body.y + panelScroll_[static_cast<std::size_t>(panelTab_)]) / lh()));
-            if (panelTab_ == 2) {
-                if (row >= 0 && row < static_cast<int>(shownProblems_.size())) gotoProblem(shownProblems_[static_cast<std::size_t>(row)]);
-            } else {
-                const auto& lines = panelLines();
-                if (row >= 0 && row < static_cast<int>(lines.size()) && lines[static_cast<std::size_t>(row)].problem >= 0)
-                    gotoProblem(problems_[static_cast<std::size_t>(lines[static_cast<std::size_t>(row)].problem)]);
-            }
+            // Press starts a text selection; releasing without dragging counts as a click on the row.
+            const auto [row, col] = panelPosAt(mx_, my_);
+            psel_ = {};
+            psel_.active = true;
+            psel_.dragging = true;
+            psel_.tab = panelTab_;
+            psel_.ar = psel_.cr = row;
+            psel_.ac = psel_.cc = col;
+            psel_.sx = mx_; psel_.sy = my_;
         }
     }
 
@@ -2390,7 +2527,16 @@ private:
                     clickable = ol.problem >= 0;
                 }
             }
-            if (clickable && i == hoverPanelRow_) fill(body.x + 4 * s, y, body.w - 8 * s, lh(), theme::tabHover, 4 * s);
+            if (clickable && i == hoverPanelRow_ && !psel_.moved) fill(body.x + 4 * s, y, body.w - 8 * s, lh(), theme::tabHover, 4 * s);
+            if (psel_.active && psel_.moved && psel_.tab == panelTab_) {   // selection highlight
+                int r0 = psel_.ar, c0 = psel_.ac, r1 = psel_.cr, c1 = psel_.cc;
+                if (!selOrdered(psel_)) { std::swap(r0, r1); std::swap(c0, c1); }
+                if (i >= r0 && i <= r1) {
+                    const int a = i == r0 ? displayCol(text, std::min<int>(c0, static_cast<int>(text.size())), 4) : 0;
+                    const int e = i == r1 ? displayCol(text, std::min<int>(c1, static_cast<int>(text.size())), 4) : displayCol(text, static_cast<int>(text.size()), 4) + 1;
+                    if (e > a) fill(body.x + 14 * s + static_cast<float>(a) * cw(), y, static_cast<float>(e - a) * cw(), lh(), Color::rgb(0x3a4152));
+                }
+            }
             label(body.x + 14 * s, y, text, outColor(sev), body.right() - 10 * s);
         }
         if (total == 0) {
@@ -2427,7 +2573,7 @@ private:
         panelClear_ = {panelClose_.x - 6 * s - cwid, p.y + 4 * s, cwid, hh - 8 * s};
         uiLabel(panelClear_.x + 12 * s, p.y, hh, clear, theme::dim);
         if (runProc_ && panelTab_ == 1)
-            uiLabelR(panelClear_.x - 14 * s, p.y, hh, runFocus_ ? "Typing goes to the program  \xC2\xB7  Esc to release" : "Click here to type input", runFocus_ ? theme::accent : theme::lineNum);
+            uiLabelR(panelClear_.x - 14 * s, p.y, hh, runFocus_ ? "Typing goes to the program  \xC2\xB7  Esc to release" : "Click here to type input", runFocus_ ? Color::rgb(0xe6e8ec) : theme::lineNum);
         const int ci = std::max(8, static_cast<int>(std::round(uiH() * 0.7f)));
         Icons::tool(dl_, font_, std::round(panelClose_.x + (xs - static_cast<float>(ci)) / 2), std::round(panelClose_.y + (xs - static_cast<float>(ci)) / 2), ci,
                     ToolIcon::Close, theme::dim);
@@ -3268,7 +3414,26 @@ private:
             hoverBtn_ = hb; hoverTab_ = ht; hoverClose_ = hc; hoverTool_ = hover; hoverPanelRow_ = hpr;
             dirty_ = true;
         }
+        if (psel_.dragging) {
+            const auto [row, col] = panelPosAt(mx_, my_);
+            psel_.cr = row; psel_.cc = col;
+            if (std::hypot(mx_ - psel_.sx, my_ - psel_.sy) > 3 * S()) psel_.moved = true;
+            // keep the pointer inside the panel body while dragging: scroll when it leaves it
+            const Rect body = panelBody();
+            auto& sc = panelScroll_[static_cast<std::size_t>(panelTab_)];
+            if (my_ < body.y) { sc = std::max(0.0f, sc - lh() * 0.6f); panelFollow_[static_cast<std::size_t>(panelTab_)] = false; }
+            else if (my_ > body.bottom()) sc = std::min(panelMaxScroll(), sc + lh() * 0.6f);
+            dirty_ = true;
+        }
+        if (hsel_.dragging) {
+            hoverSelUpdate();
+            dirty_ = true;
+        }
+        Rect keepZone = hoverRect_;   // the popup (plus the gap up to the text it belongs to) stays while the pointer is on it
+        keepZone.y -= 30 * S(); keepZone.h += 38 * S(); keepZone.x -= 44 * S(); keepZone.w += 54 * S();
+        const bool onPopup = hover_.show && !menu_.open && keepZone.contains(mx_, my_);
         if (!opt_.screenshot.empty()) {}  // scripted runs drive hover themselves
+        else if (hsel_.dragging || onPopup) {}
         else if (!docs_.empty() && !menu_.open && !dragging_ && L_.editor.contains(mx_, my_) && mx_ >= L_.textX && mx_ < L_.minimap.x) hoverMoved();
         else hideHover();
         if (panelDrag_) {
@@ -3418,7 +3583,14 @@ private:
             if (pressed) dlgClick(b, mx_, my_);
             return;
         }
-        if (pressed && !(panelOpen_ && L_.panel.contains(mx_, my_))) runFocus_ = false;
+        if (pressed && !(panelOpen_ && L_.panel.contains(mx_, my_))) { runFocus_ = false; psel_.active = false; }
+        if (hover_.show && !hover_.lines.empty() && !menu_.open && hoverRect_.contains(mx_, my_)) {   // the tooltip is selectable
+            if (pressed && b == Button::Left) {
+                if (hoverCopyRect_.contains(mx_, my_)) { std::string t; for (std::size_t i = 0; i < hover_.lines.size(); ++i) t += (i ? "\n" : "") + hover_.lines[i].first; win_.setClipboard(t); setMessage("Copied", false, 1.2f); }
+                else { hsel_ = {}; hsel_.active = true; hsel_.dragging = true; hoverSelAnchor(); }
+            }
+            return;
+        }
         if (menu_.open) {  // the menu captures the click; clicking outside just dismisses it
             if (pressed) {
                 int i = menuItemAt(mx_, my_);
@@ -3427,6 +3599,11 @@ private:
             return;
         }
         if (!pressed) {
+            if (psel_.dragging) {
+                psel_.dragging = false;
+                if (!psel_.moved) { const int row = psel_.ar; psel_.active = false; panelRowClick(row); }
+            }
+            hsel_.dragging = false;
             if (tabDrag_.doc && tabDrag_.active) performDrop();
             tabDrag_ = {};
             splitDragNode_ = nullptr;
