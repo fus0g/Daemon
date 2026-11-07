@@ -639,6 +639,7 @@ private:
         pollTasks();
         if (scriptPos_ < script_.size()) stepScript();
         lspSync(now);
+        if (lspCrashed_) { lspCrashed_ = false; handleLspCrash(now); }
         if (lsp_ && lsp_->ready() && !bgScanned_) { bgScanned_ = true; queueProjectDiagnostics(); }
         pumpProjectDiagnostics(now);
         gitTick(now);
@@ -1379,6 +1380,7 @@ private:
             dirty_ = true;
         };
         lsp_->onState = [this](LspClient::State st) {
+            if (st == LspClient::State::Failed) lspCrashed_ = true;   // handled from update(): the client cannot be replaced from its own callback
             lspStatus_ = st == LspClient::State::Ready ? (clangdModules_ ? "clangd \xC2\xB7 modules" : "clangd") : st == LspClient::State::Starting ? "clangd starting" : "clangd stopped";
             dirty_ = true;
         };
@@ -1470,6 +1472,25 @@ private:
         bgQueue_.clear(); bgOpen_.clear(); bgSources_.clear(); bgScanned_ = false;
         closeCompletion();
         for (auto& d : docs_) d->lspOpen = false;
+    }
+
+    // clangd died on its own (crash / killed). Its persistent module cache can be what it chokes on (a stale BMI left
+    // over from an older version of a module crashes clangd's module reader), so clear it and start again; give up
+    // when it keeps happening.
+    void handleLspCrash(Clock::time_point now) {
+        if (!lsp_) return;
+        while (!lspCrashTimes_.empty() && now - lspCrashTimes_.front() > std::chrono::minutes(5)) lspCrashTimes_.pop_front();
+        lspCrashTimes_.push_back(now);
+        if (lspCrashTimes_.size() > 3) {
+            setMessage("clangd keeps crashing - code intelligence is off for now (restart Daemon to retry)", true, 10);
+            return;
+        }
+        if (cmakeOpen_ && clangdModules_) {
+            std::error_code ec;
+            fs::remove_all(profile().dir / ".daemon" / "clangd-v2" / ".cache", ec);
+        }
+        setMessage("clangd crashed - restarting it with a clean module cache", true, 5);
+        restartLsp();
     }
 
     void restartLsp() {
@@ -6037,6 +6058,8 @@ private:
     std::unordered_set<std::string> bgOpen_, bgSources_;
     Clock::time_point bgNext_{};
     bool bgScanned_ = false;
+    bool lspCrashed_ = false;
+    std::deque<Clock::time_point> lspCrashTimes_;
     int compReq_ = -1;
     fs::file_time_type dbStamp_{};
     Clock::time_point nextDbCheck_{};

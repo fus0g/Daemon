@@ -407,24 +407,36 @@ struct CMakeDefs {
 };
 
 inline CMakeDefs scanCMakeDefs(std::string_view text) {
+    // Hand-written line scanner (no std::regex: its templates in a module interface crash clangd 23's module reader).
     CMakeDefs d;
     std::unordered_set<std::string> seen;
-    static const std::regex re(R"((?:^|\n)[ \t]*([A-Za-z_]+)[ \t]*\([ \t]*([A-Za-z_][A-Za-z0-9_.+\-]*))", std::regex::icase);
-    const std::string t(text);
-    for (auto it = std::sregex_iterator(t.begin(), t.end(), re), end = std::sregex_iterator(); it != end; ++it) {
-        std::string cmd = (*it)[1], name = (*it)[2];
+    auto isName = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '.' || c == '+' || c == '-'; };
+    for (std::size_t i = 0; i < text.size();) {
+        auto e = text.find('\n', i);
+        if (e == std::string_view::npos) e = text.size();
+        std::string_view line = text.substr(i, e - i);
+        i = e + 1;
+        std::size_t k = 0;
+        auto skipWs = [&] { while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k; };
+        skipWs();
+        const std::size_t cs = k;
+        while (k < line.size() && (std::isalpha(static_cast<unsigned char>(line[k])) || line[k] == '_')) ++k;
+        if (k == cs) continue;
+        std::string cmd(line.substr(cs, k - cs));
+        skipWs();
+        if (k >= line.size() || line[k] != '(') continue;
+        ++k;
+        skipWs();
+        const std::size_t ns = k;
+        if (k >= line.size() || !(std::isalpha(static_cast<unsigned char>(line[k])) || line[k] == '_')) continue;
+        while (k < line.size() && isName(line[k])) ++k;
+        std::string name(line.substr(ns, k - ns));
         std::ranges::transform(cmd, cmd.begin(), [](unsigned char c) { return std::tolower(c); });
         if (!seen.insert(cmd + ":" + name).second) continue;
-        if (cmd == "set" || cmd == "option" || cmd == "list" || cmd == "string" || cmd == "file" || cmd == "find_package" ||
-            cmd == "find_library" || cmd == "find_path" || cmd == "find_program" || cmd == "foreach") {
-            if (cmd == "set" || cmd == "option") d.variables.push_back(name);
-        } else if (cmd == "add_executable" || cmd == "add_library" || cmd == "add_custom_target") {
-            d.targets.push_back(name);
-        } else if (cmd == "function" || cmd == "macro") {
-            d.functions.push_back(name);
-        } else if (cmd == "project") {
-            for (const char* suf : {"_SOURCE_DIR", "_BINARY_DIR", "_VERSION"}) d.variables.push_back(name + suf);
-        }
+        if (cmd == "set" || cmd == "option") d.variables.push_back(name);
+        else if (cmd == "add_executable" || cmd == "add_library" || cmd == "add_custom_target") d.targets.push_back(name);
+        else if (cmd == "function" || cmd == "macro") d.functions.push_back(name);
+        else if (cmd == "project") for (const char* suf : {"_SOURCE_DIR", "_BINARY_DIR", "_VERSION"}) d.variables.push_back(name + suf);
     }
     return d;
 }
@@ -747,8 +759,6 @@ inline std::vector<ModuleDecl> scanModules(const fs::path& compileCommandsJson) 
     std::vector<ModuleDecl> out;
     auto db = readJson(compileCommandsJson);
     if (!db || !db->array()) return out;
-    static const std::regex re(R"(^[ \t]*(export[ \t]+)?module[ \t]+([A-Za-z_][A-Za-z0-9_.]*(?::[A-Za-z_][A-Za-z0-9_.]*)?)[ \t]*(?:\[\[[^\n]*\]\])?[ \t]*;)",
-                               std::regex::multiline);
     std::unordered_set<std::string> seen;
     for (const auto& e : *db->array()) {
         const fs::path file = e["file"].str();
@@ -760,10 +770,32 @@ inline std::vector<ModuleDecl> scanModules(const fs::path& compileCommandsJson) 
         }
         auto text = readFile(file);
         if (!text) continue;
-        std::smatch m;
         // Only the leading part of a file can hold the module declaration (after the global fragment).
-        const std::string head = text->substr(0, std::min<std::size_t>(text->size(), 64 * 1024));
-        if (std::regex_search(head, m, re)) out.push_back({m[2].str(), file, m[1].matched});
+        const std::string_view head(text->data(), std::min<std::size_t>(text->size(), 64 * 1024));
+        for (std::size_t i = 0; i < head.size();) {
+            auto le = head.find('\n', i);
+            if (le == std::string_view::npos) le = head.size();
+            std::string_view line = head.substr(i, le - i);
+            i = le + 1;
+            std::size_t k = 0;
+            auto skipWs = [&] { while (k < line.size() && (line[k] == ' ' || line[k] == '\t')) ++k; };
+            auto word = [&](std::string_view w) {
+                if (line.substr(k, w.size()) == w && k + w.size() < line.size() && (line[k + w.size()] == ' ' || line[k + w.size()] == '\t' || line[k + w.size()] == ';')) { k += w.size(); return true; }
+                return false;
+            };
+            skipWs();
+            const bool isExport = word("export");
+            if (isExport) skipWs();
+            if (!word("module")) continue;
+            skipWs();
+            const std::size_t ns = k;
+            while (k < line.size() && (std::isalnum(static_cast<unsigned char>(line[k])) || line[k] == '_' || line[k] == '.' || line[k] == ':')) ++k;
+            if (k == ns) continue;   // "module;" starts the global fragment
+            const std::string name(line.substr(ns, k - ns));
+            skipWs();
+            while (k + 1 < line.size() && line[k] == '[' && line[k + 1] == '[') { auto close = line.find("]]", k); if (close == std::string_view::npos) break; k = close + 2; skipWs(); }
+            if (k < line.size() && line[k] == ';') { out.push_back({name, file, isExport}); break; }
+        }
     }
     return out;
 }
