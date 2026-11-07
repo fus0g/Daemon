@@ -12,6 +12,7 @@ import ide.json;
 import ide.process;
 import ide.cmake;
 import ide.project;
+import ide.git;
 import ide.lsp;
 import ide.font;
 import ide.draw;
@@ -575,7 +576,69 @@ static void testPty() {
     CHECK(p.tryWait().value_or(-1) == 3);
 }
 
+static void testGit() {
+    namespace fs = std::filesystem;
+    auto split = [](const std::string& t) { return ide::git::splitLines(t); };
+    {   // diff
+        std::string a = "a\nb\nc\nd\ne\n", b = "a\nB\nc\nnew1\nnew2\nd\n";
+        auto h = ide::git::diffLines(split(a), split(b));
+        CHECK(h.size() == 3);
+        if (h.size() == 3) {
+            CHECK(h[0].newStart == 1 && h[0].newCount == 1 && h[0].oldCount == 1);   // b -> B
+            CHECK(h[1].added() && h[1].newStart == 3 && h[1].newCount == 2);         // new1, new2
+            CHECK(h[2].removed() && h[2].oldCount == 1);                              // e dropped
+        }
+        CHECK(ide::git::diffLines(split("x\ny\n"), split("x\ny\n")).empty());
+        auto all = ide::git::diffLines(split(""), split("1\n2\n"));
+        CHECK(all.size() == 1 && all[0].added() && all[0].newCount == 2);
+    }
+    if (!ide::git::available()) return;
+    const fs::path root = fs::temp_directory_path() / "daemon-git-test";
+    fs::remove_all(root);
+    fs::create_directories(root);
+    auto g = [&](std::vector<std::string> args) { return ide::git::run(root, std::move(args), 20000, true); };
+    CHECK(g({"init", "-q"}).ok());
+    g({"config", "user.name", "Ada Lovelace"});
+    g({"config", "user.email", "ada@example.com"});
+    std::ofstream(root / "f.txt") << "one\ntwo\nthree\n";
+    CHECK(ide::git::repoRoot(root).has_value());
+    {   // untracked, then staged
+        auto st = ide::git::status(root);
+        CHECK(st && st->entries.size() == 1 && st->entries[0].x == '?' && st->entries[0].unstaged());
+        CHECK(ide::git::stage(root, {"f.txt"}).ok());
+        st = ide::git::status(root);
+        CHECK(st && st->entries.size() == 1 && st->entries[0].staged());
+    }
+    CHECK(ide::git::commit(root, "first commit\n\nwith a body").ok());
+    std::ofstream(root / "f.txt") << "one\nTWO\nthree\nfour\n";
+    {
+        auto st = ide::git::status(root);
+        CHECK(st && st->entries.size() == 1 && st->entries[0].y == 'M' && !st->branch.empty() && !st->head.empty());
+        auto head = ide::git::headContent(root, "f.txt");
+        CHECK(head && *head == "one\ntwo\nthree\n");
+        // blame the edited text: unchanged lines belong to the commit, edited ones are "not committed yet"
+        const fs::path contents = fs::temp_directory_path() / "daemon-git-contents.txt";
+        std::ofstream(contents) << "one\nTWO\nthree\nfour\n";
+        auto bl = ide::git::blame(root, "f.txt", contents);
+        CHECK(bl && bl->lineCommit.size() == 4);
+        if (bl && bl->lineCommit.size() == 4) {
+            const auto& c0 = bl->commits[static_cast<std::size_t>(bl->lineCommit[0])];
+            CHECK(c0.author == "Ada Lovelace" && c0.email == "ada@example.com" && c0.summary == "first commit" && !c0.uncommitted);
+            CHECK(bl->commits[static_cast<std::size_t>(bl->lineCommit[1])].uncommitted);
+            CHECK(bl->lineCommit[0] == bl->lineCommit[2]);
+        }
+        auto card = ide::git::commitCard(root, bl ? bl->commits[static_cast<std::size_t>(bl->lineCommit[0])].hash : "HEAD");
+        CHECK(card.size() >= 4 && card[0].find("Ada Lovelace") != std::string::npos);
+    }
+    CHECK(ide::git::unstage(root, {"f.txt"}).ok());
+    CHECK(ide::git::discard(root, ide::git::Entry{' ', 'M', "f.txt", ""}).ok());
+    CHECK(ide::git::status(root)->entries.empty());
+    CHECK(ide::git::relativeTime(0, 3 * 86400) == "3 days ago" && ide::git::relativeTime(10, 70) == "1 minute ago");
+    fs::remove_all(root);
+}
+
 int main() {
+    testGit();
     testPty();
     testProjects();
     testModules();

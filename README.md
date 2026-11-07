@@ -117,3 +117,16 @@ output to give the keyboard back to the program.
 clangd only reports diagnostics for files it has open, so Daemon quietly opens every source file of the project in the
 language server (no tabs; a few per tick, up to 400 files). The Problems tab therefore lists errors and warnings from
 the whole project, and the file explorer marks affected files (red / amber name and a count badge) and their folders.
+
+## Git
+
+Daemon talks to the `git` binary (no libgit2). In a repository you get:
+
+- **Blame:** the cursor line shows who last changed it, when, and the commit summary (like Zed's inline blame, and it
+  accounts for unsaved edits). Hover the annotation for the full commit card (author, date, message, hash) with a copy
+  button; text in it is selectable.
+- **Change markers** in the gutter against HEAD: green = added, blue = modified, a red wedge where lines were removed.
+- **Explorer:** status letters (M modified, A added, U untracked, D deleted, R renamed, ! conflict) and a dot on folders
+  that contain changes. The status bar shows the branch, ahead/behind counts and the number of changed files.
+- **Git tab** (Ctrl+Shift+G, or the branch icon in the activity bar): staged and unstaged files, per-file stage /
+  unstage / discard (discard asks for a second click), Stage All / Unstage All, and a commit box.

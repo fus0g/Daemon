@@ -16,6 +16,7 @@ import ide.json;
 import ide.process;
 import ide.cmake;
 import ide.project;
+import ide.git;
 import ide.lsp;
 
 namespace fs = std::filesystem;
@@ -103,7 +104,7 @@ public:
         win_.onPointerMove = [this](float x, float y) { onPointerMove(x, y); };
         win_.onPointerButton = [this](Button b, bool p, float x, float y) { onPointerButton(b, p, x, y); };
         win_.onScroll = [this](float dx, float dy, int sx, int sy) { onScroll(dx, dy, sx, sy); };
-        win_.onFocus = [this](bool f) { focused_ = f; resetCaret(); dirty_ = true; };
+        win_.onFocus = [this](bool f) { focused_ = f; resetCaret(); dirty_ = true; if (f) gitNextPoll_ = {}; };
         win_.onClose = [this] { requestQuit(); };
         if (auto r = win_.create("Daemon", 1280, 800); !r) return r;
         if (opt_.screenshot.empty()) win_.setMaximized();   // start maximized (captures keep a fixed size)
@@ -122,6 +123,7 @@ public:
         for (const auto& f : opt_.files) openFile(f);
         if (docs_.empty()) newDoc();
         if (opt_.files.empty() && opt_.screenshot.empty()) welcomeOpen();   // nothing to open: show the project chooser
+        if (!explorer_.isOpen()) gitDetect();
         resetCaret();
         feedKeys(opt_.keys);
         return {};
@@ -187,6 +189,13 @@ public:
             }
             if (tok.starts_with("sleep:")) {   // test hook: let asynchronous work (language server) catch up before the capture
                 settleUntil_ = Clock::now() + std::chrono::milliseconds(std::atoi(std::string(tok.substr(6)).c_str()));
+                continue;
+            }
+            if (tok == "blamehover" && blameRect_.w > 0) {   // test hook: hover the blame annotation
+                mx_ = blameRect_.x + blameRect_.w / 2;
+                my_ = blameRect_.y + blameRect_.h / 2;
+                blameHover_ = true;
+                showBlameCard(blameHash_, blameUncommitted_);
                 continue;
             }
             if (tok == "panelsel") {   // test hook: select rows 1..2 of the output panel and copy
@@ -439,6 +448,7 @@ private:
         setMessage("Opened folder " + explorer_.rootPath().string());
         addRecent(state_, explorer_.rootPath().string());
         saveState(state_);
+        gitReset();
         dirty_ = true;
     }
 
@@ -510,6 +520,7 @@ private:
         if (d.path.empty()) { openPrompt(PromptKind::SaveAs); return; }
         if (auto r = d.save(); r) {
             setMessage("Saved " + d.name);
+            gitNextPoll_ = {};   // refresh the change markers / status right away
             if (lsp_ && d.lspOpen) lsp_->didSave(d.path);
             if (isCppDoc(d) && !modules_.empty()) refreshModules();  // a module may have been renamed
             if (explorer_.isOpen()) explorer_.refresh();
@@ -550,6 +561,9 @@ private:
         if (buildEof_ || runEof_) consider(Clock::now() + std::chrono::milliseconds(30));
         if (lspFlushAt_) consider(*lspFlushAt_);
         if (!bgQueue_.empty() && lsp_) consider(bgNext_);
+        if (!jobs_.empty()) consider(Clock::now() + std::chrono::milliseconds(40));
+        if (gitRoot_ && focused_) consider(gitNextPoll_);
+        if (nextBlameWake_ > Clock::now()) consider(nextBlameWake_);
         if (lsp_ && cmakeOpen_) consider(nextDbCheck_);
         if (hover_.pending) consider(hover_.due);
         return t;
@@ -611,6 +625,7 @@ private:
         lspSync(now);
         if (lsp_ && lsp_->ready() && !bgScanned_) { bgScanned_ = true; queueProjectDiagnostics(); }
         pumpProjectDiagnostics(now);
+        gitTick(now);
         hoverTick(now);
         if (panelOpen_) {
             auto t = static_cast<std::size_t>(panelTab_);
@@ -725,7 +740,7 @@ private:
     }
     int activityAt(float x, float y) const {
         if (!L_.activity.contains(x, y)) return 0;
-        for (int i = 0; i < 3; ++i)
+        for (int i = 0; i < 4; ++i)
             if (activityRect(i).contains(x, y)) return i + 1;
         return 0;
     }
@@ -733,7 +748,8 @@ private:
         switch (i) {
             case 0: return sidebar_;
             case 1: return panelOpen_ && panelTab_ < 2;
-            default: return panelOpen_ && panelTab_ == 2;
+            case 2: return panelOpen_ && panelTab_ == 2;
+            default: return panelOpen_ && panelTab_ == 3;
         }
     }
     void activityClick(int i) {
@@ -743,9 +759,13 @@ private:
                 if (activityActive(1)) panelOpen_ = false;
                 else { panelOpen_ = true; panelTab_ = runProc_ ? 1 : 0; }
                 break;
-            default:
+            case 2:
                 if (activityActive(2)) panelOpen_ = false;
                 else { panelOpen_ = true; panelTab_ = 2; }
+                break;
+            default:
+                if (activityActive(3)) panelOpen_ = false;
+                else { panelOpen_ = true; panelTab_ = 3; gitNextPoll_ = {}; }
                 break;
         }
         dirty_ = true;
@@ -759,7 +779,7 @@ private:
         static constexpr std::array<ToolIcon, 3> icons = {ToolIcon::Files, ToolIcon::Terminal, ToolIcon::Warning};
         const bool hasErrors = !problems_.empty() ||
                                std::ranges::any_of(shownProblems_, [](const Problem& p) { return p.severity == Severity::Error; });
-        for (int i = 0; i < 3; ++i) {
+        for (int i = 0; i < 4; ++i) {
             const Rect r = activityRect(i);
             const bool active = activityActive(i), hot = hoverAct_ == i + 1;
             if (hot && !active) fill(r.x + 5 * s, r.y + 5 * s, r.w - 10 * s, r.h - 10 * s, theme::tabHover, 9 * s);
@@ -768,7 +788,8 @@ private:
                 fill(a.right() - std::round(2.5f * s), r.y + 10 * s, std::round(2.5f * s), r.h - 20 * s, theme::accent, 1.2f * s);
             }
             const float ix = std::round(r.x + (r.w - static_cast<float>(ip)) / 2), iy = std::round(r.y + (r.h - static_cast<float>(ip)) / 2);
-            Icons::tool(dl_, font_, ix, iy, ip, icons[static_cast<std::size_t>(i)], active || hot ? theme::text : theme::dim);
+            if (i == 3) Icons::glyph(dl_, font_, ix, iy, ip, 0xF062C, active || hot ? theme::text : theme::dim);   // source-branch
+            else Icons::tool(dl_, font_, ix, iy, ip, icons[static_cast<std::size_t>(i)], active || hot ? theme::text : theme::dim);
             if (i == 2 && hasErrors) {
                 const float d = std::round(7 * s);
                 fill(ix + static_cast<float>(ip) - d * 0.6f, iy - d * 0.2f, d, d, theme::danger, d / 2);
@@ -1259,6 +1280,7 @@ private:
         if (!(k.ctrl && k.key == Key::Char && k.ch == 'w')) closeArmed_ = -1;
         if (dlg_.kind != DlgKind::None) { dlgKey(k); dirty_ = true; return; }
         if (k.ctrl && !k.shift && !k.alt && k.key == Key::Char && k.ch == 'c' && copyOverlay()) { dirty_ = true; return; }
+        if (gitMsgFocus_ && panelOpen_ && panelTab_ == 3 && gitMsgKey(k)) { dirty_ = true; return; }
         if (runFocus_ && runProc_ && panelOpen_ && panelTab_ == 1 && runKey(k)) { dirty_ = true; return; }
         if (tabDrag_.active) {  // a tab is being dragged: Esc cancels, other keys are ignored
             if (k.key == Key::Escape) { tabDrag_ = {}; dirty_ = true; }
@@ -1939,6 +1961,11 @@ private:
         float y = hover_.py + 22 * s;
         if (y + h > H - 6 * s) y = hover_.py - h - 10 * s;
         x = std::max(6 * s, x);
+        if (blameHover_ && blameRect_.w > 0) {   // blame card: sits right above (or below) the annotation
+            y = blameRect_.y - h - 6 * s;
+            if (y < 6 * s) y = blameRect_.bottom() + 6 * s;
+            x = std::min(blameRect_.x, W - w - 6 * s);
+        }
         glassPanel({x, y, w, h}, 10 * s);
         hoverRect_ = {x, y, w, h};
         float ty = y + 8 * s;
@@ -2464,6 +2491,7 @@ private:
     }
 
     std::size_t panelRowCount() const {
+        if (panelTab_ == 3) return 0;
         if (panelTab_ == 2) return shownProblems_.size();
         return panelLines().size() + (panelTab_ == 1 && runProc_ ? 1 : 0);   // + the line the program is still writing
     }
@@ -2557,6 +2585,7 @@ private:
         for (std::size_t i = 0; i < panelTabRects_.size(); ++i)
             if (panelTabRects_[i].contains(mx_, my_)) { panelTab_ = static_cast<int>(i); psel_.active = false; runFocus_ = panelTab_ == 1 && runProc_; dirty_ = true; return; }
         if (panelClose_.contains(mx_, my_)) { panelOpen_ = false; dirty_ = true; return; }
+        if (panelClear_.contains(mx_, my_) && panelTab_ == 3) { gitNextPoll_ = {}; gitRefresh(); dirty_ = true; return; }
         if (panelClear_.contains(mx_, my_)) {
             if (panelTab_ == 1) runOut_.clear(); else if (panelTab_ == 0) { buildOut_.clear(); problems_.clear(); }
             else problems_.clear();
@@ -2564,6 +2593,7 @@ private:
             return;
         }
         Rect body = panelBody();
+        if (body.contains(mx_, my_) && panelTab_ == 3) { gitPanelClick(); return; }
         if (body.contains(mx_, my_)) {
             runFocus_ = panelTab_ == 1 && runProc_;   // clicking the Run output gives the program the keyboard
             // Press starts a text selection; releasing without dragging counts as a click on the row.
@@ -2587,6 +2617,8 @@ private:
         // Body first (rows may overflow the header; the header is painted over them).
         const Rect body = panelBody();
         const std::size_t tab = static_cast<std::size_t>(panelTab_);
+        if (panelTab_ == 3) drawGitBody(body);
+        else {
         panelScroll_[tab] = std::clamp(panelFollow_[tab] ? panelMaxScroll() : panelScroll_[tab], 0.0f, panelMaxScroll());
         const float sy = std::round(panelScroll_[tab]);
         const int total = static_cast<int>(panelRowCount());
@@ -2640,14 +2672,16 @@ private:
             float thumbY = body.y + (body.h - thumbH) * (sy / panelMaxScroll());
             fill(body.right() - 9 * s, thumbY, 5 * s, thumbH, theme::scrollbar, 2.5f * s);
         }
+        }   // (not the Git tab)
 
         // Header: darker band, text tabs with an accent underline (no pills, no borders).
         fill(p.x, p.y, p.w, hh, theme::panelHead);
-        static constexpr std::array<std::string_view, 3> names = {"Build", "Run", "Problems"};
+        static constexpr std::array<std::string_view, 4> names = {"Build", "Run", "Problems", "Git"};
         float x = p.x + 8 * s;
-        for (std::size_t i = 0; i < 3; ++i) {
+        for (std::size_t i = 0; i < 4; ++i) {
             std::string t = std::string(names[i]);
             if (i == 2 && !shownProblems_.empty()) t += std::format("  {}", shownProblems_.size());
+            if (i == 3 && !gitEntries_.empty()) t += std::format("  {}", gitEntries_.size());
             const float w = uiW(t) + 28 * s;
             panelTabRects_[i] = {x, p.y + 4 * s, w, hh - 8 * s};
             const bool active = static_cast<int>(i) == panelTab_;
@@ -2658,7 +2692,7 @@ private:
             if (active) fill(x + 14 * s, p.y + hh - std::round(2 * s) - s, uiW(t), std::round(2 * s), i == 2 && !shownProblems_.empty() ? Color::rgb(0xf2777a) : theme::accent, std::round(s));
             x += w + 2 * s;
         }
-        const std::string clear = "Clear";
+        const std::string clear = panelTab_ == 3 ? "Refresh" : "Clear";
         const float cwid = uiW(clear) + 24 * s, xs = std::round(hh * 0.72f);
         panelClose_ = {p.right() - 8 * s - xs, p.y + (hh - xs) / 2, xs, xs};
         panelClear_ = {panelClose_.x - 6 * s - cwid, p.y + 4 * s, cwid, hh - 8 * s};
@@ -3060,7 +3094,7 @@ private:
                 case 'q': requestQuit(); break;
                 case 'f': openPrompt(PromptKind::Find); break;
                 case 'h': openPrompt(PromptKind::Replace); break;
-                case 'g': openPrompt(PromptKind::Goto); break;
+                case 'g': if (shift) { panelOpen_ = true; panelTab_ = 3; gitNextPoll_ = {}; dirty_ = true; scrollToCursor_ = false; } else openPrompt(PromptKind::Goto); break;
                 case 'z': if (shift) d.redo(); else d.undo(); break;
                 case 'y': d.redo(); break;
                 case 'a': d.selectAll(); break;
@@ -3501,6 +3535,7 @@ private:
         int hpr = -1;
         if (panelOpen_ && panelBody().contains(mx_, my_))
             hpr = static_cast<int>(std::floor((my_ - panelBody().y + panelScroll_[static_cast<std::size_t>(panelTab_)]) / lh()));
+        if (panelOpen_ && panelTab_ == 3) gitUpdateHover();
         if (hb != hoverBtn_ || ht != hoverTab_ || hc != hoverClose_ || hover != hoverTool_ || hpr != hoverPanelRow_) {
             hoverBtn_ = hb; hoverTab_ = ht; hoverClose_ = hc; hoverTool_ = hover; hoverPanelRow_ = hpr;
             dirty_ = true;
@@ -3523,10 +3558,14 @@ private:
         Rect keepZone = hoverRect_;   // the popup (plus the gap up to the text it belongs to) stays while the pointer is on it
         keepZone.y -= 30 * S(); keepZone.h += 38 * S(); keepZone.x -= 44 * S(); keepZone.w += 54 * S();
         const bool onPopup = hover_.show && !menu_.open && keepZone.contains(mx_, my_);
+        const bool overBlame = blameRect_.w > 0 && blameRect_.contains(mx_, my_);
         if (!opt_.screenshot.empty()) {}  // scripted runs drive hover themselves
+        else if (overBlame) {
+            if (!(blameHover_ && hover_.show)) { blameHover_ = true; showBlameCard(blameHash_, blameUncommitted_); dirty_ = true; }
+        }
         else if (hsel_.dragging || onPopup) {}
-        else if (!docs_.empty() && !menu_.open && !dragging_ && L_.editor.contains(mx_, my_) && mx_ >= L_.textX && mx_ < L_.minimap.x) hoverMoved();
-        else hideHover();
+        else if (!docs_.empty() && !menu_.open && !dragging_ && L_.editor.contains(mx_, my_) && mx_ >= L_.textX && mx_ < L_.minimap.x) { blameHover_ = false; hoverMoved(); }
+        else { blameHover_ = false; hideHover(); }
         if (panelDrag_) {
             panelH_ = std::clamp((L_.panel.bottom() - my_) / S(), 90.0f, std::max(90.0f, (L_.side.h > 0 ? L_.side.h : L_.island.h + L_.panel.h) / S() * 0.6f));
             dirty_ = true;
@@ -3674,7 +3713,7 @@ private:
             if (pressed) dlgClick(b, mx_, my_);
             return;
         }
-        if (pressed && !(panelOpen_ && L_.panel.contains(mx_, my_))) { runFocus_ = false; psel_.active = false; }
+        if (pressed && !(panelOpen_ && L_.panel.contains(mx_, my_))) { runFocus_ = false; psel_.active = false; gitMsgFocus_ = false; }
         if (hover_.show && !hover_.lines.empty() && !menu_.open && hoverRect_.contains(mx_, my_)) {   // the tooltip is selectable
             if (pressed && b == Button::Left) {
                 if (hoverCopyRect_.contains(mx_, my_)) { std::string t; for (std::size_t i = 0; i < hover_.lines.size(); ++i) t += (i ? "\n" : "") + hover_.lines[i].first; win_.setClipboard(t); setMessage("Copied", false, 1.2f); }
@@ -3824,6 +3863,11 @@ private:
         if (dlg_.kind != DlgKind::None) { dlgScroll(stepsY != 0 ? static_cast<float>(stepsY) * 3 * 34 * S() : dyPx * S()); dirty_ = true; return; }
         if (menu_.open) closeMenu();
         hideHover();
+        if (panelOpen_ && L_.panel.contains(mx_, my_) && panelTab_ == 3) {
+            gitScroll_ = std::clamp(gitScroll_ + (stepsY != 0 ? static_cast<float>(stepsY) * 3 * lh() : dyPx * S()), 0.0f, gitMax_);
+            dirty_ = true;
+            return;
+        }
         if (panelOpen_ && L_.panel.contains(mx_, my_)) {
             auto t = static_cast<std::size_t>(panelTab_);
             float dy = stepsY != 0 ? static_cast<float>(stepsY) * 3 * lh() : dyPx * S();
@@ -3856,6 +3900,448 @@ private:
         dirty_ = true;
     }
 
+    // ============================================================ git: status, gutter diff, inline blame
+
+    struct GitDoc {
+        std::optional<std::string> head;      // content at HEAD (nullopt: untracked / no commit)
+        bool headAsked = false, headKnown = false;
+        std::vector<git::Hunk> hunks;
+        std::uint64_t hunksVersion = ~0ull;
+        std::vector<std::uint8_t> kinds;      // per line: 0 unchanged, 1 added, 2 modified
+        std::vector<int> deletedAt;           // lines before which text was removed
+        git::Blame blame;
+        std::uint64_t blameVersion = ~0ull;
+        bool blameValid = false, blameBusy = false;
+        Clock::time_point blameDue{};
+    };
+    std::unordered_map<const Document*, GitDoc> gitDocs_;
+    std::optional<fs::path> gitRoot_;
+    std::string gitBranch_, gitHead_, gitUpstream_;
+    int gitAhead_ = 0, gitBehind_ = 0;
+    std::vector<git::Entry> gitEntries_;
+    std::unordered_map<std::string, git::Entry> gitFiles_;   // absolute path -> status
+    std::unordered_set<std::string> gitDirs_;                // absolute folders that contain changes
+    bool gitStatusBusy_ = false, gitDetecting_ = false;
+    Clock::time_point gitNextPoll_{};
+    std::vector<std::future<std::function<void()>>> jobs_;
+    std::unordered_map<std::string, std::vector<std::string>> cardCache_;
+    std::string cardPending_;
+    Rect blameRect_;
+    std::string blameHash_;
+    bool blameHover_ = false, blameUncommitted_ = false;
+
+    // Runs `work` on a worker thread; the function it returns is applied on the main thread when it is done.
+    void spawn(std::function<std::function<void()>()> work) {
+        jobs_.push_back(std::async(std::launch::async, std::move(work)));
+    }
+    void pollJobs() {
+        for (std::size_t i = 0; i < jobs_.size();) {
+            if (jobs_[i].wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                auto apply = jobs_[i].get();
+                jobs_.erase(jobs_.begin() + static_cast<std::ptrdiff_t>(i));
+                if (apply) apply();
+                dirty_ = true;
+            } else {
+                ++i;
+            }
+        }
+    }
+    bool docAlive(const Document* d) const {
+        return std::ranges::any_of(docs_, [&](const auto& x) { return x.get() == d; });
+    }
+
+    void gitDetect() {
+        if (gitDetecting_) return;
+        fs::path dir;
+        if (explorer_.isOpen()) dir = explorer_.rootPath();
+        else if (!docs_.empty() && !docs_.front()->path.empty()) dir = fs::path(docs_.front()->path).parent_path();
+        if (dir.empty()) return;
+        gitDetecting_ = true;
+        spawn([this, dir] {
+            auto root = git::repoRoot(dir);
+            return std::function<void()>([this, root] {
+                gitDetecting_ = false;
+                gitRoot_ = root;
+                gitNextPoll_ = {};
+                if (root) gitRefresh();
+                else { gitEntries_.clear(); gitFiles_.clear(); gitDirs_.clear(); gitBranch_.clear(); }
+            });
+        });
+    }
+
+    void gitReset() {   // a different project was opened
+        gitRoot_.reset();
+        gitDocs_.clear();
+        gitEntries_.clear(); gitFiles_.clear(); gitDirs_.clear();
+        gitBranch_.clear(); gitHead_.clear(); gitUpstream_.clear();
+        gitAhead_ = gitBehind_ = 0;
+        cardCache_.clear();
+        gitDetect();
+    }
+
+    std::string gitRel(const std::string& absPath) const {
+        if (!gitRoot_) return {};
+        auto r = fs::path(absPath).lexically_relative(*gitRoot_);
+        if (r.empty() || *r.begin() == "..") return {};
+        return r.string();
+    }
+
+    void gitRefresh() {
+        if (!gitRoot_ || gitStatusBusy_) return;
+        gitStatusBusy_ = true;
+        const fs::path root = *gitRoot_;
+        spawn([this, root] {
+            auto st = git::status(root);
+            return std::function<void()>([this, root, st = std::move(st)] {
+                gitStatusBusy_ = false;
+                if (!st) return;
+                const bool headChanged = st->head != gitHead_;
+                gitBranch_ = st->branch; gitHead_ = st->head; gitUpstream_ = st->upstream;
+                gitAhead_ = st->ahead; gitBehind_ = st->behind;
+                gitEntries_ = st->entries;
+                gitFiles_.clear();
+                gitDirs_.clear();
+                for (const auto& e : st->entries) {
+                    std::string absStr = (root / e.path).lexically_normal().string();
+                    while (absStr.size() > 1 && absStr.back() == '/') absStr.pop_back();   // untracked folders come with a trailing slash
+                    const fs::path abs = absStr;
+                    gitFiles_[abs.string()] = e;
+                    for (fs::path q = abs.parent_path(); q.string().size() >= root.string().size() && q != q.parent_path(); q = q.parent_path()) {
+                        gitDirs_.insert(q.string());
+                        if (q == root) break;
+                    }
+                }
+                if (headChanged) for (auto& [d, g] : gitDocs_) { g.headAsked = false; g.headKnown = false; g.blameValid = false; }
+                for (auto it = gitDocs_.begin(); it != gitDocs_.end();) { if (!docAlive(it->first)) it = gitDocs_.erase(it); else ++it; }
+                dirty_ = true;
+            });
+        });
+    }
+
+    // Per visible document: HEAD content, change markers and blame (all computed off the UI thread or cheaply here).
+    void gitUpdateDoc(Document& d, Clock::time_point now) {
+        if (!gitRoot_ || d.path.empty()) return;
+        const std::string rel = gitRel(d.path);
+        if (rel.empty()) return;
+        GitDoc& g = gitDocs_[&d];
+        const fs::path root = *gitRoot_;
+        const Document* key = &d;
+        if (!g.headAsked) {
+            g.headAsked = true;
+            spawn([this, root, rel, key] {
+                auto head = git::headContent(root, rel);
+                return std::function<void()>([this, key, head = std::move(head)]() mutable {
+                    if (!docAlive(key)) return;
+                    GitDoc& gg = gitDocs_[key];
+                    gg.head = std::move(head);
+                    gg.headKnown = true;
+                    gg.hunksVersion = ~0ull;
+                    gg.blameVersion = ~0ull;
+                    gg.blameValid = false;
+                });
+            });
+        }
+        if (!g.headKnown) return;
+        const std::uint64_t ver = d.buf.version();
+        if (g.hunksVersion != ver) {
+            const std::string text = d.buf.text();
+            const int n = d.buf.lineCount();
+            if (!g.head) g.hunks = {{0, n, 0, 0}};
+            else g.hunks = git::diffLines(git::splitLines(*g.head), git::splitLines(text));
+            g.kinds.assign(static_cast<std::size_t>(n), 0);
+            g.deletedAt.clear();
+            for (const auto& h : g.hunks) {
+                if (h.removed()) g.deletedAt.push_back(std::min(h.newStart, n));
+                else for (int l = h.newStart; l < h.newStart + h.newCount && l < n; ++l) g.kinds[static_cast<std::size_t>(l)] = h.oldCount == 0 ? 1 : 2;
+            }
+            g.hunksVersion = ver;
+            if (g.head) g.blameDue = now + (g.blameVersion == ~0ull ? std::chrono::milliseconds(0) : std::chrono::milliseconds(650));
+            dirty_ = true;
+        }
+        if (g.head && !g.blameBusy && g.blameVersion != ver && now >= g.blameDue) {
+            g.blameBusy = true;
+            const fs::path tmp = fs::temp_directory_path() / std::format("daemon-blame-{}-{}.txt", reinterpret_cast<std::uintptr_t>(&d), ver);
+            std::ofstream(tmp, std::ios::binary | std::ios::trunc) << d.buf.text();
+            spawn([this, root, rel, key, ver, tmp] {
+                auto b = git::blame(root, rel, tmp);
+                std::error_code ec;
+                fs::remove(tmp, ec);
+                return std::function<void()>([this, key, ver, b = std::move(b)]() mutable {
+                    if (!docAlive(key)) return;
+                    GitDoc& gg = gitDocs_[key];
+                    gg.blameBusy = false;
+                    gg.blameVersion = ver;
+                    gg.blameValid = b.has_value();
+                    if (b) gg.blame = std::move(*b);
+                });
+            });
+        } else if (g.head && !g.blameBusy && g.blameVersion != ver) {
+            nextBlameWake_ = g.blameDue;
+        }
+    }
+    Clock::time_point nextBlameWake_{};
+
+    void gitTick(Clock::time_point now) {
+        if (jobs_.size() > 0) pollJobs();
+        if (!gitRoot_) return;
+        if (focused_ && now >= gitNextPoll_) { gitNextPoll_ = now + std::chrono::seconds(3); gitRefresh(); }
+        for (Node* n : leaves()) if (n->pane->cur) gitUpdateDoc(*n->pane->cur, now);
+    }
+
+    static std::string blameText(const git::Commit& c) {
+        if (c.uncommitted) return "Uncommitted changes";
+        return c.author + ", " + git::relativeTime(c.time, std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count()) +
+               "  \xE2\x80\xA2  " + c.summary;
+    }
+
+    // The commit that last changed line `ln` of `d` (null when blame is not available for the current text).
+    const git::Commit* blameOf(const Document& d, int ln) const {
+        auto it = gitDocs_.find(&d);
+        if (it == gitDocs_.end()) return nullptr;
+        const GitDoc& g = it->second;
+        if (!g.blameValid || g.blameVersion != d.buf.version() || ln < 0 || ln >= static_cast<int>(g.blame.lineCommit.size())) return nullptr;
+        const int ci = g.blame.lineCommit[static_cast<std::size_t>(ln)];
+        return ci >= 0 && ci < static_cast<int>(g.blame.commits.size()) ? &g.blame.commits[static_cast<std::size_t>(ci)] : nullptr;
+    }
+
+    // Hover card for the commit behind the blame annotation (fetched once, then cached).
+    void showBlameCard(const std::string& hash, bool uncommitted) {
+        hover_ = {};
+        hover_.show = true;
+        hover_.px = mx_;
+        hover_.py = my_ - 90 * S();
+        if (uncommitted) { hover_.lines = {{"Not committed yet", 0}, {"This line has local changes that are not in any commit.", 0}}; return; }
+        if (auto it = cardCache_.find(hash); it != cardCache_.end()) {
+            for (const auto& l : it->second) hover_.lines.emplace_back(l, 0);
+            hover_.lines.back().second = 0;
+            return;
+        }
+        hover_.lines = {{"Loading commit...", 0}};
+        if (cardPending_ == hash || !gitRoot_) return;
+        cardPending_ = hash;
+        const fs::path root = *gitRoot_;
+        spawn([this, root, hash] {
+            auto card = git::commitCard(root, hash);
+            return std::function<void()>([this, hash, card = std::move(card)]() mutable {
+                cardPending_.clear();
+                cardCache_[hash] = std::move(card);
+                if (blameHover_ && blameHash_ == hash && hover_.show) showBlameCard(hash, false);
+            });
+        });
+    }
+
+    // ============================================================ git panel (bottom panel, "Git" tab)
+
+    struct TextBox { std::string text; std::size_t cur = 0; };
+    struct GitHit { Rect r; int kind = 0, sec = 0, idx = 0; };   // kinds: 1 field, 2 commit, 3 stage all, 4 unstage all, 10 open, 11 stage, 12 unstage, 13 discard
+    std::vector<GitHit> gitHits_;
+    GitHit gitHover_;
+    TextBox gitMsg_;
+    bool gitMsgFocus_ = false;
+    float gitScroll_ = 0, gitMax_ = 0;
+    std::string gitDiscardArm_;
+    Clock::time_point gitDiscardAt_{};
+
+    bool gitHoverSame(const GitHit& a, const GitHit& b) const { return a.kind == b.kind && a.sec == b.sec && a.idx == b.idx; }
+
+    void gitUpdateHover() {
+        GitHit h;
+        for (auto it = gitHits_.rbegin(); it != gitHits_.rend(); ++it)
+            if (it->r.contains(mx_, my_)) { h = *it; break; }
+        if (!gitHoverSame(h, gitHover_)) { gitHover_ = h; dirty_ = true; }
+    }
+
+    // Runs a git action on a worker thread, then refreshes the status and shows the outcome.
+    void gitAction(std::function<git::Result(const fs::path&)> fn, std::string okMsg = {}) {
+        if (!gitRoot_) return;
+        const fs::path root = *gitRoot_;
+        spawn([this, root, fn = std::move(fn), okMsg = std::move(okMsg)] {
+            auto r = fn(root);
+            return std::function<void()>([this, r = std::move(r), okMsg] {
+                if (!r.ok()) {
+                    std::string first = r.out.substr(0, r.out.find('\n'));
+                    setMessage(first.empty() ? "git command failed" : first, true, 5);
+                } else if (!okMsg.empty()) {
+                    setMessage(okMsg, false, 3);
+                }
+                gitNextPoll_ = {};
+                gitRefresh();
+            });
+        });
+    }
+
+    void gitCommit() {
+        if (!gitRoot_) return;
+        const std::string msg = git::trim(gitMsg_.text);
+        const bool anyStaged = std::ranges::any_of(gitEntries_, [](const git::Entry& e) { return e.staged(); });
+        if (msg.empty()) { setMessage("Enter a commit message first", true, 2.5f); return; }
+        if (!anyStaged) { setMessage("Nothing staged - stage some files first", true, 2.5f); return; }
+        gitMsg_ = {};
+        const std::string summary = msg.substr(0, msg.find('\n'));
+        gitAction([msg](const fs::path& root) { return git::commit(root, msg); }, "Committed: " + summary);
+    }
+
+    bool gitMsgKey(const KeyEvent& k) {
+        if (k.key == Key::Escape) { gitMsgFocus_ = false; return true; }
+        if (k.key == Key::Enter) { gitCommit(); return true; }
+        if (k.ctrl && k.key != Key::Char) return false;
+        if (k.key >= Key::F1) return false;
+        return editText(gitMsg_, k);
+    }
+
+    void gitOpenEntry(const git::Entry& e) {
+        if (!gitRoot_) return;
+        const fs::path abs = *gitRoot_ / e.path;
+        std::error_code ec;
+        if (fs::is_regular_file(abs, ec)) openFile(abs.string());
+        else setMessage("File no longer exists: " + e.path, true, 2.5f);
+    }
+
+    void gitPanelClick() {
+        gitMsgFocus_ = false;
+        const GitHit* hit = nullptr;
+        for (auto it = gitHits_.rbegin(); it != gitHits_.rend(); ++it)
+            if (it->r.contains(mx_, my_)) { hit = &*it; break; }
+        if (!hit) return;
+        auto entryOf = [&](const GitHit& h) -> const git::Entry* {
+            int n = 0;
+            for (const auto& e : gitEntries_) {
+                if ((h.sec == 0 && !e.staged()) || (h.sec == 1 && !e.unstaged())) continue;
+                if (n++ == h.idx) return &e;
+            }
+            return nullptr;
+        };
+        switch (hit->kind) {
+            case 1: gitMsgFocus_ = true; gitMsg_.cur = caretFromX(gitMsg_.text, mx_ - (hit->r.x + 10 * S())); break;
+            case 2: gitCommit(); break;
+            case 3: gitAction([](const fs::path& r) { return git::stageAll(r); }); break;
+            case 4: gitAction([](const fs::path& r) { return git::unstageAll(r); }); break;
+            case 10: if (auto* e = entryOf(*hit)) gitOpenEntry(*e); break;
+            case 11: if (auto* e = entryOf(*hit)) { const std::string p = e->path; gitAction([p](const fs::path& r) { return git::stage(r, {p}); }); } break;
+            case 12: if (auto* e = entryOf(*hit)) { const std::string p = e->path; gitAction([p](const fs::path& r) { return git::unstage(r, {p}); }); } break;
+            case 13:
+                if (auto* e = entryOf(*hit)) {
+                    const auto now = Clock::now();
+                    if (gitDiscardArm_ == e->path && now - gitDiscardAt_ < std::chrono::seconds(4)) {
+                        gitDiscardArm_.clear();
+                        const git::Entry copy = *e;
+                        gitAction([copy](const fs::path& r) { return git::discard(r, copy); }, "Discarded changes to " + copy.path);
+                    } else {
+                        gitDiscardArm_ = e->path;
+                        gitDiscardAt_ = now;
+                        setMessage("Click again to discard the changes to " + e->path, true, 4);
+                    }
+                }
+                break;
+            default: break;
+        }
+        dirty_ = true;
+    }
+
+    static Color gitLetterColor(char ch) {
+        return (ch == 'U' || ch == 'A') ? Color::rgb(0x73c990) : (ch == 'D' || ch == '!') ? Color::rgb(0xe06c75) : ch == 'R' ? Color::rgb(0x61afef) : Color::rgb(0xe5c07b);
+    }
+
+    void drawGitBody(const Rect& body) {
+        const float s = S();
+        gitHits_.clear();
+        if (!gitRoot_) {
+            label(body.x + 14 * s, body.y + 0.5f * lh(), "Not a git repository", theme::lineNum);
+            label(body.x + 14 * s, body.y + 1.5f * lh(), "Run `git init` in the project folder to track changes here.", theme::lineNum);
+            return;
+        }
+        std::vector<const git::Entry*> staged, changes;
+        for (const auto& e : gitEntries_) {
+            if (e.staged()) staged.push_back(&e);
+            if (e.unstaged()) changes.push_back(&e);
+        }
+        const float top = std::round(58 * s), rowH = std::round(lh() + 8 * s), headH = std::round(lh() + 12 * s);
+        const float listH = std::max(0.0f, body.h - top);
+        const float contentH = (staged.empty() ? 0 : headH + static_cast<float>(staged.size()) * rowH) +
+                               (changes.empty() ? 0 : headH + static_cast<float>(changes.size()) * rowH);
+        gitMax_ = std::max(0.0f, contentH - listH + 8 * s);
+        gitScroll_ = std::clamp(gitScroll_, 0.0f, gitMax_);
+        float y = body.y + top - std::round(gitScroll_);
+
+        auto section = [&](const char* title, const std::vector<const git::Entry*>& list, int sec) {
+            if (list.empty()) return;
+            const float hy = y;
+            uiLabel(body.x + 14 * s, hy, headH, std::format("{}  {}", title, list.size()), theme::dim);
+            const std::string btn = sec == 0 ? "Unstage All" : "Stage All";
+            const float bw = uiW(btn) + 18 * s;
+            const Rect br{body.right() - bw - 14 * s, hy + 3 * s, bw, headH - 6 * s};
+            const bool bh = hy + headH > body.y + top && br.contains(mx_, my_);
+            if (hy >= body.y + top - 1) { gitHits_.push_back({br, sec == 0 ? 4 : 3, sec, 0}); if (bh) fill(br, Color::rgb(0xffffff, 26), 6 * s); }
+            uiLabelC(br.x + br.w / 2, br.y, br.h, btn, bh ? theme::text : theme::dim);
+            y += headH;
+            int idx = 0;
+            for (const git::Entry* e : list) {
+                const Rect row{body.x + 6 * s, y, body.w - 12 * s, rowH - 2 * s};
+                const bool visible = y + rowH > body.y + top && y < body.bottom();
+                if (visible) {
+                    const bool inside = y >= body.y + top - 1;
+                    const bool hot = gitHover_.sec == sec && gitHover_.idx == idx && (gitHover_.kind == 10 || gitHover_.kind >= 11);
+                    if (inside) gitHits_.push_back({row, 10, sec, idx});
+                    if (hot) fill(row, Color::rgb(0xffffff, 16), 7 * s);
+                    const fs::path pth(e->path);
+                    drawFileIcon(row.x + 10 * s, row.y + (row.h - iconSize()) / 2, pth.filename().string());
+                    float x = row.x + 10 * s + iconSize() + 10 * s;
+                    const char ch = e->x == '?' ? 'U' : (e->conflicted() ? '!' : (sec == 0 ? e->x : (e->y != ' ' ? e->y : e->x)));
+                    const Color lc = gitLetterColor(ch);
+                    x = uiLabel(x, row.y, row.h, pth.filename().string(), lc.mix(theme::text, 0.55f));
+                    if (pth.has_parent_path()) uiLabel(x + 10 * s, row.y, row.h, pth.parent_path().string(), theme::lineNum, row.right() - 110 * s);
+                    float rx = row.right() - 12 * s;
+                    const std::string letter(1, ch);
+                    rx -= uiW(letter);
+                    uiLabel(rx, row.y, row.h, letter, lc);
+                    if (hot && inside) {   // row actions
+                        const float bs = std::round(row.h - 4 * s);
+                        auto act = [&](int kind, char32_t glyph) {
+                            rx -= bs + 6 * s;
+                            const Rect ar{rx, row.y + 2 * s, bs, bs};
+                            gitHits_.push_back({ar, kind, sec, idx});
+                            const bool ah = ar.contains(mx_, my_);
+                            if (ah) fill(ar, Color::rgb(0xffffff, 40), 6 * s);
+                            const int ip = std::max(12, static_cast<int>(std::round(bs * 0.62f)));
+                            Icons::glyph(dl_, font_, ar.x + (bs - static_cast<float>(ip)) / 2, ar.y + (bs - static_cast<float>(ip)) / 2, ip, glyph, ah ? Color::rgb(0xffffff) : theme::dim);
+                        };
+                        if (sec == 0) act(12, 0xF0374);
+                        else { act(11, 0xF0415); act(13, 0xF054C); }
+                    }
+                }
+                y += rowH;
+                ++idx;
+            }
+        };
+        section("Staged Changes", staged, 0);
+        section("Changes", changes, 1);
+        if (gitEntries_.empty()) label(body.x + 14 * s, body.y + top + 0.5f * lh(), "No changes - the working tree is clean", theme::lineNum);
+
+        // Commit box (drawn last so scrolled rows disappear beneath it).
+        fill(body.x, body.y, body.w, top - 2 * s, theme::panelBg);
+        const float bw = std::round(112 * s);
+        const Rect field{body.x + 12 * s, body.y + 10 * s, body.w - 24 * s - bw - 10 * s, std::round(34 * s)};
+        gitHits_.push_back({field, 1, 0, 0});
+        fill(field, gitMsgFocus_ ? theme::accent : Color::rgb(0xffffff, 34), 8 * s);
+        fill(field.x + 1, field.y + 1, field.w - 2, field.h - 2, Color::rgb(0x07080a), 7.5f * s);
+        const float fx0 = field.x + 10 * s, fmax = field.right() - 10 * s;
+        const std::size_t cur = std::min(gitMsg_.cur, gitMsg_.text.size());
+        std::size_t start = 0;
+        while (start < cur && uiW(std::string_view(gitMsg_.text).substr(start, cur - start)) > fmax - fx0 - 4 * s) start = utf8Next(gitMsg_.text, start);
+        if (gitMsg_.text.empty()) uiLabel(fx0, field.y, field.h, gitBranch_.empty() ? "Commit message" : "Commit message  (Enter to commit to " + gitBranch_ + ")", theme::lineNum, fmax);
+        else uiLabel(fx0, field.y, field.h, std::string_view(gitMsg_.text).substr(start), theme::text, fmax);
+        if (gitMsgFocus_ && caretOn_ && focused_) {
+            const float cx = fx0 + uiW(std::string_view(gitMsg_.text).substr(start, cur - start));
+            fill(std::round(cx), field.y + 8 * s, std::max(2.0f, std::round(1.4f * s)), field.h - 16 * s, theme::caret, s);
+        }
+        const Rect cb{field.right() + 10 * s, field.y, bw, field.h};
+        gitHits_.push_back({cb, 2, 0, 0});
+        const bool ready = !staged.empty() && !git::trim(gitMsg_.text).empty();
+        const bool chot = cb.contains(mx_, my_);
+        fill(cb, ready ? (chot ? theme::accent.mix(Color::rgb(0xffffff), 0.14f) : theme::accent) : Color::rgb(0xffffff, chot ? 40 : 26), 9 * s);
+        uiLabelC(cb.x + cb.w / 2, cb.y, cb.h, "Commit", ready ? Color::rgb(0xffffff) : theme::dim);
+    }
+
     // ============================================================ project dialogs (welcome / new project / folder browser)
 
     enum DlgId : int {
@@ -3864,7 +4350,6 @@ private:
         kDlgBm = 500, kDlgPath = 550, kDlgUp = 551, kDlgHidden = 552, kDlgOk = 553, kDlgBrowseCancel = 554, kDlgEntry = 600,
     };
     enum class DlgKind { None, Welcome, NewProject, Browse };
-    struct TextBox { std::string text; std::size_t cur = 0; };
     struct BrowseEntry { std::string name; bool cmake = false; };
     struct Dialog {
         DlgKind kind = DlgKind::None;
@@ -4508,6 +4993,7 @@ private:
         dl_.clear();
         const float W = L_.status.w, H = L_.status.bottom();
         const Rect& isl = L_.island;
+        blameRect_ = {};
         for (Node* n : leaves()) {
             Pane& p = *n->pane;
             fill(p.rect, theme::editorBg);
@@ -4635,6 +5121,26 @@ private:
                 Color nameColor = nd.name.starts_with('.') ? theme::dim : (nd.dir ? theme::text : Color::rgb(0xb9bdc6));
                 if (active) nameColor = Color::rgb(0xffffff).mix(theme::accent, 0.25f);
                 float nameMax = sd.right() - 10 * s;
+                float rightEdge = sd.right() - 22 * s;
+                const std::string pathStr = nd.path.lexically_normal().string();
+                Color gitColor{};
+                bool hasGit = false;
+                if (auto gf = gitFiles_.find(pathStr); gf != gitFiles_.end()) {   // git status letter (files, untracked folders)
+                    const git::Entry& ge = gf->second;
+                    const char ch = ge.x == '?' ? 'U' : (ge.conflicted() ? '!' : (ge.y != ' ' ? ge.y : ge.x));
+                    gitColor = (ch == 'U' || ch == 'A') ? Color::rgb(0x73c990) : ch == 'D' || ch == '!' ? Color::rgb(0xe06c75) : ch == 'R' ? Color::rgb(0x61afef) : Color::rgb(0xe5c07b);
+                    const std::string letter(1, ch);
+                    const float lw = uiW(letter);
+                    uiLabel(rightEdge - lw, y, rh, letter, gitColor);
+                    rightEdge -= lw + 10 * s;
+                    hasGit = true;
+                } else if (nd.dir && gitDirs_.contains(pathStr)) {   // folder containing changes: a dot
+                    const float dot = std::round(6 * s);
+                    fill(rightEdge - dot, y + (rh - dot) / 2, dot, dot, Color::rgb(0xe5c07b), dot / 2);
+                    rightEdge -= dot + 10 * s;
+                }
+                if (hasGit && !active) nameColor = gitColor;
+                nameMax = std::min(nameMax, rightEdge - 6 * s);
                 if (auto pc = problemCounts_.find(nd.path.string()); pc != problemCounts_.end()) {   // problems in this file / folder
                     const auto [errs, warns] = pc->second;
                     const Color pcol = errs > 0 ? Color::rgb(0xf2777a) : Color::rgb(0xe5c07b);
@@ -4642,7 +5148,7 @@ private:
                     const int cnt = errs + warns;
                     const std::string txt = cnt > 99 ? "99+" : std::to_string(cnt);
                     const float bw = std::max(uiW(txt) + 12 * s, 20 * s), bh = std::round(uiH() + 2 * s);
-                    const Rect badge{sd.right() - 22 * s - bw, y + (rh - bh) / 2, bw, bh};
+                    const Rect badge{rightEdge - bw, y + (rh - bh) / 2, bw, bh};
                     fill(badge, pcol.alpha(46), bh / 2);
                     uiLabelC(badge.x + badge.w / 2, badge.y, badge.h, txt, pcol);
                     nameMax = badge.x - 6 * s;
@@ -4860,8 +5366,33 @@ private:
             fill(baseX + caret_.xl, e.y + caret_.yt - sy, cwid, chei, theme::caret, std::min(cwid, chei) / 2);
         }
 
+        // Inline blame for the cursor line: who changed it, when, and the commit summary.
+        if (drawActive_) {
+            if (const git::Commit* bc = blameOf(d, d.cursor.line)) {
+                const std::string& cl = d.buf.line(d.cursor.line);
+                const float by = e.y + static_cast<float>(d.cursor.line) * line - sy;
+                const float limit = (L_.minimap.w > 0 ? L_.minimap.x : e.right()) - 14 * s;
+                const float bx = baseX + static_cast<float>(displayCol(cl, static_cast<int>(cl.size()), d.tabWidth) + 3) * cell;
+                if (by > e.y - line && by < e.bottom() && bx < limit - 14 * cell) {
+                    std::string t = blameText(*bc);
+                    const std::size_t maxCells = static_cast<std::size_t>((limit - bx) / cell);
+                    if (utf8Length(t) > maxCells) {
+                        std::size_t i = 0, cells = 0;
+                        while (i < t.size() && cells + 1 < maxCells) { i = utf8Next(t, i); ++cells; }
+                        t = t.substr(0, i) + "\xE2\x80\xA6";
+                    }
+                    label(bx, by, t, Color::rgb(0x646a78), limit);
+                    blameRect_ = {bx - cell, by, static_cast<float>(utf8Length(t) + 2) * cell, line};
+                    blameHash_ = bc->hash;
+                    blameUncommitted_ = bc->uncommitted;
+                }
+            }
+        }
+
         // Gutter (opaque, so scrolled-away text disappears beneath it).
         fill(e.x, e.y, L_.gutterW, e.h, theme::editorBg);
+        const GitDoc* gd = nullptr;
+        if (auto git_it = gitDocs_.find(&d); git_it != gitDocs_.end() && git_it->second.hunksVersion == d.buf.version()) gd = &git_it->second;
         for (int ln = first; ln <= last; ++ln) {
             const float y = e.y + static_cast<float>(ln) * line - sy;
             std::string num = std::to_string(ln + 1);
@@ -4871,7 +5402,16 @@ private:
                   active ? theme::lineNumActive : theme::lineNum);
             if (auto wit = worstSeverity.find(ln); wit != worstSeverity.end())
                 fill(e.x + std::round(3 * s), y + std::round(3 * s), std::max(2.0f, std::round(3 * s)), line - std::round(6 * s), diagColor(wit->second), 1.5f * s);
+            if (gd && ln < static_cast<int>(gd->kinds.size()) && gd->kinds[static_cast<std::size_t>(ln)])   // change bar vs HEAD
+                fill(e.x + L_.gutterW - std::round(5 * s), y + 1, std::max(2.0f, std::round(3 * s)), line - 2,
+                     gd->kinds[static_cast<std::size_t>(ln)] == 1 ? Color::rgb(0x4fb36d) : Color::rgb(0x5b9bff), 1.5f * s);
         }
+        if (gd)
+            for (int dl : gd->deletedAt) {   // removed lines: a small red wedge at the boundary
+                if (dl < first || dl > last + 1) continue;
+                const float y = e.y + static_cast<float>(dl) * line - sy;
+                fill(e.x + L_.gutterW - std::round(6 * s), y - std::round(s), std::round(6 * s), std::max(2.0f, std::round(2 * s)), Color::rgb(0xe5484d), s);
+            }
 
         drawMinimap(d);
 
@@ -4977,6 +5517,16 @@ private:
         std::string pos = std::format("Ln {}, Col {}", d.cursor.line + 1, displayCol(d.buf.line(d.cursor.line), d.cursor.col, d.tabWidth) + 1);
         if (d.hasSelection()) pos += std::format(" ({} selected)", utf8Length(d.selectedText()));
         seg(pos);
+        if (!gitBranch_.empty()) {   // current branch, ahead / behind and whether the work tree has changes
+            std::string t = gitBranch_;
+            if (gitAhead_) t += std::format(" \xE2\x86\x91{}", gitAhead_);
+            if (gitBehind_) t += std::format(" \xE2\x86\x93{}", gitBehind_);
+            if (!gitEntries_.empty()) t += std::format("  \xE2\x80\xA2 {}", gitEntries_.size());
+            x = uiLabelR(x, r.y, r.h, t, gitEntries_.empty() ? theme::dim : Color::rgb(0xe5c07b));
+            const int ip = std::max(12, static_cast<int>(std::round(uiH() * 0.95f)));
+            Icons::glyph(dl_, font_, x - static_cast<float>(ip) - 4 * s, r.y + (r.h - static_cast<float>(ip)) / 2, ip, 0xF062C, theme::dim);
+            x -= static_cast<float>(ip) + 4 * s + gap;
+        }
 
         // Language server and diagnostics.
         if (isCppDoc(d) || !lspStatus_.empty()) {
@@ -5105,10 +5655,10 @@ private:
     std::vector<ModuleDecl> modules_;
     bool clangdModules_ = false;
     float panelH_ = 230;   // logical px
-    std::array<float, 3> panelScroll_{};
-    std::array<bool, 3> panelFollow_{true, true, true};
+    std::array<float, 4> panelScroll_{};
+    std::array<bool, 4> panelFollow_{true, true, true, false};
     int hoverPanelRow_ = -1, hoverTool_ = 0;
-    std::array<Rect, 3> panelTabRects_{};
+    std::array<Rect, 4> panelTabRects_{};
     Rect panelClear_, panelClose_;
     ToolRects tool_;
     std::vector<std::function<void()>> menuActions_;
