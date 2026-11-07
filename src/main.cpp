@@ -32,5 +32,6 @@ int main(int argc, char** argv) {
         std::println(std::cerr, "daemon: {}", r.error());
         return 1;
     }
+    
     return app.run();
 }

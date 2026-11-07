@@ -291,6 +291,115 @@ inline std::string relativeTime(std::int64_t then, std::int64_t now) {
     return plural(d / (86400 * 365), "year");
 }
 
+
+// ---------------------------------------------------------------------------------------------- history & branches
+
+struct LogEntry {
+    std::string hash, shortHash, author, refs, subject;
+    std::vector<std::string> parents;
+    std::int64_t time = 0;
+};
+
+// Commits of all branches, newest first in topological order (so a graph can be laid out from it).
+inline std::vector<LogEntry> log(const fs::path& root, int maxCount = 400) {
+    std::vector<LogEntry> out;
+    auto r = run(root, {"log", "--all", "--topo-order", "--decorate=short", std::format("--max-count={}", maxCount),
+                        "--format=%H%x1f%P%x1f%h%x1f%an%x1f%at%x1f%D%x1f%s"}, 30000);
+    if (!r.ok()) return out;
+    for (std::size_t i = 0; i < r.out.size();) {
+        auto e = r.out.find('\n', i);
+        if (e == std::string::npos) e = r.out.size();
+        const std::string line = r.out.substr(i, e - i);
+        i = e + 1;
+        std::vector<std::string> f;
+        for (std::size_t p = 0;;) {
+            auto q = line.find('\x1f', p);
+            f.push_back(line.substr(p, q == std::string::npos ? std::string::npos : q - p));
+            if (q == std::string::npos) break;
+            p = q + 1;
+        }
+        if (f.size() < 7) continue;
+        LogEntry le;
+        le.hash = f[0];
+        for (std::size_t p = 0; p < f[1].size();) {
+            auto q = f[1].find(' ', p);
+            if (q == std::string::npos) q = f[1].size();
+            if (q > p) le.parents.push_back(f[1].substr(p, q - p));
+            p = q + 1;
+        }
+        le.shortHash = f[2];
+        le.author = f[3];
+        le.time = std::atoll(f[4].c_str());
+        le.refs = f[5];
+        le.subject = f[6];
+        out.push_back(std::move(le));
+    }
+    return out;
+}
+
+struct FileChange { char status = 'M'; std::string path; };
+
+inline std::vector<FileChange> commitFiles(const fs::path& root, const std::string& hash) {
+    std::vector<FileChange> out;
+    auto r = run(root, {"show", "--name-status", "--format=", "-M", hash});
+    if (!r.ok()) return out;
+    for (std::size_t i = 0; i < r.out.size();) {
+        auto e = r.out.find('\n', i);
+        if (e == std::string::npos) e = r.out.size();
+        const std::string line = r.out.substr(i, e - i);
+        i = e + 1;
+        if (line.size() < 3) continue;
+        auto tab = line.find('\t');
+        if (tab == std::string::npos) continue;
+        std::string path = line.substr(tab + 1);
+        if (auto t2 = path.find('\t'); t2 != std::string::npos) path = path.substr(t2 + 1);   // renames: show the new name
+        out.push_back({line[0], std::move(path)});
+    }
+    return out;
+}
+
+struct Branch {
+    std::string name;       // short name, e.g. "main" or "origin/main"
+    bool remote = false, current = false;
+    std::string hash, subject, upstream;
+};
+
+inline std::vector<Branch> branches(const fs::path& root) {
+    std::vector<Branch> out;
+    auto r = run(root, {"for-each-ref", "--sort=-committerdate", "--format=%(HEAD)%1f%(refname)%1f%(refname:short)%1f%(objectname:short)%1f%(upstream:short)%1f%(subject)",
+                        "refs/heads", "refs/remotes"});
+    if (!r.ok()) return out;
+    for (std::size_t i = 0; i < r.out.size();) {
+        auto e = r.out.find('\n', i);
+        if (e == std::string::npos) e = r.out.size();
+        const std::string line = r.out.substr(i, e - i);
+        i = e + 1;
+        std::vector<std::string> f;
+        for (std::size_t p = 0;;) {
+            auto q = line.find('\x1f', p);
+            f.push_back(line.substr(p, q == std::string::npos ? std::string::npos : q - p));
+            if (q == std::string::npos) break;
+            p = q + 1;
+        }
+        if (f.size() < 6) continue;
+        if (f[1].ends_with("/HEAD")) continue;
+        Branch b;
+        b.current = f[0] == "*";
+        b.remote = f[1].starts_with("refs/remotes/");
+        b.name = f[2];
+        b.hash = f[3];
+        b.upstream = f[4];
+        b.subject = f[5];
+        out.push_back(std::move(b));
+    }
+    return out;
+}
+
+inline Result checkout(const fs::path& root, const std::string& name) { return run(root, {"switch", name}, 60000, true); }
+inline Result fetch(const fs::path& root) { return run(root, {"fetch", "--all", "--prune"}, 120000, true); }
+inline Result pull(const fs::path& root) { return run(root, {"pull", "--ff-only"}, 120000, true); }
+inline Result push(const fs::path& root) { return run(root, {"push"}, 120000, true); }
+
 // ---------------------------------------------------------------------------------------------- actions
 
 inline Result stage(const fs::path& root, const std::vector<std::string>& paths) {

@@ -153,6 +153,14 @@ public:
             auto bar = spec.find('|', pos);
             std::string_view tok = spec.substr(pos, bar == std::string_view::npos ? bar : bar - pos);
             const std::size_t next = bar == std::string_view::npos ? spec.size() : bar + 1;
+            if (tok.starts_with("sleep:")) {   // test hook: pause the script (and the capture) so asynchronous work can finish
+                const auto now = Clock::now();
+                if (!scriptSleeping_) { scriptSleeping_ = true; scriptSleepUntil_ = now + std::chrono::milliseconds(std::atoi(std::string(tok.substr(6)).c_str())); }
+                if (now < scriptSleepUntil_) { settleUntil_ = scriptSleepUntil_; return; }
+                scriptSleeping_ = false;
+                pos = next;
+                continue;
+            }
             if (tok == "waitrun") {   // test hook: until the program is running (or nothing is going to run)
                 if (!runProc_ && (buildProc_ || pendingBuild_)) return;
                 pos = next;
@@ -187,8 +195,15 @@ public:
                 updateDropTarget();
                 continue;
             }
-            if (tok.starts_with("sleep:")) {   // test hook: let asynchronous work (language server) catch up before the capture
-                settleUntil_ = Clock::now() + std::chrono::milliseconds(std::atoi(std::string(tok.substr(6)).c_str()));
+            if (tok.starts_with("gitsub:")) {   // test hook: open the Git tab on a sub-tab (0 changes, 1 history, 2 branches)
+                panelOpen_ = true; panelTab_ = 3;
+                gitSub_ = std::atoi(std::string(tok.substr(7)).c_str());
+                gitScroll_ = 0;
+                continue;
+            }
+            if (tok.starts_with("gitexpand:")) {   // test hook: expand the n-th commit
+                const auto n = static_cast<std::size_t>(std::atoi(std::string(tok.substr(10)).c_str()));
+                if (n < gitLog_.size()) gitToggleCommit(gitLog_[n].hash);
                 continue;
             }
             if (tok == "blamehover" && blameRect_.w > 0) {   // test hook: hover the blame annotation
@@ -562,6 +577,7 @@ private:
         if (lspFlushAt_) consider(*lspFlushAt_);
         if (!bgQueue_.empty() && lsp_) consider(bgNext_);
         if (!jobs_.empty()) consider(Clock::now() + std::chrono::milliseconds(40));
+        if (scriptSleeping_) consider(scriptSleepUntil_);
         if (gitRoot_ && focused_) consider(gitNextPoll_);
         if (nextBlameWake_ > Clock::now()) consider(nextBlameWake_);
         if (lsp_ && cmakeOpen_) consider(nextDbCheck_);
@@ -4011,7 +4027,7 @@ private:
                         if (q == root) break;
                     }
                 }
-                if (headChanged) for (auto& [d, g] : gitDocs_) { g.headAsked = false; g.headKnown = false; g.blameValid = false; }
+                if (headChanged) { for (auto& [d, g] : gitDocs_) { g.headAsked = false; g.headKnown = false; g.blameValid = false; } gitInvalidateLists(); }
                 for (auto it = gitDocs_.begin(); it != gitDocs_.end();) { if (!docAlive(it->first)) it = gitDocs_.erase(it); else ++it; }
                 dirty_ = true;
             });
@@ -4214,6 +4230,29 @@ private:
         switch (hit->kind) {
             case 1: gitMsgFocus_ = true; gitMsg_.cur = caretFromX(gitMsg_.text, mx_ - (hit->r.x + 10 * S())); break;
             case 2: gitCommit(); break;
+            case 20: case 21: case 22: gitSub_ = hit->kind - 20; gitScroll_ = 0; gitMsgFocus_ = false; break;
+            case 30: gitAction([](const fs::path& r) { return git::fetch(r); }, "Fetched"); gitInvalidateLists(); break;
+            case 31: gitAction([](const fs::path& r) { return git::pull(r); }, "Pulled"); gitInvalidateLists(); break;
+            case 32: gitAction([](const fs::path& r) { return git::push(r); }, "Pushed"); break;
+            case 40: if (hit->idx >= 0 && hit->idx < static_cast<int>(gitLog_.size())) gitToggleCommit(gitLog_[static_cast<std::size_t>(hit->idx)].hash); break;
+            case 41:
+                if (hit->sec >= 0 && hit->sec < static_cast<int>(gitLog_.size())) {
+                    auto it = gitDetails_.find(gitLog_[static_cast<std::size_t>(hit->sec)].hash);
+                    if (it != gitDetails_.end() && hit->idx < static_cast<int>(it->second.files.size())) {
+                        git::Entry e; e.path = it->second.files[static_cast<std::size_t>(hit->idx)].path;
+                        gitOpenEntry(e);
+                    }
+                }
+                break;
+            case 50:
+                if (hit->idx >= 0 && hit->idx < static_cast<int>(gitBranches_.size())) {
+                    const auto& b = gitBranches_[static_cast<std::size_t>(hit->idx)];
+                    std::string name = b.name;
+                    if (b.remote) name = name.substr(name.find('/') + 1);   // origin/feature -> feature (git creates the tracking branch)
+                    gitAction([name](const fs::path& r) { return git::checkout(r, name); }, "Switched to " + name);
+                    gitInvalidateLists();
+                }
+                break;
             case 3: gitAction([](const fs::path& r) { return git::stageAll(r); }); break;
             case 4: gitAction([](const fs::path& r) { return git::unstageAll(r); }); break;
             case 10: if (auto* e = entryOf(*hit)) gitOpenEntry(*e); break;
@@ -4242,9 +4281,8 @@ private:
         return (ch == 'U' || ch == 'A') ? Color::rgb(0x73c990) : (ch == 'D' || ch == '!') ? Color::rgb(0xe06c75) : ch == 'R' ? Color::rgb(0x61afef) : Color::rgb(0xe5c07b);
     }
 
-    void drawGitBody(const Rect& body) {
+    void drawGitChanges(const Rect& body) {
         const float s = S();
-        gitHits_.clear();
         if (!gitRoot_) {
             label(body.x + 14 * s, body.y + 0.5f * lh(), "Not a git repository", theme::lineNum);
             label(body.x + 14 * s, body.y + 1.5f * lh(), "Run `git init` in the project folder to track changes here.", theme::lineNum);
@@ -4340,6 +4378,356 @@ private:
         const bool chot = cb.contains(mx_, my_);
         fill(cb, ready ? (chot ? theme::accent.mix(Color::rgb(0xffffff), 0.14f) : theme::accent) : Color::rgb(0xffffff, chot ? 40 : 26), 9 * s);
         uiLabelC(cb.x + cb.w / 2, cb.y, cb.h, "Commit", ready ? Color::rgb(0xffffff) : theme::dim);
+    }
+
+    // ---- git tab: header, history (commit graph) and branches
+
+    int gitSub_ = 0;   // 0 changes, 1 history, 2 branches
+    std::vector<git::LogEntry> gitLog_;
+    std::vector<git::Branch> gitBranches_;
+    bool gitLogLoaded_ = false, gitLogBusy_ = false, gitBranchesLoaded_ = false, gitBranchesBusy_ = false;
+    struct GraphRow { int lane = 0; bool hasTop = false; std::vector<int> through, converge, parentLanes; };
+    std::vector<GraphRow> gitGraph_;
+    int gitGraphWidth_ = 1;
+    std::string gitExpanded_;
+    struct GitDetail { std::vector<std::string> card; std::vector<git::FileChange> files; bool ready = false; };
+    std::unordered_map<std::string, GitDetail> gitDetails_;
+
+    void gitInvalidateLists() { gitLogLoaded_ = false; gitBranchesLoaded_ = false; gitDetails_.clear(); }
+
+    // Assigns every commit a lane and the edges to draw in its row (the classic "git log --graph" layout).
+    void buildGraph() {
+        gitGraph_.clear();
+        gitGraphWidth_ = 1;
+        std::vector<std::string> lanes;
+        for (const auto& c : gitLog_) {
+            GraphRow gr;
+            std::vector<int> expecting;
+            for (std::size_t j = 0; j < lanes.size(); ++j) if (lanes[j] == c.hash) expecting.push_back(static_cast<int>(j));
+            int lane = -1;
+            if (!expecting.empty()) lane = expecting.front();
+            else {
+                for (std::size_t j = 0; j < lanes.size(); ++j) if (lanes[j].empty()) { lane = static_cast<int>(j); break; }
+                if (lane < 0) { lane = static_cast<int>(lanes.size()); lanes.emplace_back(); }
+            }
+            gr.lane = lane;
+            gr.hasTop = !expecting.empty();
+            for (std::size_t j = 0; j < lanes.size(); ++j)
+                if (!lanes[j].empty() && lanes[j] != c.hash) gr.through.push_back(static_cast<int>(j));
+            for (std::size_t k = 1; k < expecting.size(); ++k) gr.converge.push_back(expecting[k]);
+            for (int j : expecting) lanes[static_cast<std::size_t>(j)].clear();
+            for (std::size_t pi = 0; pi < c.parents.size(); ++pi) {
+                const std::string& p = c.parents[pi];
+                int k = -1;
+                for (std::size_t j = 0; j < lanes.size(); ++j) if (lanes[j] == p) { k = static_cast<int>(j); break; }
+                if (k < 0) {
+                    if (pi == 0) k = lane;
+                    else {
+                        for (std::size_t j = 0; j < lanes.size(); ++j) if (lanes[j].empty() && static_cast<int>(j) != lane) { k = static_cast<int>(j); break; }
+                        if (k < 0) { k = static_cast<int>(lanes.size()); lanes.emplace_back(); }
+                    }
+                    if (static_cast<std::size_t>(k) >= lanes.size()) lanes.resize(static_cast<std::size_t>(k) + 1);
+                    lanes[static_cast<std::size_t>(k)] = p;
+                }
+                gr.parentLanes.push_back(k);
+            }
+            while (!lanes.empty() && lanes.back().empty()) lanes.pop_back();
+            int w = std::max(static_cast<int>(lanes.size()), lane + 1);
+            for (int j : gr.through) w = std::max(w, j + 1);
+            for (int j : gr.parentLanes) w = std::max(w, j + 1);
+            gitGraphWidth_ = std::max(gitGraphWidth_, w);
+            gitGraph_.push_back(std::move(gr));
+        }
+    }
+
+    // Loads the lists the current sub-tab needs (off the UI thread).
+    void gitEnsureLoaded() {
+        if (!gitRoot_) return;
+        const fs::path root = *gitRoot_;
+        if (gitSub_ == 1 && !gitLogLoaded_ && !gitLogBusy_) {
+            gitLogBusy_ = true;
+            spawn([this, root] {
+                auto lg = git::log(root, 400);
+                return std::function<void()>([this, lg = std::move(lg)]() mutable {
+                    gitLogBusy_ = false;
+                    gitLog_ = std::move(lg);
+                    gitLogLoaded_ = true;
+                    buildGraph();
+                });
+            });
+        }
+        if (gitSub_ == 2 && !gitBranchesLoaded_ && !gitBranchesBusy_) {
+            gitBranchesBusy_ = true;
+            spawn([this, root] {
+                auto br = git::branches(root);
+                return std::function<void()>([this, br = std::move(br)]() mutable {
+                    gitBranchesBusy_ = false;
+                    gitBranches_ = std::move(br);
+                    gitBranchesLoaded_ = true;
+                });
+            });
+        }
+    }
+
+    void gitToggleCommit(const std::string& hash) {
+        if (gitExpanded_ == hash) { gitExpanded_.clear(); return; }
+        gitExpanded_ = hash;
+        if (gitDetails_.contains(hash) || !gitRoot_) return;
+        gitDetails_[hash] = {};
+        const fs::path root = *gitRoot_;
+        spawn([this, root, hash] {
+            auto card = git::commitCard(root, hash);
+            auto files = git::commitFiles(root, hash);
+            return std::function<void()>([this, hash, card = std::move(card), files = std::move(files)]() mutable {
+                auto& d = gitDetails_[hash];
+                d.card = std::move(card);
+                d.files = std::move(files);
+                d.ready = true;
+            });
+        });
+    }
+
+    static Color laneColor(int lane) {
+        static constexpr std::array<std::uint32_t, 7> pal = {0xe5484d, 0x5b9bff, 0x73c990, 0xe5c07b, 0xc586c0, 0x4ec9b0, 0xf0a04b};
+        return Color::rgb(pal[static_cast<std::size_t>(lane) % pal.size()]);
+    }
+
+    // A straight or slanted line drawn from small squares (the renderer only has rects / rounded rects).
+    void gLine(float x0, float y0, float x1, float y1, Color c, float w) {
+        if (x0 == x1) { fill(x0 - w / 2, std::min(y0, y1), w, std::abs(y1 - y0) + 0.5f, c); return; }
+        const float len = std::max(std::abs(x1 - x0), std::abs(y1 - y0));
+        const int n = std::max(2, static_cast<int>(len / (w * 0.6f)));
+        for (int i = 0; i <= n; ++i) {
+            const float t = static_cast<float>(i) / static_cast<float>(n);
+            fill(x0 + (x1 - x0) * t - w / 2, y0 + (y1 - y0) * t - w / 2, w, w, c, w / 2);
+        }
+    }
+
+    void drawChip(float& x, float y, float h, const std::string& text, Color c) {
+        const float s = S();
+        const float w = uiW(text) + 14 * s;
+        fill(x, y + 2 * s, w, h - 4 * s, c.alpha(60), (h - 4 * s) / 2);
+        uiLabelC(x + w / 2, y, h, text, c.mix(Color::rgb(0xffffff), 0.35f));
+        x += w + 6 * s;
+    }
+
+    void drawGitHeader(const Rect& body, float headH) {
+        const float s = S();
+        static constexpr std::array<std::string_view, 3> names = {"Changes", "History", "Branches"};
+        float x = body.x + 10 * s;
+        for (std::size_t i = 0; i < 3; ++i) {
+            std::string t(names[i]);
+            const float w = uiW(t) + 24 * s;
+            const Rect r{x, body.y + 5 * s, w, headH - 10 * s};
+            gitHits_.push_back({r, 20 + static_cast<int>(i), 0, 0});
+            const bool on = gitSub_ == static_cast<int>(i), hot = r.contains(mx_, my_);
+            if (on) fill(r, Color::rgb(0xffffff, 26), 8 * s);
+            else if (hot) fill(r, Color::rgb(0xffffff, 12), 8 * s);
+            uiLabelC(r.x + r.w / 2, r.y, r.h, t, on ? theme::text : theme::dim);
+            x += w + 4 * s;
+        }
+        // Sync buttons on the right: fetch / pull / push with ahead-behind counts.
+        float rx = body.right() - 10 * s;
+        struct B { int kind; char32_t icon; std::string label; };
+        const std::array<B, 3> bs = {{{32, 0xF005D, gitAhead_ ? std::format("Push {}", gitAhead_) : std::string("Push")},
+                                      {31, 0xF0045, gitBehind_ ? std::format("Pull {}", gitBehind_) : std::string("Pull")},
+                                      {30, 0xF04E6, "Fetch"}}};
+        for (const auto& b : bs) {
+            const int ip = std::max(12, static_cast<int>(std::round(uiH() * 0.95f)));
+            const float w = uiW(b.label) + static_cast<float>(ip) + 28 * s;
+            const Rect r{rx - w, body.y + 5 * s, w, headH - 10 * s};
+            gitHits_.push_back({r, b.kind, 0, 0});
+            const bool hot = r.contains(mx_, my_);
+            fill(r, Color::rgb(0xffffff, hot ? 34 : 18), 8 * s);
+            Icons::glyph(dl_, font_, r.x + 10 * s, r.y + (r.h - static_cast<float>(ip)) / 2, ip, b.icon, hot ? theme::text : theme::dim);
+            uiLabel(r.x + 10 * s + static_cast<float>(ip) + 6 * s, r.y, r.h, b.label, hot ? theme::text : theme::dim);
+            rx -= w + 6 * s;
+        }
+    }
+
+    void drawGitHistory(const Rect& body) {
+        const float s = S();
+        if (!gitLogLoaded_) { label(body.x + 14 * s, body.y + 0.5f * lh(), gitLogBusy_ ? "Loading history..." : "No commits yet", theme::lineNum); return; }
+        if (gitLog_.empty()) { label(body.x + 14 * s, body.y + 0.5f * lh(), "No commits yet", theme::lineNum); return; }
+        const float rowH = std::round(lh() + 10 * s), lane = std::round(14 * s);
+        const int showLanes = std::min(gitGraphWidth_, 9);
+        const float gw = static_cast<float>(showLanes) * lane + 12 * s;
+        const std::int64_t now = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        const float detailLine = std::round(lh() + 2 * s);
+
+        // Total height (expanded commits take extra rows).
+        float total = 0;
+        for (const auto& c : gitLog_) {
+            total += rowH;
+            if (c.hash == gitExpanded_) {
+                auto it = gitDetails_.find(c.hash);
+                total += (it == gitDetails_.end() || !it->second.ready ? 1.0f : static_cast<float>(it->second.card.size() + it->second.files.size())) * detailLine + 8 * s;
+            }
+        }
+        gitMax_ = std::max(0.0f, total - body.h + 8 * s);
+        gitScroll_ = std::clamp(gitScroll_, 0.0f, gitMax_);
+
+        float y = body.y - std::round(gitScroll_);
+        const auto laneX = [&](int l) { return body.x + 16 * s + static_cast<float>(std::min(l, showLanes - 1)) * lane; };
+        for (std::size_t i = 0; i < gitLog_.size(); ++i) {
+            const auto& c = gitLog_[i];
+            const GraphRow& gr = gitGraph_[i];
+            const bool expanded = c.hash == gitExpanded_;
+            float extra = 0;
+            const GitDetail* det = nullptr;
+            if (expanded) {
+                auto it = gitDetails_.find(c.hash);
+                if (it != gitDetails_.end()) det = &it->second;
+                extra = (det && det->ready ? static_cast<float>(det->card.size() + det->files.size()) : 1.0f) * detailLine + 8 * s;
+            }
+            const float rowTotal = rowH + extra;
+            if (y + rowTotal < body.y) { y += rowTotal; continue; }
+            if (y > body.bottom()) break;
+            const Rect row{body.x + 4 * s, y, body.w - 8 * s, rowH - 1};
+            const bool inside = y >= body.y - 1;
+            if (inside) gitHits_.push_back({row, 40, 0, static_cast<int>(i)});
+            const bool hot = row.contains(mx_, my_) || expanded;
+            if (hot) fill(row, Color::rgb(0xffffff, expanded ? 20 : 12), 7 * s);
+
+            // Graph.
+            const float yc = y + rowH / 2, yb = y + rowTotal;
+            const float lw = std::max(1.5f, std::round(1.8f * s));
+            for (int j : gr.through) gLine(laneX(j), y, laneX(j), yb, laneColor(j), lw);
+            if (gr.hasTop) gLine(laneX(gr.lane), y, laneX(gr.lane), yc, laneColor(gr.lane), lw);
+            for (int j : gr.converge) gLine(laneX(j), y, laneX(gr.lane), yc, laneColor(j), lw);
+            for (int pl : gr.parentLanes) {
+                gLine(laneX(gr.lane), yc, laneX(pl), y + rowH, laneColor(pl), lw);
+                if (extra > 0) gLine(laneX(pl), y + rowH, laneX(pl), yb, laneColor(pl), lw);
+            }
+            const bool isHead = c.hash == gitHead_;
+            const float nr = std::round((isHead ? 5.5f : 4.5f) * s);
+            fill(laneX(gr.lane) - nr - (isHead ? s : 0), yc - nr - (isHead ? s : 0), 2 * (nr + (isHead ? s : 0)), 2 * (nr + (isHead ? s : 0)), isHead ? Color::rgb(0xffffff) : theme::panelBg, nr + s);
+            fill(laneX(gr.lane) - nr + s, yc - nr + s, 2 * nr - 2 * s, 2 * nr - 2 * s, laneColor(gr.lane), nr);
+
+            // Text: refs, subject, then author / time / hash on the right.
+            float x = body.x + gw + 8 * s;
+            const float right = row.right() - 12 * s;
+            const std::string hashTxt = c.shortHash;
+            const float hw = uiW(hashTxt);
+            float rx = right - hw;
+            uiLabel(rx, y, rowH, hashTxt, theme::lineNum);
+            const std::string when = git::relativeTime(c.time, now);
+            rx -= uiW(when) + 16 * s;
+            uiLabel(rx, y, rowH, when, theme::lineNum);
+            const std::string who = c.author;
+            const float ww = std::min(uiW(who), 150 * s);
+            rx -= ww + 16 * s;
+            uiLabel(rx, y, rowH, who, theme::dim, rx + ww);
+            const float textMax = rx - 12 * s;
+            if (!c.refs.empty()) {
+                for (std::size_t p = 0; p < c.refs.size();) {
+                    auto q = c.refs.find(", ", p);
+                    if (q == std::string::npos) q = c.refs.size();
+                    std::string ref = c.refs.substr(p, q - p);
+                    p = q + 2;
+                    Color rc = Color::rgb(0x61afef);   // remote branch
+                    bool head = false;
+                    if (ref.starts_with("HEAD -> ")) { ref = ref.substr(8); head = true; rc = theme::accent.mix(Color::rgb(0xffffff), 0.1f); }
+                    else if (ref.starts_with("tag: ")) { ref = ref.substr(5); rc = Color::rgb(0xe5c07b); }
+                    else if (ref == "HEAD") { rc = Color::rgb(0xffffff); }
+                    else if (ref.find('/') == std::string::npos) rc = Color::rgb(0x73c990);   // local branch
+                    if (x + uiW(ref) + 20 * s < textMax) drawChip(x, y, rowH, (head ? "\xE2\x97\x8F " : "") + ref, rc);
+                }
+            }
+            uiLabel(x, y, rowH, c.subject, expanded ? theme::text : Color::rgb(0xc4c8d0), textMax);
+
+            // Expanded: commit card + changed files.
+            if (expanded) {
+                float dy = y + rowH + 4 * s;
+                const float dx = body.x + gw + 8 * s;
+                if (!det || !det->ready) {
+                    uiLabel(dx, dy, detailLine, "Loading...", theme::lineNum);
+                } else {
+                    for (const auto& l : det->card) { uiLabel(dx, dy, detailLine, l, l.starts_with("commit ") ? theme::lineNum : theme::dim, right); dy += detailLine; }
+                    int fi = 0;
+                    for (const auto& f : det->files) {
+                        const Rect fr{dx - 4 * s, dy, right - dx + 8 * s, detailLine};
+                        if (dy >= body.y - 1 && dy + detailLine <= body.bottom() + 1) gitHits_.push_back({fr, 41, static_cast<int>(i), fi});
+                        if (fr.contains(mx_, my_)) fill(fr, Color::rgb(0xffffff, 14), 5 * s);
+                        const Color fc = gitLetterColor(f.status == 'A' ? 'A' : f.status == 'D' ? 'D' : f.status == 'R' ? 'R' : 'M');
+                        const std::string st(1, f.status);
+                        uiLabel(dx, dy, detailLine, st, fc);
+                        uiLabel(dx + 22 * s, dy, detailLine, f.path, theme::text, right);
+                        dy += detailLine;
+                        ++fi;
+                    }
+                }
+            }
+            y += rowTotal;
+        }
+    }
+
+    void drawGitBranches(const Rect& body) {
+        const float s = S();
+        if (!gitBranchesLoaded_) { label(body.x + 14 * s, body.y + 0.5f * lh(), "Loading branches...", theme::lineNum); return; }
+        const float rowH = std::round(lh() + 10 * s), headH = std::round(lh() + 12 * s);
+        std::vector<int> local, remote;
+        for (std::size_t i = 0; i < gitBranches_.size(); ++i) (gitBranches_[i].remote ? remote : local).push_back(static_cast<int>(i));
+        const float total = (local.empty() ? 0 : headH + static_cast<float>(local.size()) * rowH) + (remote.empty() ? 0 : headH + static_cast<float>(remote.size()) * rowH);
+        gitMax_ = std::max(0.0f, total - body.h + 8 * s);
+        gitScroll_ = std::clamp(gitScroll_, 0.0f, gitMax_);
+        float y = body.y - std::round(gitScroll_);
+        auto section = [&](const char* title, const std::vector<int>& list) {
+            if (list.empty()) return;
+            uiLabel(body.x + 14 * s, y, headH, std::format("{}  {}", title, list.size()), theme::dim);
+            y += headH;
+            for (int bi : list) {
+                const auto& b = gitBranches_[static_cast<std::size_t>(bi)];
+                const Rect row{body.x + 6 * s, y, body.w - 12 * s, rowH - 2 * s};
+                const bool visible = y + rowH > body.y && y < body.bottom();
+                if (visible) {
+                    const bool inside = y >= body.y - 1;
+                    const bool hot = row.contains(mx_, my_);
+                    if (hot) fill(row, Color::rgb(0xffffff, 16), 7 * s);
+                    const int ip = std::max(12, static_cast<int>(std::round(uiH() * 0.95f)));
+                    Icons::glyph(dl_, font_, row.x + 10 * s, row.y + (row.h - static_cast<float>(ip)) / 2, ip, 0xF062C, b.current ? Color::rgb(0x73c990) : theme::dim);
+                    float x = uiLabel(row.x + 10 * s + static_cast<float>(ip) + 8 * s, row.y, row.h, b.name, b.current ? Color::rgb(0x73c990) : theme::text);
+                    if (b.current) { float cx = x + 10 * s; drawChip(cx, row.y, row.h, "current", Color::rgb(0x73c990)); x = cx; }
+                    else if (!b.upstream.empty()) { x += 10 * s; uiLabel(x, row.y, row.h, "\xE2\x86\x92 " + b.upstream, theme::lineNum); }
+                    float rx = row.right() - 12 * s;
+                    if (hot && !b.current && inside) {
+                        const float bw = uiW("Checkout") + 20 * s;
+                        const Rect br{rx - bw, row.y + 2 * s, bw, row.h - 4 * s};
+                        gitHits_.push_back({br, 50, 0, bi});
+                        const bool bh = br.contains(mx_, my_);
+                        fill(br, bh ? theme::accent.mix(Color::rgb(0xffffff), 0.12f) : theme::accent, 7 * s);
+                        uiLabelC(br.x + br.w / 2, br.y, br.h, "Checkout", Color::rgb(0xffffff));
+                        rx = br.x - 12 * s;
+                    }
+                    const float sx = std::max(x + 40 * s, row.x + row.w * 0.45f);
+                    uiLabel(rx - uiW(b.hash), row.y, row.h, b.hash, theme::lineNum);
+                    rx -= uiW(b.hash) + 14 * s;
+                    uiLabel(sx, row.y, row.h, b.subject, theme::dim, rx);
+                }
+                y += rowH;
+            }
+        };
+        section("Local", local);
+        section("Remote", remote);
+        if (gitBranches_.empty()) label(body.x + 14 * s, body.y + 0.5f * lh(), "No branches", theme::lineNum);
+    }
+
+    void drawGitBody(const Rect& body) {
+        const float s = S();
+        gitHits_.clear();
+        if (!gitRoot_) {
+            label(body.x + 14 * s, body.y + 0.5f * lh(), "Not a git repository", theme::lineNum);
+            label(body.x + 14 * s, body.y + 1.5f * lh(), "Run `git init` in the project folder to track changes here.", theme::lineNum);
+            return;
+        }
+        gitEnsureLoaded();
+        const float headH = std::round(uiH() + 20 * s);
+        const Rect content{body.x, body.y + headH, body.w, std::max(0.0f, body.h - headH)};
+        if (gitSub_ == 0) drawGitChanges(content);
+        else if (gitSub_ == 1) drawGitHistory(content);
+        else drawGitBranches(content);
+        fill(body.x, body.y, body.w, headH, theme::panelBg);   // the header covers rows scrolled beneath it
+        drawGitHeader(body, headH);
     }
 
     // ============================================================ project dialogs (welcome / new project / folder browser)
@@ -5587,7 +5975,8 @@ private:
     std::string runArgs_;
     std::unique_ptr<Process> buildProc_, runProc_;
     TaskKind buildKind_ = TaskKind::None;
-    bool runFocus_ = false;
+    bool runFocus_ = false, scriptSleeping_ = false;
+    Clock::time_point scriptSleepUntil_{};
     bool buildEof_ = false, runEof_ = false, runAfterBuild_ = false, pendingBuild_ = false;
     std::string buildPartial_, runPartial_, buildStatus_;
     int buildCur_ = 0, buildTotal_ = 0;

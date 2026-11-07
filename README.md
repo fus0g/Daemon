@@ -128,5 +128,10 @@ Daemon talks to the `git` binary (no libgit2). In a repository you get:
 - **Change markers** in the gutter against HEAD: green = added, blue = modified, a red wedge where lines were removed.
 - **Explorer:** status letters (M modified, A added, U untracked, D deleted, R renamed, ! conflict) and a dot on folders
   that contain changes. The status bar shows the branch, ahead/behind counts and the number of changed files.
-- **Git tab** (Ctrl+Shift+G, or the branch icon in the activity bar): staged and unstaged files, per-file stage /
-  unstage / discard (discard asks for a second click), Stage All / Unstage All, and a commit box.
+- **Git tab** (Ctrl+Shift+G, or the branch icon in the activity bar) with three views:
+  - *Changes*: staged and unstaged files, per-file stage / unstage / discard (discard asks for a second click),
+    Stage All / Unstage All, and a commit box (Enter commits).
+  - *History*: the commit graph of all branches (lanes, merges, branch / tag chips, author, age, hash). Click a commit
+    to expand its full message and changed files; click a file to open it.
+  - *Branches*: local and remote branches with their last commit; Checkout switches branch.
+  - Fetch / Pull / Push buttons (with ahead / behind counts) sit at the right of the tab header.

@@ -630,6 +630,23 @@ static void testGit() {
         auto card = ide::git::commitCard(root, bl ? bl->commits[static_cast<std::size_t>(bl->lineCommit[0])].hash : "HEAD");
         CHECK(card.size() >= 4 && card[0].find("Ada Lovelace") != std::string::npos);
     }
+    {   // history and branches
+        g({"add", "-A"});
+        g({"commit", "-q", "-m", "second", "-m", "details"});
+        g({"branch", "feature"});
+        auto lg = ide::git::log(root);
+        CHECK(lg.size() == 2 && lg[0].subject == "second" && lg[0].parents.size() == 1 && lg[0].parents[0] == lg[1].hash);
+        CHECK(lg.size() == 2 && lg[0].refs.find("feature") != std::string::npos);
+        auto files = ide::git::commitFiles(root, lg[0].hash);
+        CHECK(files.size() == 1 && files[0].path == "f.txt" && files[0].status == 'M');
+        auto br = ide::git::branches(root);
+        CHECK(br.size() == 2);
+        CHECK(std::ranges::count_if(br, [](const auto& b) { return b.current; }) == 1);
+        CHECK(ide::git::checkout(root, "feature").ok());
+        CHECK(ide::git::status(root)->branch == "feature");
+        g({"switch", "-q", "-"});
+    }
+    std::ofstream(root / "f.txt") << "one\nTWO\nthree\nfour\n";
     CHECK(ide::git::unstage(root, {"f.txt"}).ok());
     CHECK(ide::git::discard(root, ide::git::Entry{' ', 'M', "f.txt", ""}).ok());
     CHECK(ide::git::status(root)->entries.empty());
