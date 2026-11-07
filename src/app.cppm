@@ -758,9 +758,17 @@ private:
 
     // ============================================================ activity bar (right edge)
 
-    Rect activityRect(int i) const {
+    // Buttons sit in a vertical pill: square cells, a small gap, padding inside the outline.
+    float activityCell() const { return std::round(L_.activity.w - 18 * S()); }
+    Rect activityPill() const {
         const Rect& a = L_.activity;
-        return {a.x, a.y + std::round(6 * S()) + static_cast<float>(i) * a.w, a.w, a.w};
+        const float bs = activityCell(), pad = std::round(3 * S()), gap = std::round(2 * S());
+        return {a.x + (a.w - bs - 2 * pad) / 2, a.y + std::round(6 * S()), bs + 2 * pad, 4 * bs + 3 * gap + 2 * pad};
+    }
+    Rect activityRect(int i) const {
+        const Rect pill = activityPill();
+        const float bs = activityCell(), pad = std::round(3 * S()), gap = std::round(2 * S());
+        return {pill.x + pad, pill.y + pad + static_cast<float>(i) * (bs + gap), bs, bs};
     }
     int activityAt(float x, float y) const {
         if (!L_.activity.contains(x, y)) return 0;
@@ -798,22 +806,23 @@ private:
     void drawActivityBar() {
         const Rect& a = L_.activity;
         if (a.w <= 0) return;
-        const float s = S();
-        const int ip = std::max(14, static_cast<int>(std::round(uiH() * 1.35f)));
+        const float s = S(), hair = std::max(1.0f, std::round(0.8f * s));
+        const int ip = std::max(14, static_cast<int>(std::round(activityCell() * 0.7f)));
         static constexpr std::array<ToolIcon, 3> icons = {ToolIcon::Files, ToolIcon::Terminal, ToolIcon::Warning};
         const bool hasErrors = !problems_.empty() ||
                                std::ranges::any_of(shownProblems_, [](const Problem& p) { return p.severity == Severity::Error; });
+        const Rect pill = activityPill();
+        fill(pill, Color::rgb(0xffffff, 34), pill.w / 2);
+        fill(pill.x + hair, pill.y + hair, pill.w - 2 * hair, pill.h - 2 * hair, Color::rgb(0x0d0e11), pill.w / 2 - hair);
         for (int i = 0; i < 4; ++i) {
             const Rect r = activityRect(i);
             const bool active = activityActive(i), hot = hoverAct_ == i + 1;
-            if (hot && !active) fill(r.x + 5 * s, r.y + 5 * s, r.w - 10 * s, r.h - 10 * s, theme::tabHover, 9 * s);
-            if (active) {
-                fill(r.x + 5 * s, r.y + 5 * s, r.w - 10 * s, r.h - 10 * s, theme::tabActive, 9 * s);
-                fill(a.right() - std::round(2.5f * s), r.y + 10 * s, std::round(2.5f * s), r.h - 20 * s, theme::accent, 1.2f * s);
-            }
+            if (active) fill(r, Color::rgb(0xffffff, 40), r.w / 2);
+            else if (hot) fill(r, Color::rgb(0xffffff, 22), r.w / 2);
             const float ix = std::round(r.x + (r.w - static_cast<float>(ip)) / 2), iy = std::round(r.y + (r.h - static_cast<float>(ip)) / 2);
-            if (i == 3) Icons::glyph(dl_, font_, ix, iy, ip, 0xF062C, active || hot ? theme::text : theme::dim);   // source-branch
-            else Icons::tool(dl_, font_, ix, iy, ip, icons[static_cast<std::size_t>(i)], active || hot ? theme::text : theme::dim);
+            const Color white = Color::rgb(0xffffff);
+            if (i == 3) Icons::glyph(dl_, font_, ix, iy, ip, 0xF062C, white);   // source-branch
+            else Icons::tool(dl_, font_, ix, iy, ip, icons[static_cast<std::size_t>(i)], white);
             if (i == 2 && hasErrors) {
                 const float d = std::round(7 * s);
                 fill(ix + static_cast<float>(ip) - d * 0.6f, iy - d * 0.2f, d, d, theme::danger, d / 2);
@@ -2531,7 +2540,7 @@ private:
             if (hot) fill(circle, Color::rgb(0xffffff, 30), d / 2);
             else if (b.id == 4 && busy) fill(circle, Color::rgb(0xffffff, 22), d / 2);
             Icons::glyph(dl_, font_, std::round(r.x + (r.w - static_cast<float>(ip)) / 2), std::round(r.y + (r.h - static_cast<float>(ip)) / 2), ip, b.glyph,
-                         b.enabled ? b.color : fade(b.color, 0.32f));
+                         b.enabled ? (b.id == 5 ? theme::danger : b.color) : fade(b.color, 0.32f));   // Stop turns red while something runs
         }
         // Dividers between the groups (run | build | stop).
         for (const Rect* r : {&tool_.debug, &tool_.reload}) {
@@ -5488,7 +5497,6 @@ private:
         carve({isl.right(), isl.y, W - isl.right(), isl.h});
         for (Node* n : splits()) carve(n->gap);
         if (L_.side.w > 1) drawSidebar();
-        drawActivityBar();
         for (Node* n : leaves()) {
             Pane& p = *n->pane;
             const PaneCtx sv = enterPane(p);
@@ -5507,7 +5515,8 @@ private:
         if (L_.side.w > 1) {
             if (sideAnim_ > 0.002f && sideAnim_ < 0.998f) carve({L_.activity.x, L_.side.y, W - L_.activity.x, L_.side.h});  // clip content sliding past the edge
             carve(L_.side, -L_.radius);
-        }  // inverted rounded rect = clips the four corners
+        }
+        drawActivityBar();   // after the clip above, which would otherwise erase the buttons while the explorer slides  // inverted rounded rect = clips the four corners
         // Thin outline around every island so it reads as a separate surface against the window background.
         {
             const float t = std::max(1.0f, std::round(S() * 0.8f));
