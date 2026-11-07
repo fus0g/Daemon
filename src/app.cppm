@@ -979,6 +979,8 @@ private:
         std::string root = cmakeOpen_ ? cmakeRoot_.string() : (explorer_.isOpen() ? explorer_.rootPath().string() : fs::current_path().string());
         lsp_ = std::make_unique<LspClient>();
         lsp_->onDiagnostics = [this](const std::string& path, std::vector<LspDiag> d) {
+            // clangd's "unused include" hints are noise next to real errors (CLion greys them out instead).
+            std::erase_if(d, [](const LspDiag& x) { return x.code == "unused-includes" || x.message.starts_with("Included header "); });
             if (d.empty()) diags_.erase(path); else diags_[path] = std::move(d);
             dirty_ = true;
         };
