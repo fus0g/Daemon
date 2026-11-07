@@ -5347,7 +5347,45 @@ private:
         dlg_.path = {dlg_.dir, dlg_.dir.size()};
     }
 
+    // Folder choosers: the desktop's own dialog (zenity talks to GTK / the portal, so it is GNOME's file manager dialog);
+    // the built-in browser is only the fallback when no system dialog is available.
+    bool pickerBusy_ = false;
     void browseOpen(bool forLocation) {
+        if (pickerBusy_) return;
+        if (!findExecutable("zenity")) { browseOpenBuiltin(forLocation); return; }
+        std::error_code ec;
+        std::string start = forLocation ? dlg_.location.text : (explorer_.isOpen() ? explorer_.rootPath().parent_path().string() : state_.lastLocation);
+        start = expandPath(start);
+        if (start.empty() || !fs::is_directory(start, ec)) start = homeDir();
+        if (start.back() != '/') start += '/';
+        const std::string title = forLocation ? "Choose Location" : "Open Folder";
+        pickerBusy_ = true;
+        setMessage("Choose a folder in the file dialog...", false, 4);
+        spawn([this, start, title, forLocation]() -> std::function<void()> {
+            ProcessOptions o;
+            o.argv = {"zenity", "--file-selection", "--directory", "--title=" + title, "--filename=" + start};
+            auto r = Process::runCapture(o, 30 * 60 * 1000);
+            std::string chosen;
+            std::istringstream in(r.output);
+            for (std::string line; std::getline(in, line);) if (!line.empty() && line.front() == '/') chosen = line;
+            const bool failed = !r.error.empty();
+            return [this, chosen, forLocation, failed] {
+                pickerBusy_ = false;
+                if (failed) { browseOpenBuiltin(forLocation); return; }
+                if (chosen.empty()) return;   // cancelled
+                if (forLocation) {
+                    if (dlg_.kind != DlgKind::NewProject) newProjectOpen();
+                    dlg_.location = {chosen, chosen.size()};
+                    dlg_.error.clear();
+                    dlg_.focus = 0;
+                } else {
+                    openProject(chosen);
+                }
+            };
+        });
+    }
+
+    void browseOpenBuiltin(bool forLocation) {
         const DlgKind from = dlg_.kind;
         if (from != DlgKind::NewProject) dlg_ = {};
         dlg_.kind = DlgKind::Browse;
