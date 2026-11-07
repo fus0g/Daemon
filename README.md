@@ -86,3 +86,10 @@ The status bar shows `clangd · modules` when this is active.
 
 On top of clangd: `import` statements complete project module names (and `std`, `std.compat`), and Go to Definition
 on a module name jumps to its interface unit. `IDE_LSP_TRACE=1` prints the LSP traffic to stderr.
+
+## Editor panes: drag and drop
+
+Drag a tab to reorder it within its strip, or drop it on another pane's strip or body to move it there. Dropping on the
+left/right/top/bottom edge of a pane splits the editor and moves the tab into the new pane; the pane borders are
+draggable. Esc cancels a drag, and a pane disappears when its last tab is closed or dragged out. Each file lives in
+one pane at a time.

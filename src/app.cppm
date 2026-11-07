@@ -162,6 +162,29 @@ public:
                 else openMenu(L_.side.x + 80 * S(), y, &path);
                 continue;
             }
+            if (tok.starts_with("dragdemo:") && !docs_.empty()) {  // test hook: show the drop overlay for the current tab
+                layout();
+                const auto at = tok.substr(9);
+                const Rect& isl = L_.island;
+                tabDrag_ = {};
+                tabDrag_.doc = &doc();
+                tabDrag_.from = paneOfDoc(&doc());
+                tabDrag_.active = true;
+                tabDrag_.grabX = 60 * S();
+                mx_ = isl.x + isl.w * (at == "left" ? 0.1f : at == "right" ? 0.97f : 0.75f);
+                my_ = isl.y + isl.h * (at == "up" ? 0.15f : at == "down" ? 0.9f : at == "tabs" ? 0.0f : 0.5f) + (at == "tabs" ? 20 * S() : 0.0f);
+                updateDropTarget();
+                continue;
+            }
+            if (tok.starts_with("split:") && !docs_.empty()) {  // test hook: move the current tab into a new pane
+                const auto side = tok.substr(6);
+                syncPanes();
+                if (Pane* ap = activePane_; ap && ap->tabs.size() > 1) {
+                    splitPane(ap, side == "left" ? Zone::Left : side == "up" ? Zone::Top : side == "down" ? Zone::Bottom : Zone::Right, &doc());
+                    layout();
+                }
+                continue;
+            }
             if (tok == "hover" && !docs_.empty()) {  // test hook: hover the text cursor
                 layout();
                 Document& hd = doc();
@@ -264,6 +287,9 @@ private:
     struct TabHit {
         Rect tab, close;
     };
+    struct Pane;
+    struct Node;
+    enum class Zone;
     enum class Act { Open, NewFile, NewFolder, Rename, Trash, DeleteForever, Copy, Cut, Paste, Duplicate, CopyPath,
                      CopyRelPath, Refresh, Sep, Custom };
     struct MenuItem {
@@ -416,11 +442,21 @@ private:
             }
         }
         closeArmed_ = -1;
+        // Keep focus in the same pane: after closing the current tab, move to its neighbour there.
+        Document* keep = nullptr;
+        if (i == cur_) {
+            Document* closing = docs_[static_cast<std::size_t>(i)].get();
+            if (Pane* pp = paneOfDoc(closing); pp && pp->tabs.size() > 1) {
+                const auto at = static_cast<std::size_t>(std::ranges::find(pp->tabs, closing) - pp->tabs.begin());
+                keep = at + 1 < pp->tabs.size() ? pp->tabs[at + 1] : pp->tabs[at - 1];
+            }
+        }
         lspDetach(*docs_[static_cast<std::size_t>(i)]);
         closeCompletion();
         docs_.erase(docs_.begin() + i);
         if (docs_.empty()) newDoc();
         cur_ = std::clamp(cur_ > i ? cur_ - 1 : cur_, 0, static_cast<int>(docs_.size()) - 1);
+        if (keep) if (int k = docIndex(keep); k >= 0) cur_ = k;
         scrollToCursor_ = true;
         dirty_ = true;
     }
@@ -824,40 +860,37 @@ private:
         return std::clamp(14 * s + iconSize() + 8 * s + uiW(name) + 12 * s + 22 * s + 8 * s, 96 * s, 260 * s);
     }
 
-    // Keeps one animated entry per open document, plus ghosts for tabs that were just closed.
-    void syncTabs() {
-        std::unordered_set<const Document*> live;
-        for (const auto& d : docs_) live.insert(d.get());
+    // Keeps one animated entry per tab of a pane, plus ghosts for tabs that were just closed or moved away.
+    void syncTabs(Pane& p) {
+        std::unordered_set<const Document*> live(p.tabs.begin(), p.tabs.end());
+        std::unordered_map<const Document*, TabAnim> liveMap;
+        std::vector<TabAnim> ghosts;
+        const Document* lastLive = nullptr;
+        for (auto& e : p.anim) {
+            if (e.ghost) { if (e.w >= 0.6f) ghosts.push_back(std::move(e)); continue; }
+            if (live.contains(e.doc)) { lastLive = e.doc; liveMap.emplace(e.doc, std::move(e)); }
+            else { e.ghost = true; e.target = 0; e.anchor = lastLive; ghosts.push_back(std::move(e)); }
+        }
         std::vector<TabAnim> next;
-        for (auto& e : tabAnim_) {
-            if (!e.ghost && !live.contains(e.doc)) { e.ghost = true; e.target = 0; }
-            if (e.ghost && e.w < 0.6f) continue;
-            next.push_back(std::move(e));
-        }
-        for (std::size_t i = 0; i < docs_.size(); ++i) {
-            const Document* d = docs_[i].get();
-            if (std::ranges::any_of(next, [&](const TabAnim& e) { return !e.ghost && e.doc == d; })) continue;
-            auto at = next.end();
-            if (i > 0) {
-                const Document* prev = docs_[i - 1].get();
-                auto it = std::ranges::find_if(next, [&](const TabAnim& e) { return !e.ghost && e.doc == prev; });
-                if (it != next.end()) at = it + 1;
-            } else {
-                at = next.begin();
-            }
+        auto emitGhosts = [&](const Document* anchor) {
+            for (auto& g : ghosts)
+                if (!g.used && g.anchor == anchor) { g.used = true; next.push_back(g); }
+        };
+        emitGhosts(nullptr);
+        for (Document* d : p.tabs) {
             TabAnim e;
-            e.doc = d;
+            if (auto it = liveMap.find(d); it != liveMap.end()) e = std::move(it->second);
+            else { e.doc = d; e.w = 0; e.x = -1; }
             e.name = d->name;
-            next.insert(at, std::move(e));
+            e.target = tabNaturalW(e.name);
+            e.ghost = false;
+            next.push_back(std::move(e));
+            emitGhosts(d);
         }
-        for (auto& e : next)
-            if (!e.ghost) {
-                e.name = e.doc->name;
-                e.target = tabNaturalW(e.name);
-            }
-        tabAnim_ = std::move(next);
+        for (auto& g : ghosts) if (!g.used) next.push_back(g);
+        p.anim = std::move(next);
         if (frames_ < 2 || (!opt_.screenshot.empty() && !std::getenv("DAEMON_ANIMATE")))
-            for (auto& e : tabAnim_) e.w = e.target;  // no animation at start-up / in captures
+            for (auto& e : p.anim) { e.w = e.target; e.x = -1; }
     }
 
     // Advances tab / side bar / panel animations. Returns true while anything is still moving.
@@ -871,11 +904,13 @@ private:
         };
         chase(panelAnim_, panelOpen_ ? 1.0f : 0.0f, 14.0f);
         chase(sideAnim_, sidebar_ ? 1.0f : 0.0f, 14.0f);
-        for (auto& e : tabAnim_) {
-            if (snap || std::abs(e.target - e.w) < 0.4f) { e.w = e.target; continue; }
-            e.w += (e.target - e.w) * (1.0f - std::exp(-dt * 16.0f));
-            moving = true;
-        }
+        for (Node* n : leaves())
+            for (auto& e : n->pane->anim) {
+                if (snap || std::abs(e.target - e.w) < 0.4f) e.w = e.target;
+                else { e.w += (e.target - e.w) * (1.0f - std::exp(-dt * 16.0f)); moving = true; }
+                if (snap || std::abs(e.tx - e.x) < 0.4f) e.x = e.tx;
+                else { e.x += (e.tx - e.x) * (1.0f - std::exp(-dt * 18.0f)); moving = true; }
+            }
         return moving;
     }
 
@@ -917,13 +952,8 @@ private:
         L_.sideRow = std::round(uh + 10 * s);
         L_.sideList = sideShown ? Rect{L_.side.x, L_.side.y + tabH, L_.side.w, std::max(0.0f, L_.side.h - tabH)} : Rect{};
         L_.tabs = {L_.island.x, L_.island.y, L_.island.w, tabH};
-        L_.crumbs = {L_.island.x, L_.tabs.bottom(), L_.island.w, crumbH};
-        L_.prompt = {L_.island.x, L_.island.bottom() - promptH, L_.island.w, promptH};
-        float edTop = L_.crumbs.bottom();
         L_.panel = {L_.island.x, L_.island.bottom() + (panelH > 0 ? m * easeInOut(panelAnim_) : 0), L_.island.w, panelH};
-        L_.editor = {L_.island.x, edTop, L_.island.w, std::max(0.0f, L_.prompt.y - edTop)};
-        const float mapW = L_.island.w > 640 * s ? std::round(92 * s) : 0;
-        L_.minimap = {L_.editor.right() - mapW, L_.editor.y, mapW, L_.editor.h};
+        (void)crumbH;
 
         // Toolbar hit rectangles.
         tool_ = {};
@@ -943,29 +973,180 @@ private:
             }
         }
 
-        int lines = docs_.empty() ? 1 : doc().buf.lineCount();
-        int digits = std::max(3, static_cast<int>(std::to_string(lines).size()));
-        L_.gutterW = (static_cast<float>(digits) + 2.5f) * cw();
-        L_.textX = L_.editor.x + L_.gutterW;
-        L_.textW = std::max(0.0f, L_.editor.w - L_.gutterW - mapW - 12 * s);
+        // Editor panes: split tree inside the island, each pane with its own tab strip, breadcrumbs, gutter and minimap.
+        syncPanes();
+        layoutTree(*root_, L_.island, m);
+        for (Node* n : leaves()) layoutPane(*n->pane, n->pane.get() == activePane_, promptH);
+        {
+            Pane& ap = *activePane_;   // the rest of the app works on the active pane through L_
+            L_.tabs = ap.tabsR; L_.crumbs = ap.crumbs; L_.editor = ap.editor; L_.minimap = ap.minimap;
+            L_.gutterW = ap.gutterW; L_.textX = ap.textX; L_.textW = ap.textW;
+            L_.prompt = {ap.rect.x, ap.editor.bottom(), ap.rect.w, promptH};
+        }
+    }
 
-        // Tabs: animated entries laid out left to right (closed tabs shrink away as ghosts).
-        syncTabs();
-        tabHits_.clear();
-        tabDraw_.clear();
-        float x = L_.tabs.x + 8 * s;
+    // ---- panes
+
+    std::vector<Node*> leaves() {
+        std::vector<Node*> out;
+        std::function<void(Node*)> walk = [&](Node* n) {
+            if (!n) return;
+            if (n->leaf()) out.push_back(n);
+            else { walk(n->a.get()); walk(n->b.get()); }
+        };
+        walk(root_.get());
+        return out;
+    }
+    std::vector<Node*> splits() {
+        std::vector<Node*> out;
+        std::function<void(Node*)> walk = [&](Node* n) {
+            if (!n || n->leaf()) return;
+            out.push_back(n);
+            walk(n->a.get());
+            walk(n->b.get());
+        };
+        walk(root_.get());
+        return out;
+    }
+    Pane* paneOfDoc(const Document* d) {
+        for (Node* n : leaves())
+            if (std::ranges::find(n->pane->tabs, d) != n->pane->tabs.end()) return n->pane.get();
+        return nullptr;
+    }
+    Node* nodeOfPane(const Pane* p) {
+        for (Node* n : leaves()) if (n->pane.get() == p) return n;
+        return nullptr;
+    }
+    int docIndex(const Document* d) const {
+        for (std::size_t i = 0; i < docs_.size(); ++i) if (docs_[i].get() == d) return static_cast<int>(i);
+        return -1;
+    }
+    Pane* paneAt(float x, float y) {
+        for (Node* n : leaves()) if (n->pane->rect.contains(x, y)) return n->pane.get();
+        return nullptr;
+    }
+    Node* gapAt(float x, float y) {
+        const float pad = 3 * S();
+        for (Node* n : splits()) {
+            Rect g = n->gap;
+            g.x -= pad; g.y -= pad; g.w += 2 * pad; g.h += 2 * pad;
+            if (g.contains(x, y)) return n;
+        }
+        return nullptr;
+    }
+
+    static bool pruneNode(std::unique_ptr<Node>& n) {   // true when the subtree holds no tabs at all
+        if (n->leaf()) return n->pane->tabs.empty();
+        const bool ea = pruneNode(n->a), eb = pruneNode(n->b);
+        if (ea && eb) return true;
+        if (ea) { auto keep = std::move(n->b); n = std::move(keep); }
+        else if (eb) { auto keep = std::move(n->a); n = std::move(keep); }
+        return false;
+    }
+
+    // Reconciles panes with the document list: drops closed tabs, puts new documents into the active pane,
+    // removes empty panes and makes the pane of the current document the active one.
+    void syncPanes() {
+        if (!root_) {
+            root_ = std::make_unique<Node>();
+            root_->pane = std::make_unique<Pane>();
+            activePane_ = root_->pane.get();
+        }
+        std::unordered_set<Document*> alive;
+        for (auto& d : docs_) alive.insert(d.get());
+        std::unordered_set<Document*> assigned;
+        for (Node* n : leaves())
+            std::erase_if(n->pane->tabs, [&](Document* d) { return !alive.contains(d) || !assigned.insert(d).second; });
+        if (!std::ranges::contains(leaves(), activePane_, [](Node* n) { return n->pane.get(); })) activePane_ = leaves().front()->pane.get();
+        for (auto& d : docs_)
+            if (!assigned.contains(d.get())) activePane_->tabs.push_back(d.get());
+        if (pruneNode(root_)) { /* no documents: keep the (empty) root */ }
+        if (!std::ranges::contains(leaves(), activePane_, [](Node* n) { return n->pane.get(); })) activePane_ = leaves().front()->pane.get();
+        if (!docs_.empty()) {
+            Document* c = docs_[static_cast<std::size_t>(std::clamp(cur_, 0, static_cast<int>(docs_.size()) - 1))].get();
+            if (Pane* p = paneOfDoc(c)) { activePane_ = p; p->cur = c; }
+        }
+        for (Node* n : leaves()) {
+            Pane& p = *n->pane;
+            if (p.cur && std::ranges::find(p.tabs, p.cur) == p.tabs.end()) p.cur = nullptr;
+            if (!p.cur && !p.tabs.empty()) p.cur = p.tabs.back();
+        }
+    }
+
+    void layoutTree(Node& n, Rect r, float gap) {
+        n.rect = r;
+        if (n.leaf()) { n.pane->rect = r; return; }
+        const float s = S();
+        if (n.sideBySide) {
+            const float usable = std::max(0.0f, r.w - gap);
+            n.ratio = std::clamp(n.ratio, std::min(0.5f, 160 * s / std::max(1.0f, usable)), std::max(0.5f, 1.0f - 160 * s / std::max(1.0f, usable)));
+            const float wa = std::round(usable * n.ratio);
+            n.gap = {r.x + wa, r.y, gap, r.h};
+            layoutTree(*n.a, {r.x, r.y, wa, r.h}, gap);
+            layoutTree(*n.b, {r.x + wa + gap, r.y, usable - wa, r.h}, gap);
+        } else {
+            const float usable = std::max(0.0f, r.h - gap);
+            n.ratio = std::clamp(n.ratio, std::min(0.5f, 120 * s / std::max(1.0f, usable)), std::max(0.5f, 1.0f - 120 * s / std::max(1.0f, usable)));
+            const float ha = std::round(usable * n.ratio);
+            n.gap = {r.x, r.y + ha, r.w, gap};
+            layoutTree(*n.a, {r.x, r.y, r.w, ha}, gap);
+            layoutTree(*n.b, {r.x, r.y + ha + gap, r.w, usable - ha}, gap);
+        }
+    }
+
+    void layoutPane(Pane& p, bool active, float promptH) {
+        const float s = S(), uh = uiH();
+        const float tabH = std::round(uh + 20 * s);
+        const float crumbH = (p.cur && !p.cur->path.empty()) ? std::round(uh + 8 * s) : 0;
+        const Rect& r = p.rect;
+        p.tabsR = {r.x, r.y, r.w, std::min(tabH, r.h)};
+        p.crumbs = {r.x, p.tabsR.bottom(), r.w, std::min(crumbH, std::max(0.0f, r.h - tabH))};
+        float bottom = r.bottom();
+        if (active) bottom -= promptH;
+        p.editor = {r.x, p.crumbs.bottom(), r.w, std::max(0.0f, bottom - p.crumbs.bottom())};
+        const float mapW = r.w > 640 * s ? std::round(92 * s) : 0;
+        p.minimap = {p.editor.right() - mapW, p.editor.y, mapW, p.editor.h};
+        const int lines = p.cur ? p.cur->buf.lineCount() : 1;
+        const int digits = std::max(3, static_cast<int>(std::to_string(lines).size()));
+        p.gutterW = (static_cast<float>(digits) + 2.5f) * cw();
+        p.textX = p.editor.x + p.gutterW;
+        p.textW = std::max(0.0f, p.editor.w - p.gutterW - mapW - 12 * s);
+
+        // Tab strip: animated entries left to right (closed tabs shrink away as ghosts).
+        syncTabs(p);
+        p.draw.clear();
+        p.hits.clear();
+        float x = p.tabsR.x + 8 * s;
         const float gap = 2 * s;
-        int docIdx = 0;
-        for (const auto& e : tabAnim_) {
+        int idx = 0;
+        for (auto& e : p.anim) {
+            e.tx = x;
+            if (e.x < -0.5f) e.x = x;
             const float w = std::max(0.0f, e.w);
-            Rect t{x, L_.tabs.y + 5 * s, w, tabH - 5 * s};
+            Rect t{e.x, p.tabsR.y + 5 * s, w, p.tabsR.h - 5 * s};
             Rect c{t.right() - 28 * s, t.y, 24 * s, t.h};
             const float alpha = e.target > 0 ? std::clamp(w / e.target, 0.0f, 1.0f) : std::clamp(w / (96 * s), 0.0f, 1.0f);
-            TabDraw td{t, c, e.ghost ? -1 : docIdx, e.name, alpha};
-            tabDraw_.push_back(td);
-            if (!e.ghost) { tabHits_.push_back({t, c}); ++docIdx; }
+            p.draw.push_back({t, c, e.ghost ? -1 : idx, e.name, alpha, e.doc});
+            if (!e.ghost) { p.hits.push_back({t, c}); ++idx; }
             x += w + gap;
         }
+    }
+
+    // Draws with a pane's geometry installed in L_ (and its document current).
+    struct PaneCtx { Rect tabs, crumbs, editor, minimap; float g, tx, tw; int cur; };
+    PaneCtx enterPane(Pane& p) {
+        PaneCtx sv{L_.tabs, L_.crumbs, L_.editor, L_.minimap, L_.gutterW, L_.textX, L_.textW, cur_};
+        L_.tabs = p.tabsR; L_.crumbs = p.crumbs; L_.editor = p.editor; L_.minimap = p.minimap;
+        L_.gutterW = p.gutterW; L_.textX = p.textX; L_.textW = p.textW;
+        if (p.cur) cur_ = std::max(0, docIndex(p.cur));
+        std::swap(mini_, p.mini);
+        return sv;
+    }
+    void leavePane(Pane& p, const PaneCtx& sv) {
+        std::swap(mini_, p.mini);
+        L_.tabs = sv.tabs; L_.crumbs = sv.crumbs; L_.editor = sv.editor; L_.minimap = sv.minimap;
+        L_.gutterW = sv.g; L_.textX = sv.tx; L_.textW = sv.tw;
+        cur_ = sv.cur;
     }
 
     float maxScroll(const Document& d) const {
@@ -1006,6 +1187,10 @@ private:
         resetCaret();
         if (!(k.ctrl && k.key == Key::Char && k.ch == 'q')) quitArmed_ = false;
         if (!(k.ctrl && k.key == Key::Char && k.ch == 'w')) closeArmed_ = -1;
+        if (tabDrag_.active) {  // a tab is being dragged: Esc cancels, other keys are ignored
+            if (k.key == Key::Escape) { tabDrag_ = {}; dirty_ = true; }
+            return;
+        }
         if (menu_.open) { menuKey(k); dirty_ = true; return; }
         if (prompt_.kind != PromptKind::None) { promptKey(k); return; }
         if (sidebar_ && sideFocus_ && explorerKey(k)) { dirty_ = true; return; }
@@ -2918,11 +3103,23 @@ private:
         Edge edge = edgeAt(mx_, my_);
         Cursor c = Cursor::Default;
         if (edge != Edge::None) c = cursorForEdge(edge);
+        else if (splitDragNode_) c = splitDragNode_->sideBySide ? Cursor::ResizeW : Cursor::ResizeN;
+        else if (Node* g = gapAt(mx_, my_); g && !tabDrag_.active) c = g->sideBySide ? Cursor::ResizeW : Cursor::ResizeN;
         else if (splitDrag_ || (sidebar_ && L_.split.contains(mx_, my_))) c = Cursor::ResizeW;
         else if (panelDrag_ || (panelOpen_ && L_.panel.contains(mx_, my_) && my_ < L_.panel.y + 6 * S())) c = Cursor::ResizeN;
         else if (!docs_.empty() && L_.editor.contains(mx_, my_) && mx_ >= L_.textX && !inScrollbar(doc(), mx_, my_) && !inMinimap(mx_, my_)) c = Cursor::Text;
         win_.setCursor(c);
 
+        if (splitDragNode_) {
+            Node& n = *splitDragNode_;
+            if (n.sideBySide) n.ratio = (mx_ - n.rect.x - n.gap.w / 2) / std::max(1.0f, n.rect.w - n.gap.w);
+            else n.ratio = (my_ - n.rect.y - n.gap.h / 2) / std::max(1.0f, n.rect.h - n.gap.h);
+            dirty_ = true;
+        }
+        if (tabDrag_.doc) {
+            if (!tabDrag_.active && std::hypot(mx_ - tabDrag_.sx, my_ - tabDrag_.sy) > 7 * S()) tabDrag_.active = true;
+            if (tabDrag_.active) { updateDropTarget(); win_.setCursor(Cursor::Default); dirty_ = true; }
+        }
         if (splitDrag_) {
             const float m = std::round(8 * S());
             float w = L_.status.w - m - mx_ - m / 2;
@@ -2937,12 +3134,15 @@ private:
         if (hr != hoverRow_) { hoverRow_ = hr; dirty_ = true; }
 
         int hb = titleButtonAt(mx_, my_), ht = -1, hc = -1;
-        for (std::size_t i = 0; i < tabHits_.size(); ++i) {
-            if (tabHits_[i].tab.contains(mx_, my_)) {
-                ht = static_cast<int>(i);
-                if (tabHits_[i].close.contains(mx_, my_)) hc = ht;
-            }
-        }
+        Pane* hp = nullptr;
+        for (Node* n : leaves())
+            for (std::size_t i = 0; i < n->pane->hits.size(); ++i)
+                if (n->pane->hits[i].tab.contains(mx_, my_)) {
+                    hp = n->pane.get();
+                    ht = static_cast<int>(i);
+                    if (n->pane->hits[i].close.contains(mx_, my_)) hc = ht;
+                }
+        if (hp != hoverPane_) { hoverPane_ = hp; dirty_ = true; }
         const int hAct = activityAt(mx_, my_);
         if (hAct != hoverAct_) { hoverAct_ = hAct; dirty_ = true; }
         const int hover = toolAt(mx_, my_);
@@ -2980,6 +3180,121 @@ private:
         dirty_ = true;
     }
 
+    // ---- tab drag & drop (reorder, move between panes, split)
+
+    void updateDropTarget() {
+        TabDrag& d = tabDrag_;
+        d.zone = Zone::None;
+        d.target = nullptr;
+        Pane* p = paneAt(mx_, my_);
+        if (!p) return;
+        d.target = p;
+        if (p->tabsR.contains(mx_, my_)) {
+            d.zone = Zone::Tabs;
+            int idx = 0;
+            for (std::size_t i = 0; i < p->tabs.size() && i < p->hits.size(); ++i) {
+                if (p->tabs[i] == d.doc) continue;
+                const Rect& t = p->hits[i].tab;
+                if (mx_ > t.x + t.w / 2) ++idx;
+            }
+            d.insertAt = idx;
+            return;
+        }
+        const Rect body{p->rect.x, p->tabsR.bottom(), p->rect.w, std::max(1.0f, p->rect.h - p->tabsR.h)};
+        const float fx = (mx_ - body.x) / body.w, fy = (my_ - body.y) / body.h;
+        Zone z = Zone::Center;
+        if (fx < 0.28f) z = Zone::Left;
+        else if (fx > 0.72f) z = Zone::Right;
+        else if (fy < 0.28f) z = Zone::Top;
+        else if (fy > 0.72f) z = Zone::Bottom;
+        if (p == d.from && p->tabs.size() == 1) z = Zone::Center;  // nothing to split off
+        d.zone = z;
+    }
+
+    void moveTab(Document* doc, Pane* to, int at) {
+        if (Pane* from = paneOfDoc(doc)) std::erase(from->tabs, doc);
+        at = std::clamp(at, 0, static_cast<int>(to->tabs.size()));
+        to->tabs.insert(to->tabs.begin() + at, doc);
+        to->cur = doc;
+    }
+
+    // Moves `doc` into a new pane created next to `target` (on the side given by `z`).
+    void splitPane(Pane* target, Zone z, Document* doc) {
+        Node* leafNode = nodeOfPane(target);
+        if (!leafNode) return;
+        if (Pane* from = paneOfDoc(doc)) std::erase(from->tabs, doc);
+        auto fresh = std::make_unique<Pane>();
+        fresh->tabs = {doc};
+        fresh->cur = doc;
+        auto oldLeaf = std::make_unique<Node>();
+        oldLeaf->pane = std::move(leafNode->pane);
+        auto newLeaf = std::make_unique<Node>();
+        newLeaf->pane = std::move(fresh);
+        leafNode->sideBySide = z == Zone::Left || z == Zone::Right;
+        leafNode->ratio = 0.5f;
+        if (z == Zone::Left || z == Zone::Top) { leafNode->a = std::move(newLeaf); leafNode->b = std::move(oldLeaf); }
+        else { leafNode->a = std::move(oldLeaf); leafNode->b = std::move(newLeaf); }
+    }
+
+    void performDrop() {
+        const TabDrag d = tabDrag_;
+        if (!d.doc || !d.target || d.zone == Zone::None) return;
+        Pane* from = paneOfDoc(d.doc);
+        if (!from) return;
+        switch (d.zone) {
+            case Zone::Tabs: moveTab(d.doc, d.target, d.insertAt); break;
+            case Zone::Center: if (d.target != from) moveTab(d.doc, d.target, static_cast<int>(d.target->tabs.size())); break;
+            case Zone::Left: case Zone::Right: case Zone::Top: case Zone::Bottom: splitPane(d.target, d.zone, d.doc); break;
+            default: break;
+        }
+        const int idx = docIndex(d.doc);
+        if (idx >= 0) cur_ = idx;
+        resetCaret();
+        scrollToCursor_ = true;
+        dirty_ = true;
+    }
+
+    // Floating tab under the pointer plus the drop indicator of the target pane.
+    void drawTabDrag() {
+        if (!tabDrag_.active || !tabDrag_.doc) return;
+        const float s = S();
+        if (Pane* p = tabDrag_.target; p && tabDrag_.zone != Zone::None) {
+            const Rect body{p->rect.x, p->tabsR.bottom(), p->rect.w, std::max(1.0f, p->rect.h - p->tabsR.h)};
+            Rect hl = body;
+            switch (tabDrag_.zone) {
+                case Zone::Left: hl = {body.x, body.y, body.w / 2, body.h}; break;
+                case Zone::Right: hl = {body.x + body.w / 2, body.y, body.w / 2, body.h}; break;
+                case Zone::Top: hl = {body.x, body.y, body.w, body.h / 2}; break;
+                case Zone::Bottom: hl = {body.x, body.y + body.h / 2, body.w, body.h / 2}; break;
+                case Zone::Center: hl = {body.x + 6 * s, body.y + 6 * s, body.w - 12 * s, body.h - 12 * s}; break;
+                default: break;
+            }
+            if (tabDrag_.zone == Zone::Tabs) {
+                // Insertion marker between tabs.
+                float x = p->tabsR.x + 8 * s;
+                int seen = 0;
+                for (std::size_t i = 0; i < p->tabs.size() && i < p->hits.size(); ++i) {
+                    if (p->tabs[i] == tabDrag_.doc) continue;
+                    if (seen == tabDrag_.insertAt) break;
+                    x = p->hits[i].tab.right() + 1 * s;
+                    ++seen;
+                }
+                fill(x - s, p->tabsR.y + 6 * s, std::round(2.5f * s), p->tabsR.h - 10 * s, theme::accent, std::round(s));
+            } else {
+                fill(hl, theme::accent.alpha(46), 10 * s);
+                const float t = std::max(1.5f, std::round(1.5f * s));
+                fill(hl.x, hl.y, hl.w, t, theme::accent.alpha(150)); fill(hl.x, hl.bottom() - t, hl.w, t, theme::accent.alpha(150));
+                fill(hl.x, hl.y, t, hl.h, theme::accent.alpha(150)); fill(hl.right() - t, hl.y, t, hl.h, theme::accent.alpha(150));
+            }
+        }
+        const std::string name = tabDrag_.doc->name;
+        const float w = tabNaturalW(name), h = std::round(uiH() + 12 * s);
+        Rect r{mx_ - tabDrag_.grabX, my_ - h / 2, w, h};
+        glassPanel(r, 9 * s);
+        drawFileIcon(r.x + 12 * s, r.y + (h - iconSize()) / 2, name);
+        uiLabel(r.x + 12 * s + iconSize() + 8 * s, r.y, h, name, theme::text, r.right() - 10 * s);
+    }
+
     void onPointerButton(Button b, bool pressed, float lx, float ly) {
         mx_ = lx * S();
         my_ = ly * S();
@@ -2992,6 +3307,9 @@ private:
             return;
         }
         if (!pressed) {
+            if (tabDrag_.doc && tabDrag_.active) performDrop();
+            tabDrag_ = {};
+            splitDragNode_ = nullptr;
             dragging_ = scrollbarDrag_ = splitDrag_ = panelDrag_ = miniDrag_ = false;
             return;
         }
@@ -3053,15 +3371,33 @@ private:
         }
         if (panelOpen_ && L_.panel.contains(mx_, my_)) { panelClick(b); return; }
 
-        if (L_.tabs.contains(mx_, my_)) {
-            for (std::size_t i = 0; i < tabHits_.size(); ++i) {
-                if (!tabHits_[i].tab.contains(mx_, my_)) continue;
-                int idx = static_cast<int>(i);
-                if (b == Button::Middle || (b == Button::Left && tabHits_[i].close.contains(mx_, my_))) closeTab(idx);
-                else if (b == Button::Left) switchTab(idx);
+        if (b == Button::Left)
+            if (Node* g = gapAt(mx_, my_)) { splitDragNode_ = g; return; }
+        if (Pane* pp = paneAt(mx_, my_)) {
+            if (pp != activePane_ && pp->cur) {  // clicking another editor pane focuses it
+                cur_ = std::max(0, docIndex(pp->cur));
+                revealCurrent();
+                resetCaret();
+                layout();
+            }
+            if (pp->tabsR.contains(mx_, my_)) {
+                for (std::size_t i = 0; i < pp->hits.size() && i < pp->tabs.size(); ++i) {
+                    if (!pp->hits[i].tab.contains(mx_, my_)) continue;
+                    Document* dd = pp->tabs[i];
+                    const int idx = docIndex(dd);
+                    if (b == Button::Middle || (b == Button::Left && pp->hits[i].close.contains(mx_, my_))) closeTab(idx);
+                    else if (b == Button::Left) {
+                        switchTab(idx);
+                        tabDrag_ = {};
+                        tabDrag_.doc = dd;
+                        tabDrag_.from = pp;
+                        tabDrag_.sx = mx_; tabDrag_.sy = my_;
+                        tabDrag_.grabX = mx_ - pp->hits[i].tab.x;
+                    }
+                    return;
+                }
                 return;
             }
-            return;
         }
 
         if (docs_.empty() || !L_.editor.contains(mx_, my_)) return;
@@ -3112,6 +3448,7 @@ private:
             dirty_ = true;
             return;
         }
+        if (Pane* pp = paneAt(mx_, my_); pp && pp != activePane_ && pp->cur) { cur_ = std::max(0, docIndex(pp->cur)); layout(); }
         if (docs_.empty()) return;
         Document& d = doc();
         if (win_.ctrlDown()) {
@@ -3164,16 +3501,30 @@ private:
         dl_.clear();
         const float W = L_.status.w, H = L_.status.bottom();
         const Rect& isl = L_.island;
-        fill(isl, theme::editorBg);
-        if (!docs_.empty()) drawEditor(doc());
-        // Content may overflow the island (partial lines, horizontal scroll): repaint the frame around it.
+        for (Node* n : leaves()) {
+            Pane& p = *n->pane;
+            fill(p.rect, theme::editorBg);
+            if (!p.cur) continue;
+            const PaneCtx sv = enterPane(p);
+            drawActive_ = &p == activePane_;
+            drawEditor(*p.cur);
+            leavePane(p, sv);
+        }
+        drawActive_ = true;
+        // Content may overflow the panes (partial lines, horizontal scroll): repaint the frame around them.
         carve({0, isl.bottom(), W, H - isl.bottom()});
         carve({0, isl.y, isl.x, isl.h});
         carve({isl.right(), isl.y, W - isl.right(), isl.h});
+        for (Node* n : splits()) carve(n->gap);
         if (L_.side.w > 1) drawSidebar();
         drawActivityBar();
-        drawTabs();
-        drawCrumbs();
+        for (Node* n : leaves()) {
+            Pane& p = *n->pane;
+            const PaneCtx sv = enterPane(p);
+            drawTabs(p);
+            if (p.cur) drawCrumbs();
+            leavePane(p, sv);
+        }
         drawPanel();
         if (prompt_.kind != PromptKind::None) drawPrompt();
         if (L_.panel.h > 0.5f) {
@@ -3181,7 +3532,7 @@ private:
             carve({pn.x, pn.bottom(), pn.w, H - pn.bottom()});  // rows that overflow the bottom edge
             carve(pn, -L_.radius);
         }
-        carve(isl, -L_.radius);
+        for (Node* n : leaves()) carve(n->pane->rect, -L_.radius);
         if (L_.side.w > 1) {
             if (sideAnim_ > 0.002f && sideAnim_ < 0.998f) carve({L_.activity.x, L_.side.y, W - L_.activity.x, L_.side.h});  // clip content sliding past the edge
             carve(L_.side, -L_.radius);
@@ -3192,6 +3543,7 @@ private:
         drawCompletion();
         drawHover();
         drawMenu();
+        drawTabDrag();
         if (L_.csd && !win_.maximized() && !win_.fullscreen()) {  // hairline window outline
             const float s = std::max(1.0f, std::round(S() * 0.5f));
             fill(0, 0, W, s, theme::border); fill(0, H - s, W, s, theme::border);
@@ -3295,34 +3647,36 @@ private:
         uiLabel(hx, sd.y, headH, title, theme::dim, sd.right() - 12 * s);
     }
 
-    void drawTabs() {
+    void drawTabs(Pane& p) {
         const float s = S();
-        fill(L_.tabs, theme::stripBg);
+        fill(p.tabsR, theme::stripBg);
+        const bool focusedPane = &p == activePane_;
         const int xs = std::max(8, static_cast<int>(std::round(uiH() * 0.62f)));
         auto fade = [](Color c, float a) { return c.alpha(static_cast<std::uint8_t>(static_cast<float>(c.a) * a)); };
-        for (const auto& e : tabDraw_) {
+        for (const auto& e : p.draw) {
             const Rect& t = e.tab;
             if (t.w < 2) continue;
             const bool live = e.index >= 0;
-            const bool active = live && e.index == cur_;
-            const bool hover = live && e.index == hoverTab_;
+            const bool dragged = tabDrag_.active && e.doc == tabDrag_.doc;
+            const float al = e.alpha * (dragged ? 0.35f : 1.0f);
+            const bool active = live && e.doc == p.cur;
+            const bool hover = live && hoverPane_ == &p && e.index == hoverTab_;
             if (active) {
-                fill(t, fade(theme::editorBg, e.alpha), 9 * s);
-                fill(t.x, t.y + t.h - 12 * s, t.w, 12 * s, fade(theme::editorBg, e.alpha));  // square off the bottom: merges with the editor
-                fill(t.x + 12 * s, t.y, std::max(0.0f, t.w - 24 * s), std::round(2 * s), fade(theme::accent, e.alpha), std::round(s));
+                fill(t, fade(theme::editorBg, al), 9 * s);
+                fill(t.x, t.y + t.h - 12 * s, t.w, 12 * s, fade(theme::editorBg, al));  // square off the bottom: merges with the editor
+                fill(t.x + 12 * s, t.y, std::max(0.0f, t.w - 24 * s), std::round(2 * s), fade(focusedPane ? theme::accent : theme::accent.alpha(90), al), std::round(s));
             } else if (hover) {
-                fill(t.x + 1 * s, t.y + 3 * s, t.w - 2 * s, t.h - 3 * s, fade(Color::rgb(0x15171b), e.alpha), 8 * s);
+                fill(t.x + 1 * s, t.y + 3 * s, t.w - 2 * s, t.h - 3 * s, fade(Color::rgb(0x15171b), al), 8 * s);
             }
             const float ix = t.x + 14 * s;
-            drawFileIcon(ix, t.y + (t.h - iconSize()) / 2 + s, e.name, (active ? 1.0f : 0.7f) * e.alpha);
-            const Color tc = fade(active ? theme::text : theme::dim, e.alpha);
+            drawFileIcon(ix, t.y + (t.h - iconSize()) / 2 + s, e.name, (active ? 1.0f : 0.7f) * al);
+            const Color tc = fade(active && focusedPane ? theme::text : (active ? Color::rgb(0xb4b8c1) : theme::dim), al);
             uiLabel(ix + iconSize() + 8 * s, t.y + s, t.h, e.name, tc, e.close.x - 2 * s);
             if (!live) continue;
-            const Document& d = *docs_[static_cast<std::size_t>(e.index)];
-            const bool overClose = hoverClose_ == e.index;
-            if (d.modified() && !overClose) {
+            const bool overClose = hoverPane_ == &p && hoverClose_ == e.index;
+            if (e.doc->modified() && !overClose) {
                 const float dot = std::round(7 * s);
-                fill(e.close.x + (e.close.w - dot) / 2, t.y + (t.h - dot) / 2 + s, dot, dot, fade(theme::accent, e.alpha), dot / 2);
+                fill(e.close.x + (e.close.w - dot) / 2, t.y + (t.h - dot) / 2 + s, dot, dot, fade(theme::accent, al), dot / 2);
             } else if (active || hover) {
                 const float bs = std::round(18 * s);
                 if (overClose) fill(e.close.x + (e.close.w - bs) / 2, t.y + (t.h - bs) / 2 + s, bs, bs, Color::rgb(0xffffff, 28), 5 * s);
@@ -3392,7 +3746,7 @@ private:
                 float x0 = baseX + static_cast<float>(displayCol(str, c0, d.tabWidth)) * cell;
                 float x1 = baseX + static_cast<float>(displayCol(str, c1, d.tabWidth)) * cell;
                 if (ln < selB.line) x1 += cell * 0.6f;
-                fill(x0, y, x1 - x0, line, focused_ ? theme::selection : theme::selectionIdle);
+                fill(x0, y, x1 - x0, line, focused_ && drawActive_ ? theme::selection : theme::selectionIdle);
             }
         }
         if (bracket) {
@@ -3465,7 +3819,7 @@ private:
         }
 
         // Caret: the animated, stretchy bar (gutter and tab strip are painted over any overflow).
-        if ((focused_ || !opt_.screenshot.empty()) && caretOn_ && caret_.init) {
+        if ((focused_ || !opt_.screenshot.empty()) && caretOn_ && caret_.init && caret_.doc == &d) {
             const float cwid = caret_.xr - caret_.xl, chei = caret_.yb - caret_.yt;
             fill(baseX + caret_.xl, e.y + caret_.yt - sy, cwid, chei, theme::caret, std::min(cwid, chei) / 2);
         }
@@ -3657,13 +4011,49 @@ private:
     // ---- animation state (tabs, side bar, bottom panel)
     struct TabAnim {
         const Document* doc = nullptr;
+        const Document* anchor = nullptr;   // ghosts: the tab they sat behind
         std::string name;
-        float x = 0, w = 0, target = 0;
+        float x = -1, tx = 0, w = 0, target = 0;
         bool ghost = false;   // closed tab still shrinking away
+        bool used = false;
     };
-    struct TabDraw { Rect tab, close; int index = -1; std::string name; float alpha = 1; };
-    std::vector<TabAnim> tabAnim_;
-    std::vector<TabDraw> tabDraw_;
+    struct TabDraw { Rect tab, close; int index = -1; std::string name; float alpha = 1; const Document* doc = nullptr; };
+
+    // ---- editor panes: a split tree whose leaves each own a tab strip and show one document at a time
+    struct Pane {
+        std::vector<Document*> tabs;
+        Document* cur = nullptr;
+        std::vector<TabAnim> anim;
+        std::vector<TabDraw> draw;
+        std::vector<TabHit> hits;
+        MiniCache mini;
+        Rect rect, tabsR, crumbs, editor, minimap;
+        float gutterW = 0, textX = 0, textW = 0;
+    };
+    struct Node {
+        std::unique_ptr<Pane> pane;          // leaf
+        bool sideBySide = true;              // internal node: children left | right (true) or top / bottom (false)
+        float ratio = 0.5f;
+        std::unique_ptr<Node> a, b;
+        Rect rect, gap;
+        bool leaf() const { return pane != nullptr; }
+    };
+    enum class Zone { None, Tabs, Center, Left, Right, Top, Bottom };
+    struct TabDrag {
+        Document* doc = nullptr;
+        Pane* from = nullptr;
+        float sx = 0, sy = 0, grabX = 0;
+        bool active = false;
+        Zone zone = Zone::None;
+        Pane* target = nullptr;
+        int insertAt = 0;
+    };
+    std::unique_ptr<Node> root_;
+    Pane* activePane_ = nullptr;
+    TabDrag tabDrag_;
+    Node* splitDragNode_ = nullptr;
+    Pane* hoverPane_ = nullptr;
+    bool drawActive_ = true;
     float panelAnim_ = 0, sideAnim_ = 0;
     int compReq_ = -1;
     fs::file_time_type dbStamp_{};
