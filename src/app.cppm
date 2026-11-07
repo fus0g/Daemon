@@ -6368,7 +6368,7 @@ private:
         }
 
         // Welcome hint on an empty untitled buffer.
-        if (docs_.size() == 1 && d.path.empty() && total == 1 && d.buf.line(0).empty() && prompt_.kind == PromptKind::None) {
+        if (docs_.size() == 1 && d.path.empty() && total == 1 && d.buf.line(0).empty() && (prompt_.kind == PromptKind::None || sidePrompt())) {
             static constexpr std::array<std::string_view, 8> hints = {
                 "Ctrl+O   open file", "Ctrl+Shift+O   open folder", "Ctrl+B   toggle sidebar", "Ctrl+N   new file", "Ctrl+S   save", "Ctrl+F   find / Ctrl+H replace",
                 "Ctrl+G   go to line", "Ctrl+Q   quit"};
