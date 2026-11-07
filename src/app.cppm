@@ -815,9 +815,9 @@ private:
         const int ip = std::max(15, static_cast<int>(std::round(activityCell() * 0.64f)));
         const bool hasErrors = !problems_.empty() ||
                                std::ranges::any_of(shownProblems_, [](const Problem& p) { return p.severity == Severity::Error; });
-        for (int g = 0; g < 2; ++g) {   // accent-colored outline, dark fill
+        for (int g = 0; g < 2; ++g) {   // white outline, dark fill (same as the toolbar pill)
             const Rect pill = activityPill(g);
-            fill(pill, theme::accent, pill.w / 2);
+            fill(pill, Color::rgb(0xffffff, 34), pill.w / 2);
             fill(pill.x + hair, pill.y + hair, pill.w - 2 * hair, pill.h - 2 * hair, Color::rgb(0x0d0e11), pill.w / 2 - hair);
         }
         for (int i = 0; i < 4; ++i) {
@@ -826,8 +826,8 @@ private:
             if (hot && !active) fill(r, Color::rgb(0xffffff, 26), r.w / 2);
             const float ix = std::round(r.x + (r.w - static_cast<float>(ip)) / 2), iy = std::round(r.y + (r.h - static_cast<float>(ip)) / 2);
             const Color col = active ? theme::accent.mix(Color::rgb(0xffffff), 0.14f) : Color::rgb(0xffffff);   // the active view's icon takes the accent
-            // Filled Material Design icons: folder, git, console, alert.
-            static constexpr std::array<char32_t, 4> glyphs = {0xF024B, 0xF02A2, 0xF018D, 0xF0026};
+            // Material Design icons: folder, source-branch, terminal, alert.
+            static constexpr std::array<char32_t, 4> glyphs = {0xF0256, 0xF062C, 0xF07B7, 0xF002A};
             Icons::glyph(dl_, font_, ix, iy, ip, glyphs[static_cast<std::size_t>(i)], col);
             if (i == 3 && hasErrors) {
                 const float d = std::round(7 * s);
