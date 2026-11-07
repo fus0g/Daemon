@@ -570,6 +570,33 @@ inline bool usesGccModules(const std::vector<std::string>& args) {
 
 }  // namespace cmake_detail
 
+namespace cmake_detail {
+
+// The language standard a compiler uses when no -std flag is given (CMake omits -std when it matches this,
+// but clang's own default differs, and without C++20 `module` / `import` are not even keywords).
+inline std::string compilerDefaultStd(const std::string& compiler) {
+    static std::unordered_map<std::string, std::string> cache;
+    if (auto it = cache.find(compiler); it != cache.end()) return it->second;
+    std::string result = "gnu++17";
+    ProcessOptions o;
+    o.argv = {compiler, "-dM", "-E", "-x", "c++", "/dev/null"};
+    auto r = Process::runCapture(o, 10000);
+    const auto at = r.output.find("#define __cplusplus ");
+    if (at != std::string::npos) {
+        const long v = std::atol(r.output.c_str() + at + 20);
+        if (v >= 202400) result = "gnu++26";
+        else if (v >= 202302) result = "gnu++23";
+        else if (v >= 202002) result = "gnu++20";
+    }
+    return cache[compiler] = result;
+}
+
+inline bool hasStdFlag(const std::vector<std::string>& args) {
+    return std::ranges::any_of(args, [](const std::string& a) { return a.starts_with("-std=") || a.starts_with("--std=") || a.starts_with("-std:"); });
+}
+
+}  // namespace cmake_detail
+
 struct ClangdDb {
     fs::path dir;          // value for --compile-commands-dir
     bool derived = false;  // true when a Clang-flavoured copy was generated
@@ -583,14 +610,14 @@ inline std::optional<ClangdDb> prepareClangdDb(const fs::path& buildDir) {
     const fs::path src = buildDir / "compile_commands.json";
     std::error_code ec;
     if (!fs::is_regular_file(src, ec)) return std::nullopt;
-    const fs::path outDir = buildDir / ".daemon" / "clangd";
+    const fs::path outDir = buildDir / ".daemon" / "clangd-v2";
     const fs::path out = outDir / "compile_commands.json";
     auto parsed = readJson(src);
     if (!parsed || !parsed->array()) return ClangdDb{buildDir, false, 0};
 
     bool gccModules = false;
     for (const auto& e : *parsed->array())
-        if (usesGccModules(entryArgs(e))) { gccModules = true; break; }
+        if (usesGccModules(entryArgs(e)) || isModuleInterfaceExt(e["file"].str())) { gccModules = true; break; }
     if (!gccModules) return ClangdDb{buildDir, false, static_cast<int>(parsed->array()->size())};
 
     // Up to date?
@@ -610,6 +637,7 @@ inline std::optional<ClangdDb> prepareClangdDb(const fs::path& buildDir) {
         if (args.empty()) continue;
         bool bmiOnly = false;
         std::vector<std::string> out_{*clang};
+        const bool needStd = !hasStdFlag(args);
         for (std::size_t i = 1; i < args.size(); ++i) {
             const std::string& a = args[i];
             if (a == "-o" || a == "-MT" || a == "-MF" || a == "-MQ") { ++i; continue; }
@@ -629,6 +657,12 @@ inline std::optional<ClangdDb> prepareClangdDb(const fs::path& buildDir) {
                 if (out_[i] == "-x" && out_[i + 1] == "c++") { out_[i + 1] = "c++-module"; replaced = true; }
             if (!replaced) { out_.push_back("-x"); out_.push_back("c++-module"); }
         }
+        if (needStd) {
+            // Modules need at least C++20 even if the compiler's default is older.
+            std::string std_ = compilerDefaultStd(args[0]);
+            if (std_ == "gnu++17" || std_ == "gnu++14" || std_ == "gnu++11") std_ = "gnu++20";
+            out_.push_back("-std=" + std_);
+        }
         out_.push_back("-stdlib=libstdc++");
         out_.push_back(file);
 
@@ -642,6 +676,50 @@ inline std::optional<ClangdDb> prepareClangdDb(const fs::path& buildDir) {
         auto it = entries.find(file);
         if (it == entries.end()) { order.push_back(file); entries.emplace(file, std::move(entry)); viaBmiOnly[file] = bmiOnly; }
         else if (viaBmiOnly[file] && !bmiOnly) { it->second = std::move(entry); viaBmiOnly[file] = false; }
+    }
+
+    // Module interface units that are not (yet) in CMake's database, e.g. a new file or a configure that failed
+    // before listing it, would leave `import foo;` unresolved. Add them, borrowing the flags of a sibling entry.
+    if (!order.empty()) {
+        fs::path home;
+        if (auto cache = readFile(buildDir / "CMakeCache.txt")) {
+            const auto at = cache->find("CMAKE_HOME_DIRECTORY:INTERNAL=");
+            if (at != std::string::npos) {
+                const auto e = cache->find('\n', at);
+                home = cache->substr(at + 30, e == std::string::npos ? std::string::npos : e - at - 30);
+            }
+        }
+        const json::Value* proto = nullptr;
+        for (const auto& f : order) {
+            const auto name = fs::path(f).filename().string();
+            if (name != "std.cc" && name != "std.compat.cc" && !isModuleInterfaceExt(f)) { proto = &entries[f]; break; }
+        }
+        if (!home.empty() && proto && fs::is_directory(home, ec)) {
+            for (fs::recursive_directory_iterator it(home, fs::directory_options::skip_permission_denied, ec), end; !ec && it != end; it.increment(ec)) {
+                const auto name = it->path().filename().string();
+                if (it->is_directory(ec) && (name.starts_with('.') || name.starts_with("cmake-build") || name == "build" || name == "node_modules")) {
+                    it.disable_recursion_pending();
+                    continue;
+                }
+                if (!it->is_regular_file(ec) || !isModuleInterfaceExt(it->path())) continue;
+                const std::string file = it->path().string();
+                if (entries.contains(file)) continue;
+                std::vector<std::string> args;
+                for (const auto& a : *(*proto)["arguments"].array()) args.push_back(a.str());
+                if (!args.empty()) args.pop_back();  // the prototype's source file
+                for (std::size_t i = 0; i + 1 < args.size(); ++i)
+                    if (args[i] == "-x") args[i + 1] = "c++-module";
+                args.push_back(file);
+                json::Value entry = json::object();
+                entry.set("directory", (*proto)["directory"].str());
+                json::Value arr = json::array();
+                for (auto& x : args) arr.push(x);
+                entry.set("arguments", std::move(arr));
+                entry.set("file", file);
+                order.push_back(file);
+                entries.emplace(file, std::move(entry));
+            }
+        }
     }
 
     json::Value db = json::array();

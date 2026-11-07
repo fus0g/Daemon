@@ -490,7 +490,7 @@ static void testModules() {
     if (findExecutable("clang++")) {
         auto db = prepareClangdDb(dir);
         CHECK(db && db->derived && db->sources == 2);  // duplicate BMI-only entry folded away
-        auto j = readJson(dir / ".daemon/clangd/compile_commands.json");
+        auto j = readJson(dir / ".daemon/clangd-v2/compile_commands.json");
         CHECK(j && j->array() && j->array()->size() == 2);
         if (j && j->array() && j->array()->size() == 2) {
             const auto& args = (*j)[0]["arguments"];
