@@ -37,13 +37,13 @@ inline constexpr Color frame = Color::rgb(0x0e1017, 192);    // translucent chro
 inline constexpr Color editorBg = Color::rgb(0x0a0b0d);     // code editor: near-black
 inline constexpr Color bg = Color::rgb(0x1a1b1f);           // island (side panels) surface
 inline constexpr Color lineHl = Color::rgb(0x15171b);
-inline constexpr Color selection = Color::rgb(0x2a4d80);
+inline constexpr Color selection = Color::rgb(0x5a1d29);
 inline constexpr Color selectionIdle = Color::rgb(0x34363d);
 inline constexpr Color text = Color::rgb(0xd1d4da);
 inline constexpr Color lineNum = Color::rgb(0x565962);
 inline constexpr Color lineNumActive = Color::rgb(0xaeb2bb);
 inline constexpr Color guide = Color::rgb(0x1f2126);
-inline constexpr Color caret = Color::rgb(0x7aaeff);
+inline constexpr Color caret = Color::rgb(0xff4a5c);
 inline constexpr Color titleBg = frame;
 inline constexpr Color tabBg = Color::rgb(0x121316);
 inline constexpr Color stripBg = Color::rgb(0x060709);      // editor tab strip: darker than the editor
@@ -57,7 +57,7 @@ inline constexpr Color tabActive = Color::rgb(0x2f3138);
 inline constexpr Color statusBg = frame;
 inline constexpr Color promptBg = Color::rgb(0x26282d);
 inline constexpr Color border = Color::rgb(0x2e3036);
-inline constexpr Color accent = Color::rgb(0x5b9bff);
+inline constexpr Color accent = Color::rgb(0xff2b3f);   // nitro red
 inline constexpr Color dim = Color::rgb(0x8a8e98);
 inline constexpr Color match = Color::rgb(0x5a4a22);
 inline constexpr Color bracket = Color::rgb(0x7d8494);
@@ -3572,8 +3572,13 @@ private:
         // Thin outline around every island so it reads as a separate surface against the window background.
         {
             const float t = std::max(1.0f, std::round(S() * 0.8f));
-            const Color oc = Color::rgb(0xffffff, 34);
-            auto outline = [&](const Rect& r) { if (r.w > 8 && r.h > 8) dl_.ring(font_, r.x, r.y, r.w, r.h, oc, L_.radius, t); };
+            // Two-tone so it reads on any wallpaper: a dark line just outside the island and a light line just inside.
+            const Color lightC = Color::rgb(0xffffff, 74), darkC = Color::rgb(0x000000, 120);
+            auto outline = [&](const Rect& r) {
+                if (r.w <= 8 || r.h <= 8) return;
+                dl_.ring(font_, r.x - t, r.y - t, r.w + 2 * t, r.h + 2 * t, darkC, L_.radius + t, t);
+                dl_.ring(font_, r.x, r.y, r.w, r.h, lightC, L_.radius, t);
+            };
             for (Node* n : leaves()) outline(n->pane->rect);
             if (L_.side.w > 1) outline(L_.side);
             if (L_.panel.h > 0.5f) outline(L_.panel);
