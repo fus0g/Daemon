@@ -58,6 +58,12 @@ public:
         items_.push_back({x, y, w, h, font.whiteU(), font.whiteV(), font.whiteU(), font.whiteV(), c.packed(), radius});
     }
 
+    // Rounded outline (a ring of `width` px just inside the rect). Drawn over the content below it.
+    void ring(const FontAtlas& font, float x, float y, float w, float h, Color c, float radius, float width) {
+        if (w <= 0 || h <= 0 || c.a == 0) return;
+        items_.push_back({x, y, w, h, font.whiteU(), font.whiteV(), width, font.whiteV(), c.packed(), 1000.0f + radius});
+    }
+
     // Draws one glyph with its pen at (x, baselineY). Coordinates are snapped to whole pixels.
     void glyph(const Glyph& g, float x, float baselineY, Color c) {
         if (g.empty) return;

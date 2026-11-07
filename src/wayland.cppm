@@ -156,6 +156,7 @@ public:
     void startResize(Edge e) {
         if (toplevel_ && seat_ && e != Edge::None) xdg_toplevel_resize(toplevel_, seat_, inputSerial_, static_cast<std::uint32_t>(e));
     }
+    void setMaximized() { if (toplevel_) xdg_toplevel_set_maximized(toplevel_); }
     void toggleMaximize() {
         if (!toplevel_) return;
         if (maximized_) xdg_toplevel_unset_maximized(toplevel_); else xdg_toplevel_set_maximized(toplevel_);

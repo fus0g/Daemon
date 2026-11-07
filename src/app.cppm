@@ -105,6 +105,7 @@ public:
         win_.onFocus = [this](bool f) { focused_ = f; resetCaret(); dirty_ = true; };
         win_.onClose = [this] { requestQuit(); };
         if (auto r = win_.create("Daemon", 1280, 800); !r) return r;
+        if (opt_.screenshot.empty()) win_.setMaximized();   // start maximized (captures keep a fixed size)
 
         scale_ = win_.scale();
         wLog_ = win_.width();
@@ -559,6 +560,7 @@ private:
                 dirty_ = true;
             }
         }
+        refreshProblems();
         if (docs_.empty()) animating_ = false;
         if (stepAnimations(dt)) { animating_ = true; dirty_ = true; }
         pollTasks();
@@ -711,8 +713,7 @@ private:
         const int ip = std::max(14, static_cast<int>(std::round(uiH() * 1.35f)));
         static constexpr std::array<ToolIcon, 3> icons = {ToolIcon::Files, ToolIcon::Terminal, ToolIcon::Warning};
         const bool hasErrors = !problems_.empty() ||
-                               (!docs_.empty() && diags_.contains(doc().path) &&
-                                std::ranges::any_of(diags_.at(doc().path), [](const LspDiag& d) { return d.severity == 1; }));
+                               std::ranges::any_of(shownProblems_, [](const Problem& p) { return p.severity == Severity::Error; });
         for (int i = 0; i < 3; ++i) {
             const Rect r = activityRect(i);
             const bool active = activityActive(i), hot = hoverAct_ == i + 1;
@@ -2113,6 +2114,35 @@ private:
         if (runProc_ && runEof_) { if (auto c = runProc_->tryWait()) finishRun(*c); }
     }
 
+    // Problems tab content: compiler / CMake problems from the last build plus clangd's live diagnostics
+    // (errors, warnings and notes; hints are left out), ordered by file and line.
+    void refreshProblems() {
+        std::vector<Problem> out = problems_;
+        std::unordered_set<std::string> seen;
+        for (const auto& p : problems_) seen.insert(p.file.string() + ":" + std::to_string(p.line));
+        std::vector<Problem> live;
+        for (const auto& [path, ds] : diags_) {
+            for (const auto& d : ds) {
+                if (d.severity > 3) continue;
+                Problem p;
+                p.severity = d.severity == 1 ? Severity::Error : d.severity == 2 ? Severity::Warning : Severity::Note;
+                p.file = path;
+                p.line = d.line + 1;
+                p.col = d.col + 1;
+                p.message = d.message;
+                if (!seen.contains(path + ":" + std::to_string(p.line))) live.push_back(std::move(p));
+            }
+        }
+        std::ranges::stable_sort(live, [](const Problem& a, const Problem& b) {
+            if (a.severity != b.severity) return a.severity < b.severity;   // errors first
+            return a.file != b.file ? a.file < b.file : a.line < b.line;
+        });
+        out.insert(out.end(), live.begin(), live.end());
+        const bool changed = out.size() != shownProblems_.size() ||
+            !std::ranges::equal(out, shownProblems_, [](const Problem& a, const Problem& b) { return a.file == b.file && a.line == b.line && a.message == b.message && a.severity == b.severity; });
+        if (changed) { shownProblems_ = std::move(out); dirty_ = true; }
+    }
+
     void gotoProblem(const Problem& p) {
         openFile(p.file.string());
         if (docs_.empty()) return;
@@ -2223,7 +2253,7 @@ private:
         }
     }
 
-    std::size_t panelRowCount() const { return panelTab_ == 2 ? problems_.size() : panelLines().size(); }
+    std::size_t panelRowCount() const { return panelTab_ == 2 ? shownProblems_.size() : panelLines().size(); }
     float panelHeadH() const { return std::round(font_.uiLineHeight() + 14 * S()); }
     Rect panelBody() const {
         const Rect& p = L_.panel;
@@ -2248,7 +2278,7 @@ private:
         if (body.contains(mx_, my_)) {
             int row = static_cast<int>(std::floor((my_ - body.y + panelScroll_[static_cast<std::size_t>(panelTab_)]) / lh()));
             if (panelTab_ == 2) {
-                if (row >= 0 && row < static_cast<int>(problems_.size())) gotoProblem(problems_[static_cast<std::size_t>(row)]);
+                if (row >= 0 && row < static_cast<int>(shownProblems_.size())) gotoProblem(shownProblems_[static_cast<std::size_t>(row)]);
             } else {
                 const auto& lines = panelLines();
                 if (row >= 0 && row < static_cast<int>(lines.size()) && lines[static_cast<std::size_t>(row)].problem >= 0)
@@ -2277,7 +2307,7 @@ private:
             int sev = 0;
             bool clickable = false;
             if (panelTab_ == 2) {
-                const Problem& pr = problems_[static_cast<std::size_t>(i)];
+                const Problem& pr = shownProblems_[static_cast<std::size_t>(i)];
                 std::string rel = pr.file.lexically_relative(cmakeRoot_).string();
                 if (rel.empty() || rel.starts_with("..")) rel = pr.file.string();
                 text = std::format("{}:{}:{}  {}", rel, pr.line, pr.col, pr.message);
@@ -2309,15 +2339,15 @@ private:
         float x = p.x + 8 * s;
         for (std::size_t i = 0; i < 3; ++i) {
             std::string t = std::string(names[i]);
-            if (i == 2 && !problems_.empty()) t += std::format("  {}", problems_.size());
+            if (i == 2 && !shownProblems_.empty()) t += std::format("  {}", shownProblems_.size());
             const float w = uiW(t) + 28 * s;
             panelTabRects_[i] = {x, p.y + 4 * s, w, hh - 8 * s};
             const bool active = static_cast<int>(i) == panelTab_;
             const bool hot = panelTabRects_[i].contains(mx_, my_);
             Color c = active ? theme::text : (hot ? Color::rgb(0xb4b8c1) : theme::dim);
-            if (i == 2 && !problems_.empty()) c = active ? Color::rgb(0xf2777a) : Color::rgb(0xc86a6c);
+            if (i == 2 && !shownProblems_.empty()) c = active ? Color::rgb(0xf2777a) : Color::rgb(0xc86a6c);
             uiLabel(x + 14 * s, p.y, hh, t, c);
-            if (active) fill(x + 14 * s, p.y + hh - std::round(2 * s) - s, uiW(t), std::round(2 * s), i == 2 && !problems_.empty() ? Color::rgb(0xf2777a) : theme::accent, std::round(s));
+            if (active) fill(x + 14 * s, p.y + hh - std::round(2 * s) - s, uiW(t), std::round(2 * s), i == 2 && !shownProblems_.empty() ? Color::rgb(0xf2777a) : theme::accent, std::round(s));
             x += w + 2 * s;
         }
         const std::string clear = "Clear";
@@ -2709,6 +2739,7 @@ private:
             switch (k.ch) {
                 case 'r': if (shift) cmakeReload(); scrollToCursor_ = false; break;
                 case '`': togglePanel(); scrollToCursor_ = false; break;
+                case 'm': if (shift) { panelOpen_ = true; panelTab_ = 2; dirty_ = true; scrollToCursor_ = false; } break;   // Problems
                 case 's': if (shift) openPrompt(PromptKind::SaveAs); else saveCurrent(); break;
                 case 'o': openPrompt(shift ? PromptKind::OpenFolder : PromptKind::Open); break;
                 case 'b': toggleSidebar(); scrollToCursor_ = false; break;
@@ -3538,6 +3569,15 @@ private:
             if (sideAnim_ > 0.002f && sideAnim_ < 0.998f) carve({L_.activity.x, L_.side.y, W - L_.activity.x, L_.side.h});  // clip content sliding past the edge
             carve(L_.side, -L_.radius);
         }  // inverted rounded rect = clips the four corners
+        // Thin outline around every island so it reads as a separate surface against the window background.
+        {
+            const float t = std::max(1.0f, std::round(S() * 0.8f));
+            const Color oc = Color::rgb(0xffffff, 34);
+            auto outline = [&](const Rect& r) { if (r.w > 8 && r.h > 8) dl_.ring(font_, r.x, r.y, r.w, r.h, oc, L_.radius, t); };
+            for (Node* n : leaves()) outline(n->pane->rect);
+            if (L_.side.w > 1) outline(L_.side);
+            if (L_.panel.h > 0.5f) outline(L_.panel);
+        }
         if (L_.csd) drawTitleBar();
         drawToolbar();
         drawStatus();
@@ -4012,7 +4052,8 @@ private:
     std::string buildPartial_, runPartial_, buildStatus_;
     int buildCur_ = 0, buildTotal_ = 0;
     std::vector<OutLine> buildOut_, runOut_;
-    std::vector<Problem> problems_;
+    std::vector<Problem> problems_;        // from the last build / configure
+    std::vector<Problem> shownProblems_;   // build problems + live clangd diagnostics (the Problems tab)
     bool panelOpen_ = false, panelDrag_ = false;
     int panelTab_ = 0;
     // ---- animation state (tabs, side bar, bottom panel)
