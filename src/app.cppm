@@ -47,8 +47,7 @@ inline constexpr Color caret = Color::rgb(0x7aaeff);
 inline constexpr Color titleBg = frame;
 inline constexpr Color tabBg = Color::rgb(0x121316);
 inline constexpr Color stripBg = Color::rgb(0x060709);      // editor tab strip: darker than the editor
-inline constexpr Color sideBg = Color::rgb(0x0d0e11);
-inline constexpr Color sideGlass = Color::rgb(0x0f121a, 168);  // explorer island: translucent, the blur shows through
+inline constexpr Color sideBg = Color::rgb(0x0d0e11);       // explorer island
 inline constexpr Color sideSel = Color::rgb(0x1a1c21);
 inline constexpr Color sideHover = Color::rgb(0x121317);
 inline constexpr Color panelBg = Color::rgb(0x0b0c0f);      // output panel island
@@ -2315,12 +2314,6 @@ private:
             panelTabRects_[i] = {x, p.y + 4 * s, w, hh - 8 * s};
             const bool active = static_cast<int>(i) == panelTab_;
             const bool hot = panelTabRects_[i].contains(mx_, my_);
-            {
-                const float hair = std::max(1.0f, std::round(0.8f * s));
-                const Rect& rr = panelTabRects_[i];
-                fill(rr, Color::rgb(0xffffff, active ? 40 : 22), 7 * s);
-                fill(rr.x + hair, rr.y + hair, rr.w - 2 * hair, rr.h - 2 * hair, active ? Color::rgb(0x13151a) : theme::panelHead, 6 * s);
-            }
             Color c = active ? theme::text : (hot ? Color::rgb(0xb4b8c1) : theme::dim);
             if (i == 2 && !problems_.empty()) c = active ? Color::rgb(0xf2777a) : Color::rgb(0xc86a6c);
             uiLabel(x + 14 * s, p.y, hh, t, c);
@@ -3494,16 +3487,7 @@ private:
         Color f = frameC();
         const float a = static_cast<float>(f.a) / 255.0f;
         Color pre{static_cast<std::uint8_t>(f.r * a + 0.5f), static_cast<std::uint8_t>(f.g * a + 0.5f), static_cast<std::uint8_t>(f.b * a + 0.5f), 255};
-        dl_.erase(true, a);
-        dl_.rect(font_, r.x, r.y, r.w, r.h, pre, radius);
-        dl_.erase(false);
-    }
-    // Replaces the area with a translucent tint (the compositor's blur shows through it).
-    void carveTint(const Rect& r, Color c, float radius = 0) {
-        if (!ren_.translucent()) c.a = 255;
-        const float a = static_cast<float>(c.a) / 255.0f;
-        Color pre{static_cast<std::uint8_t>(c.r * a + 0.5f), static_cast<std::uint8_t>(c.g * a + 0.5f), static_cast<std::uint8_t>(c.b * a + 0.5f), 255};
-        dl_.erase(true, a);
+        dl_.erase(true);
         dl_.rect(font_, r.x, r.y, r.w, r.h, pre, radius);
         dl_.erase(false);
     }
@@ -3617,7 +3601,7 @@ private:
     void drawSidebar() {
         const Rect& sd = L_.side;
         const float s = S(), rh = L_.sideRow;
-        carveTint(sd, theme::sideGlass);
+        fill(sd, theme::sideBg);
         const float headH = L_.tabs.h;
 
         if (!explorer_.isOpen()) {
@@ -3669,7 +3653,7 @@ private:
         }
 
         // Header (opaque, so scrolled rows disappear beneath it).
-        carveTint({sd.x, sd.y, sd.w, headH}, theme::sideGlass);   // repaint over rows that scrolled underneath
+        fill(sd.x, sd.y, sd.w, headH, theme::sideBg);
         std::string title = explorer_.isOpen() ? explorer_.rootName() : "Explorer";
         for (auto& ch : title) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
         const float hx = sd.x + 16 * s;
@@ -3690,19 +3674,12 @@ private:
             const float al = e.alpha * (dragged ? 0.35f : 1.0f);
             const bool active = live && e.doc == p.cur;
             const bool hover = live && hoverPane_ == &p && e.index == hoverTab_;
-            // Outlined pill: a light ring (outer rounded rect) with the tab surface inset inside it.
-            {
-                const float hair = std::max(1.0f, std::round(0.8f * s));
-                const Color ring = fade(Color::rgb(0xffffff, active ? 46 : 26), al);
-                const Color body = fade(active ? theme::editorBg : (hover ? Color::rgb(0x15171b) : theme::stripBg), al);
-                fill(t, ring, 9 * s);
-                if (active) fill(t.x, t.y + t.h - 12 * s, t.w, 12 * s, ring);   // outline runs down the sides to the strip edge
-                const Rect in{t.x + hair, t.y + hair, std::max(0.0f, t.w - 2 * hair), std::max(0.0f, t.h - hair)};
-                fill(in, body, 8 * s);
-                if (active) {
-                    fill(in.x, t.y + t.h - 12 * s, in.w, 12 * s, body);   // square off the bottom: merges with the editor
-                    fill(t.x + 12 * s, t.y, std::max(0.0f, t.w - 24 * s), std::round(2 * s), fade(focusedPane ? theme::accent : theme::accent.alpha(90), al), std::round(s));
-                }
+            if (active) {
+                fill(t, fade(theme::editorBg, al), 9 * s);
+                fill(t.x, t.y + t.h - 12 * s, t.w, 12 * s, fade(theme::editorBg, al));  // square off the bottom: merges with the editor
+                fill(t.x + 12 * s, t.y, std::max(0.0f, t.w - 24 * s), std::round(2 * s), fade(focusedPane ? theme::accent : theme::accent.alpha(90), al), std::round(s));
+            } else if (hover) {
+                fill(t.x + 1 * s, t.y + 3 * s, t.w - 2 * s, t.h - 3 * s, fade(Color::rgb(0x15171b), al), 8 * s);
             }
             const float ix = t.x + 14 * s;
             drawFileIcon(ix, t.y + (t.h - iconSize()) / 2 + s, e.name, (active ? 1.0f : 0.7f) * al);

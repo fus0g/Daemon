@@ -37,19 +37,17 @@ static_assert(sizeof(Instance) == 40);
 class DrawList {
 public:
     enum class Mode : std::uint8_t { Normal, Erase, Glass };
-    struct Seg { std::uint32_t at; Mode mode; float alpha; };   // alpha: resulting window alpha of Erase quads
-    void clear() { items_.clear(); segs_.clear(); mode_ = Mode::Normal; modeAlpha_ = 1; }
+    struct Seg { std::uint32_t at; Mode mode; };
+    void clear() { items_.clear(); segs_.clear(); mode_ = Mode::Normal; }
     // Drawing modes for the quads that follow. Erase: replaces what is underneath (colour premultiplied, alpha 255),
     // used to carve translucent chrome out around opaque panels. Glass: blurs the scene behind the quad and tints it
     // with the quad's colour; everything from the first Glass quad on is drawn after the scene (menus, popups).
-    void setMode(Mode m, float alpha = 1.0f) {
-        if (m == mode_ && alpha == modeAlpha_) return;
+    void setMode(Mode m) {
+        if (m == mode_) return;
         mode_ = m;
-        modeAlpha_ = alpha;
-        segs_.push_back({static_cast<std::uint32_t>(items_.size()), m, alpha});
+        segs_.push_back({static_cast<std::uint32_t>(items_.size()), m});
     }
-    // `alpha` is the window alpha the erased area ends up with (0..1); the colour must be premultiplied by it.
-    void erase(bool on, float alpha = 1.0f) { setMode(on ? Mode::Erase : Mode::Normal, alpha); }
+    void erase(bool on) { setMode(on ? Mode::Erase : Mode::Normal); }
     void glass(bool on) { setMode(on ? Mode::Glass : Mode::Normal); }
     std::span<const Seg> segs() const { return segs_; }
     std::span<const Instance> items() const { return items_; }
@@ -104,7 +102,6 @@ private:
     std::vector<Instance> items_;
     std::vector<Seg> segs_;
     Mode mode_ = Mode::Normal;
-    float modeAlpha_ = 1;
 };
 
 }  // namespace ide
