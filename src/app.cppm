@@ -5637,7 +5637,8 @@ private:
         dlgRecentShown_.clear();
         const float top0 = L_.csd ? L_.title.h : 0;
         fill(0, top0, W, H - top0, Color{0, 0, 0, 150});   // dim everything behind (part of the scene the glass blurs)
-        const float pw = std::min(940 * s, W - 60 * s), ph = std::min(580 * s, H - 80 * s);
+        const bool welcome = dlg_.kind == DlgKind::Welcome;
+        const float pw = std::min((welcome ? 840.0f : 940.0f) * s, W - 60 * s), ph = std::min((welcome ? 500.0f : 580.0f) * s, H - 80 * s);
         const Rect r{std::round((W - pw) / 2), std::round((H - ph) / 2), std::round(pw), std::round(ph)};
         dlgPanel_ = r;
         glassPanel(r, 14 * s);
@@ -5653,60 +5654,81 @@ private:
 
     void dlgSide(const Rect& r, float w) {
         const float s = S();
-        fill(r.x + 8 * s, r.y + 8 * s, w - 8 * s, r.h - 16 * s, Color{0, 0, 0, 70}, 11 * s);   // inset side card
+        fill(r.x + w, r.y + 28 * s, std::max(1.0f, std::round(s * 0.8f)), r.h - 56 * s, Color::rgb(0xffffff, 22));   // hairline between the columns
+    }
+
+    // One clickable row of the welcome screen's action list: icon tile, label, shortcut.
+    void welcomeAction(const Rect& row, std::string_view label, std::string_view keys, int id, char32_t icon, bool primary) {
+        const float s = S();
+        dlgHit(row, id);
+        const bool hot = dlgHot(id);
+        if (hot) fill(row, Color::rgb(0xffffff, 16), 10 * s);
+        const float tile = std::round(row.h - 14 * s);
+        const Rect t{row.x + 8 * s, row.y + (row.h - tile) / 2, tile, tile};
+        fill(t, primary ? theme::accent : Color::rgb(0xffffff, 22), 8 * s);
+        const int ip = std::max(14, static_cast<int>(std::round(tile * 0.55f)));
+        Icons::glyph(dl_, font_, t.x + (tile - static_cast<float>(ip)) / 2, t.y + (tile - static_cast<float>(ip)) / 2, ip, icon, Color::rgb(0xffffff));
+        const float kx = row.right() - 12 * s;
+        const float kw = uiW(keys);
+        uiLabelR(kx, row.y, row.h, keys, theme::lineNum);
+        uiLabel(t.right() + 14 * s, row.y, row.h, label, theme::text, kx - kw - 10 * s);
     }
 
     void drawWelcome(const Rect& r) {
-        const float s = S(), sideW = std::round(310 * s);
+        const float s = S(), sideW = std::round(320 * s);
         dlgSide(r, sideW);
-        const float lx = r.x + 40 * s;
-        const int ls = static_cast<int>(std::round(58 * s));
-        Icons::logo(dl_, font_, lx, r.y + 46 * s, ls, theme::accent);
-        const float ty = r.y + 46 * s + static_cast<float>(ls) + 18 * s;
+        const float lx = r.x + 40 * s, cw0 = sideW - 64 * s;
+        const int ls = static_cast<int>(std::round(44 * s));
+        Icons::logo(dl_, font_, lx, r.y + 48 * s, ls, theme::accent);
+        const float ty = r.y + 48 * s + static_cast<float>(ls) + 20 * s;
         dl_.titleText(font_, lx, ty, "Daemon", theme::text);
         const float sub = ty + font_.titleLineHeight() + 2 * s;
         uiLabel(lx, sub, uiH() + 6 * s, "C++ IDE for Wayland", theme::dim);
-        const float bw = sideW - 80 * s, bh = std::round(42 * s);
-        float by = sub + uiH() + 50 * s;
-        dlgButton({lx, by, bw, bh}, "New Project", kDlgNew, true, 0xF0EAB);
-        by += bh + 12 * s;
-        dlgButton({lx, by, bw, bh}, "Open Folder...", kDlgOpen, false, 0xF0770);
-        uiLabel(lx, r.bottom() - 46 * s, uiH() + 6 * s, "Ctrl+Shift+N  new      Ctrl+Shift+O  open", theme::lineNum, r.x + sideW - 10 * s);
+        const float rowH = std::round(48 * s);
+        float by = sub + uiH() + 44 * s;
+        welcomeAction({lx - 8 * s, by, cw0 + 16 * s, rowH}, "New Project", "Ctrl+Shift+N", kDlgNew, 0xF0EAB, true);
+        by += rowH + 6 * s;
+        welcomeAction({lx - 8 * s, by, cw0 + 16 * s, rowH}, "Open Folder", "Ctrl+Shift+O", kDlgOpen, 0xF0770, false);
 
         // Recent projects.
-        const float rx = r.x + sideW + 36 * s, rw = r.right() - rx - 36 * s;
-        uiLabel(rx, r.y + 34 * s, uiH() + 8 * s, "Recent projects", theme::text);
+        const float rx = r.x + sideW + 40 * s, rw = r.right() - rx - 36 * s;
         std::vector<std::string> recent;
         std::error_code ec;
         for (const auto& p : state_.recent) if (fs::is_directory(p, ec)) recent.push_back(p);
         dlgRecentShown_ = recent;
-        const float top = r.y + 78 * s, rowH = std::round(56 * s), listH = r.bottom() - top - 24 * s;
+        uiLabel(rx, r.y + 40 * s, uiH() + 8 * s, "Recent", theme::text);
+        if (!recent.empty()) uiLabelR(rx + rw, r.y + 40 * s, uiH() + 8 * s, std::to_string(recent.size()), theme::lineNum);
+        const float top = r.y + 84 * s, rowH2 = std::round(56 * s), listH = r.bottom() - top - 24 * s;
         if (recent.empty()) {
-            uiLabel(rx, top + 6 * s, uiH() + 10 * s, "Nothing here yet.", theme::dim);
-            uiLabel(rx, top + 6 * s + uiH() + 12 * s, uiH() + 10 * s, "Create a project or open a folder to get started.", theme::lineNum, r.right() - 20 * s);
+            const float cy = r.y + r.h / 2 - 20 * s, cx = rx + rw / 2;
+            const int ip = static_cast<int>(std::round(40 * s));
+            Icons::glyph(dl_, font_, cx - static_cast<float>(ip) / 2, cy - static_cast<float>(ip), ip, 0xF0DCF, Color::rgb(0xffffff, 50));
+            uiLabelC(cx, cy + 8 * s, uiH() + 10 * s, "No recent projects", theme::dim);
+            uiLabelC(cx, cy + 8 * s + uiH() + 10 * s, uiH() + 10 * s, "Create a project or open a folder to get started", theme::lineNum);
             return;
         }
-        dlgRecentMax_ = static_cast<float>(recent.size()) * rowH - listH;
+        dlgRecentMax_ = static_cast<float>(recent.size()) * rowH2 - listH;
         dlg_.recentScroll = std::clamp(dlg_.recentScroll, 0.0f, std::max(0.0f, dlgRecentMax_));
+        const std::string home = homeDir();
         for (std::size_t i = 0; i < recent.size() && i < 99; ++i) {
-            const float y = top + static_cast<float>(i) * rowH - dlg_.recentScroll;
-            if (y + rowH < top || y > top + listH) continue;
-            const Rect row{rx - 12 * s, y, rw + 24 * s, rowH - 4 * s};
+            const float y = top + static_cast<float>(i) * rowH2 - dlg_.recentScroll;
+            if (y + rowH2 < top || y > top + listH) continue;
+            const Rect row{rx - 12 * s, y, rw + 24 * s, rowH2 - 4 * s};
             const bool hot = dlgHot(kDlgRecent + static_cast<int>(i)) || dlgHot(kDlgRecentDel + static_cast<int>(i));
-            // Clip rows that are only partly inside the list area by skipping hits for them.
-            const bool inside = y >= top - 1 && y + rowH <= top + listH + 1;
+            const bool inside = y >= top - 1 && y + rowH2 <= top + listH + 1;   // partly visible rows get no hit area
             if (inside) dlgHit(row, kDlgRecent + static_cast<int>(i));
-            if (hot) fill(row, Color::rgb(0xffffff, 18), 10 * s);
+            if (hot) fill(row, Color::rgb(0xffffff, 16), 10 * s);
             const fs::path p(recent[i]);
-            const float ix = rx;
-            const int ip = static_cast<int>(std::round(iconSize() * 1.5f));
-            Icons::folder(dl_, font_, ix, y + (rowH - 4 * s - static_cast<float>(ip)) / 2, ip, p.filename().string(), false);
-            const float tx = ix + static_cast<float>(ip) + 14 * s;
+            const int ip = static_cast<int>(std::round(iconSize() * 1.4f));
+            Icons::folder(dl_, font_, rx, y + (rowH2 - 4 * s - static_cast<float>(ip)) / 2, ip, p.filename().string(), false);
+            const float tx = rx + static_cast<float>(ip) + 14 * s;
+            std::string where = p.parent_path().string();
+            if (!home.empty() && where.starts_with(home)) where = "~" + where.substr(home.size());
             uiLabel(tx, y + 6 * s, uiH() + 8 * s, p.filename().string(), theme::text, rx + rw - 40 * s);
-            uiLabel(tx, y + 6 * s + uiH() + 6 * s, uiH() + 6 * s, p.parent_path().string(), theme::dim, rx + rw - 40 * s);
+            uiLabel(tx, y + 6 * s + uiH() + 6 * s, uiH() + 6 * s, where, theme::dim, rx + rw - 40 * s);
             if (hot && inside) {
                 const float bs = std::round(24 * s);
-                const Rect del{rx + rw - bs, y + (rowH - 4 * s - bs) / 2, bs, bs};
+                const Rect del{rx + rw - bs, y + (rowH2 - 4 * s - bs) / 2, bs, bs};
                 dlgHit(del, kDlgRecentDel + static_cast<int>(i));
                 if (dlgHot(kDlgRecentDel + static_cast<int>(i))) fill(del, Color::rgb(0xffffff, 40), 6 * s);
                 const int cs = std::max(10, static_cast<int>(std::round(uiH() * 0.8f)));
@@ -5742,10 +5764,12 @@ private:
             const Rect row{r.x + 14 * s, y, sideW - 28 * s, rowH - 4 * s};
             dlgHit(row, kDlgTmpl + static_cast<int>(i));
             const bool sel = static_cast<int>(i) == dlg_.tmpl, hot = dlgHot(kDlgTmpl + static_cast<int>(i));
-            if (sel) fill(row, theme::accent.alpha(70), 9 * s);
-            else if (hot) fill(row, Color::rgb(0xffffff, 16), 9 * s);
+            if (sel) {
+                fill(row, Color::rgb(0xffffff, 20), 9 * s);
+                fill(row.x, row.y + 9 * s, std::round(3 * s), row.h - 18 * s, theme::accent, 1.5f * s);
+            } else if (hot) fill(row, Color::rgb(0xffffff, 12), 9 * s);
             const int ip = static_cast<int>(std::round(iconSize() * 1.25f));
-            Icons::glyph(dl_, font_, row.x + 12 * s, row.y + (row.h - static_cast<float>(ip)) / 2, ip, i < icons.size() ? icons[i] : 0xF0224, sel ? Color::rgb(0xffffff) : theme::dim);
+            Icons::glyph(dl_, font_, row.x + 12 * s, row.y + (row.h - static_cast<float>(ip)) / 2, ip, i < icons.size() ? icons[i] : 0xF0224, sel ? theme::accent.mix(Color::rgb(0xffffff), 0.3f) : theme::dim);
             uiLabel(row.x + 12 * s + static_cast<float>(ip) + 12 * s, row.y, row.h, ts[i].name, sel ? theme::text : Color::rgb(0xb9bdc6), row.right() - 8 * s);
             y += rowH;
         }
