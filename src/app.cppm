@@ -2516,32 +2516,26 @@ private:
             const float pw = (cl.w - 2 * hair) * static_cast<float>(buildCur_) / static_cast<float>(buildTotal_);
             fill(cl.x + cl.h / 2, cl.bottom() - std::round(3 * s), std::max(0.0f, std::min(pw, cl.w - cl.h)), std::round(2 * s), theme::accent, s);
         }
-        const int ip = std::max(14, static_cast<int>(std::round(cl.h * 0.52f)));
+        const int ip = std::max(14, static_cast<int>(std::round(cl.h * 0.6f)));
         struct Btn { const Rect* r; char32_t glyph; Color color; bool enabled; int id; bool primary; };
         const bool canRun = !busy && target_ >= 0;
+        const Color white = Color::rgb(0xffffff);
         const Btn btns[] = {
-            {&tool_.run, 0xF040A, Color::rgb(0xffffff), canRun, 3, true},
-            {&tool_.debug, 0xF00E4, Color::rgb(0xf0a04b), canRun, 8, false},
-            {&tool_.build, 0xF08EA, busy ? theme::accent : Color::rgb(0xd3d6dd), !busy, 4, false},
-            {&tool_.reload, 0xF145E, Color::rgb(0x8fb4ff), !busy, 6, false},
-            {&tool_.stop, 0xF04DB, theme::danger, anyRunning, 5, false},
+            {&tool_.run, 0xF040A, white, canRun, 3, false},
+            {&tool_.debug, 0xF00E4, white, canRun, 8, false},
+            {&tool_.build, 0xF08EA, white, !busy, 4, false},
+            {&tool_.reload, 0xF0450, white, !busy, 6, false},
+            {&tool_.stop, 0xF04DB, white, anyRunning, 5, false},
         };
         for (const Btn& b : btns) {
             const Rect& r = *b.r;
             const bool hot = hoverTool_ == b.id && b.enabled;
             const float d = std::round(r.h - 6 * s);
             const Rect circle{r.x + (r.w - d) / 2, r.y + 3 * s, d, d};
-            if (b.primary) {
-                const Color g = Color::rgb(0x2f9e55);
-                fill(circle, b.enabled ? (hot ? g.mix(Color::rgb(0xffffff), 0.15f) : g) : Color::rgb(0xffffff, 22), d / 2);
-            } else if (hot) {
-                fill(circle, Color::rgb(0xffffff, 30), d / 2);
-            } else if (b.id == 4 && busy) {
-                fill(circle, theme::accent.alpha(46), d / 2);
-            }
-            const Color ic = b.enabled ? b.color : fade(b.color, 0.32f);
+            if (hot) fill(circle, Color::rgb(0xffffff, 30), d / 2);
+            else if (b.id == 4 && busy) fill(circle, Color::rgb(0xffffff, 22), d / 2);
             Icons::glyph(dl_, font_, std::round(r.x + (r.w - static_cast<float>(ip)) / 2), std::round(r.y + (r.h - static_cast<float>(ip)) / 2), ip, b.glyph,
-                         b.primary && !b.enabled ? theme::dim : ic);
+                         b.enabled ? b.color : fade(b.color, 0.32f));
         }
         // Dividers between the groups (run | build | stop).
         for (const Rect* r : {&tool_.debug, &tool_.reload}) {
