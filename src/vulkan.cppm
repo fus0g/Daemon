@@ -698,17 +698,18 @@ private:
 
         const float ca = translucent_ ? clear.a / 255.0f : 1.0f;  // premultiplied for the compositor
         // Split the draw list into runs of one mode. The first Glass run starts the overlay pass.
-        struct Run { std::uint32_t from, to; DrawList::Mode mode; };
+        struct Run { std::uint32_t from, to; DrawList::Mode mode; float alpha; };
         std::vector<Run> runs;
         {
             std::uint32_t at = 0;
             DrawList::Mode m = DrawList::Mode::Normal;
+            float ma = 1.0f;
             auto push = [&](std::uint32_t to) {
                 to = std::min<std::uint32_t>(to, static_cast<std::uint32_t>(count));
-                if (to > at) runs.push_back({at, to, m});
+                if (to > at) runs.push_back({at, to, m, ma});
                 at = std::max(at, to);
             };
-            for (auto sg : dl.segs()) { push(sg.at); m = sg.mode; }
+            for (auto sg : dl.segs()) { push(sg.at); m = sg.mode; ma = sg.alpha; }
             push(static_cast<std::uint32_t>(count));
         }
         if (!canShot_) for (auto& r : runs) if (r.mode == DrawList::Mode::Glass) r.mode = DrawList::Mode::Normal;
@@ -745,6 +746,10 @@ private:
                 VkPipeline pl = r.mode == DrawList::Mode::Erase ? erasePipeline_
                                 : r.mode == DrawList::Mode::Glass ? glassPipeline_ : pipeline_;
                 vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pl);
+                if (r.mode == DrawList::Mode::Erase) {
+                    const float bc[4] = {0, 0, 0, translucent_ ? r.alpha : 1.0f};
+                    vkCmdSetBlendConstants(cb, bc);
+                }
                 VkDescriptorSet set = r.mode == DrawList::Mode::Glass ? glassSet_ : descSet_;
                 vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeLayout_, 0, 1, &set, 0, nullptr);
                 vkCmdDraw(cb, 4, r.to - r.from, 0, r.from);
