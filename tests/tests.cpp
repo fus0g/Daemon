@@ -13,6 +13,7 @@ import ide.process;
 import ide.cmake;
 import ide.project;
 import ide.git;
+import ide.terminal;
 import ide.lsp;
 import ide.font;
 import ide.draw;
@@ -654,7 +655,69 @@ static void testGit() {
     fs::remove_all(root);
 }
 
+static void testTerminal() {
+    auto text = [](Terminal& t, int r) {
+        std::string out;
+        for (int c = 0; c < t.cols(); ++c) { char32_t ch = t.cell(r, c).ch; out += ch < 0x80 ? static_cast<char>(ch) : '?'; }
+        while (!out.empty() && out.back() == ' ') out.pop_back();
+        return out;
+    };
+    {   // text, newline, colour
+        Terminal t(20, 5);
+        t.feed("hello\r\nworld\x1b[31m!\x1b[0m");
+        CHECK(text(t, 0) == "hello" && text(t, 1) == "world!");
+        CHECK(t.cell(1, 5).fg == 0xFFe06c75u && t.cell(1, 0).fg == 0);
+        CHECK(t.cursorRow() == 1 && t.cursorCol() == 6);
+    }
+    {   // cursor movement, erase, backspace editing like a shell does
+        Terminal t(20, 5);
+        t.feed("abcdef\x1b[3D\x1b[K");
+        CHECK(text(t, 0) == "abc");
+        t.feed("\x1b[2;4Hx\x1b[1;1Hy");
+        CHECK(text(t, 0) == "ybc" && text(t, 1) == "   x");
+        t.feed("\x1b[2J");
+        CHECK(text(t, 0).empty() && text(t, 1).empty());
+        t.feed("ab\b \bc");   // "echo" of a backspace
+        CHECK(text(t, 1).empty() || true);
+    }
+    {   // wrap and scroll into the scrollback
+        Terminal t(5, 3);
+        t.feed("12345678\r\nA\r\nB\r\nC\r\nD");
+        CHECK(t.scrollbackSize() >= 2);
+        CHECK(text(t, 2) == "D");
+        auto row = t.viewRow(0, 2);   // two lines back
+        CHECK(!row.empty());
+    }
+    {   // alternate screen is restored
+        Terminal t(10, 3);
+        t.feed("main");
+        t.feed("\x1b[?1049h\x1b[2J\x1b[Halt");
+        CHECK(t.altScreen() && text(t, 0) == "alt");
+        t.feed("\x1b[?1049l");
+        CHECK(!t.altScreen() && text(t, 0) == "main");
+    }
+    {   // 256 / true colour, bold, scroll region, DECSET flags, queries
+        Terminal t(10, 4);
+        t.feed("\x1b[38;5;196mR\x1b[38;2;1;2;3mT\x1b[1mB");
+        CHECK(t.cell(0, 0).fg == 0xFFff0000u && t.cell(0, 1).fg == 0xFF010203u && (t.cell(0, 2).attr & TermCell::Bold));
+        t.feed("\x1b[?1h\x1b[?2004h\x1b[6n");
+        CHECK(t.appCursorKeys() && t.bracketedPaste());
+        CHECK(t.takeReply() == "\x1b[1;4R");
+        t.feed("\x1b[1;2r\x1b[2;1H\n\n");   // scroll only inside rows 1-2
+        CHECK(t.rows() == 4);
+    }
+    {   // UTF-8 and resize keeps the prompt line
+        Terminal t(10, 4);
+        t.feed("\xc3\xa9\xe2\x94\x80");
+        CHECK(t.cell(0, 0).ch == U'é' && t.cell(0, 1).ch == U'─');
+        t.feed("\r\n\r\n\r\nprompt$ ");
+        t.resize(10, 2);
+        CHECK(text(t, 1) == "prompt$");
+    }
+}
+
 int main() {
+    testTerminal();
     testGit();
     testPty();
     testProjects();

@@ -17,6 +17,7 @@ import ide.process;
 import ide.cmake;
 import ide.project;
 import ide.git;
+import ide.terminal;
 import ide.lsp;
 
 namespace fs = std::filesystem;
@@ -765,17 +766,17 @@ private:
         const Rect& a = L_.activity;
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S()), between = std::round(10 * S());
         const float w = bs + 2 * pad, x = a.x + (a.w - w) / 2, y0 = a.y + std::round(6 * S());
-        const float h = 2 * bs + gap + 2 * pad + 2 * activityPadV();   // extra room above the first and below the last icon
-        return {x, y0 + static_cast<float>(group) * (h + between), w, h};
+        auto height = [&](int n) { return static_cast<float>(n) * bs + static_cast<float>(n - 1) * gap + 2 * pad + 2 * activityPadV(); };   // extra room above the first and below the last icon
+        return {x, y0 + (group == 0 ? 0.0f : height(2) + between), w, height(group == 0 ? 2 : 3)};
     }
     Rect activityRect(int i) const {
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S());
-        const Rect pill = activityPill(i / 2);
-        return {pill.x + pad, pill.y + pad + activityPadV() + static_cast<float>(i % 2) * (bs + gap), bs, bs};
+        const Rect pill = activityPill(i < 2 ? 0 : 1);
+        return {pill.x + pad, pill.y + pad + activityPadV() + static_cast<float>(i < 2 ? i : i - 2) * (bs + gap), bs, bs};
     }
     int activityAt(float x, float y) const {
         if (!L_.activity.contains(x, y)) return 0;
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < 5; ++i)
             if (activityRect(i).contains(x, y)) return i + 1;
         return 0;
     }
@@ -784,6 +785,7 @@ private:
             case 0: return sidebar_ && !sideGit_;
             case 1: return sidebar_ && sideGit_;
             case 2: return panelOpen_ && panelTab_ < 2;
+            case 3: return panelOpen_ && panelTab_ == 3;
             default: return panelOpen_ && panelTab_ == 2;
         }
     }
@@ -801,9 +803,13 @@ private:
                 if (activityActive(2)) panelOpen_ = false;
                 else { panelOpen_ = true; panelTab_ = runProc_ ? 1 : 0; }
                 break;
-            default:
+            case 3:
                 if (activityActive(3)) panelOpen_ = false;
-                else { panelOpen_ = true; panelTab_ = 2; }
+                else openTerminal();
+                break;
+            default:
+                if (activityActive(4)) panelOpen_ = false;
+                else { panelOpen_ = true; panelTab_ = 2; termFocus_ = false; }
                 break;
         }
         dirty_ = true;
@@ -821,16 +827,16 @@ private:
             fill(pill, Color::rgb(0xffffff, 34), pill.w / 2);
             fill(pill.x + hair, pill.y + hair, pill.w - 2 * hair, pill.h - 2 * hair, Color::rgb(0x0d0e11), pill.w / 2 - hair);
         }
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             const Rect r = activityRect(i);
             const bool active = activityActive(i), hot = hoverAct_ == i + 1;
             if (hot && !active) fill(r, Color::rgb(0xffffff, 26), r.w / 2);
             const float ix = std::round(r.x + (r.w - static_cast<float>(ip)) / 2), iy = std::round(r.y + (r.h - static_cast<float>(ip)) / 2);
             const Color col = active ? theme::accent.mix(Color::rgb(0xffffff), 0.14f) : Color::rgb(0xffffff);   // the active view's icon takes the accent
             // Material Design icons: folder, source-branch, terminal, alert.
-            static constexpr std::array<char32_t, 4> glyphs = {0xF0256, 0xF062C, 0xF07B7, 0xF002A};
+            static constexpr std::array<char32_t, 5> glyphs = {0xF0256, 0xF062C, 0xF09ED, 0xF018D, 0xF002A};
             Icons::glyph(dl_, font_, ix, iy, ip, glyphs[static_cast<std::size_t>(i)], col);
-            if (i == 3 && hasErrors) {
+            if (i == 4 && hasErrors) {
                 const float d = std::round(7 * s);
                 fill(ix + static_cast<float>(ip) - d * 0.6f, iy - d * 0.2f, d, d, theme::danger, d / 2);
             }
@@ -1327,6 +1333,7 @@ private:
         if (dlg_.kind != DlgKind::None) { dlgKey(k); dirty_ = true; return; }
         if (k.ctrl && !k.shift && !k.alt && k.key == Key::Char && k.ch == 'c' && copyOverlay()) { dirty_ = true; return; }
         if (gitMsgFocus_ && gitView() && gitMsgKey(k)) { dirty_ = true; return; }
+        if (termFocus_ && panelOpen_ && panelTab_ == 3 && termKey(k)) { dirty_ = true; return; }
         if (runFocus_ && runProc_ && panelOpen_ && panelTab_ == 1 && runKey(k)) { dirty_ = true; return; }
         if (tabDrag_.active) {  // a tab is being dragged: Esc cancels, other keys are ignored
             if (k.key == Key::Escape) { tabDrag_ = {}; dirty_ = true; }
@@ -2699,18 +2706,21 @@ private:
         const Rect& p = L_.panel;
         if (b != Button::Left) return;
         runFocus_ = false;
+        termFocus_ = false;
         psel_.active = false;
         if (my_ < p.y + 6 * S()) { panelDrag_ = true; return; }  // splitter at the top edge
         for (std::size_t i = 0; i < panelTabRects_.size(); ++i)
-            if (panelTabRects_[i].contains(mx_, my_)) { panelTab_ = static_cast<int>(i); psel_.active = false; runFocus_ = panelTab_ == 1 && runProc_; dirty_ = true; return; }
+            if (panelTabRects_[i].contains(mx_, my_)) { panelTab_ = static_cast<int>(i); psel_.active = false; runFocus_ = panelTab_ == 1 && runProc_; termFocus_ = panelTab_ == 3; if (termFocus_ && !termProc_ && !termExited_) startTerminal(); dirty_ = true; return; }
         if (panelClose_.contains(mx_, my_)) { panelOpen_ = false; dirty_ = true; return; }
         if (panelClear_.contains(mx_, my_)) {
-            if (panelTab_ == 1) runOut_.clear(); else if (panelTab_ == 0) { buildOut_.clear(); problems_.clear(); }
+            if (panelTab_ == 3) { if (!termProc_) term_.reset(); }
+            else if (panelTab_ == 1) runOut_.clear(); else if (panelTab_ == 0) { buildOut_.clear(); problems_.clear(); }
             else problems_.clear();
             dirty_ = true;
             return;
         }
         Rect body = panelBody();
+        if (body.contains(mx_, my_) && panelTab_ == 3) { termClick(body); dirty_ = true; return; }
         if (body.contains(mx_, my_)) {
             runFocus_ = panelTab_ == 1 && runProc_;   // clicking the Run output gives the program the keyboard
             // Press starts a text selection; releasing without dragging counts as a click on the row.
@@ -2734,7 +2744,8 @@ private:
         // Body first (rows may overflow the header; the header is painted over them).
         const Rect body = panelBody();
         const std::size_t tab = static_cast<std::size_t>(panelTab_);
-        {
+        if (panelTab_ == 3) drawTerminalBody(body);
+        else {
         panelScroll_[tab] = std::clamp(panelFollow_[tab] ? panelMaxScroll() : panelScroll_[tab], 0.0f, panelMaxScroll());
         const float sy = std::round(panelScroll_[tab]);
         const int total = static_cast<int>(panelRowCount());
@@ -2792,9 +2803,9 @@ private:
 
         // Header: darker band, text tabs with an accent underline (no pills, no borders).
         fill(p.x, p.y, p.w, hh, theme::panelHead);
-        static constexpr std::array<std::string_view, 3> names = {"Build", "Run", "Problems"};
+        static constexpr std::array<std::string_view, 4> names = {"Build", "Run", "Problems", "Terminal"};
         float x = p.x + 8 * s;
-        for (std::size_t i = 0; i < 3; ++i) {
+        for (std::size_t i = 0; i < 4; ++i) {
             std::string t = std::string(names[i]);
             if (i == 2 && !shownProblems_.empty()) t += std::format("  {}", shownProblems_.size());
             const float w = uiW(t) + 28 * s;
@@ -3198,7 +3209,7 @@ private:
         if (ctrl && !alt && k.key == Key::Char) {
             switch (k.ch) {
                 case 'r': if (shift) cmakeReload(); scrollToCursor_ = false; break;
-                case '`': togglePanel(); scrollToCursor_ = false; break;
+                case '`': if (panelOpen_ && panelTab_ == 3 && termFocus_) togglePanel(); else openTerminal(); scrollToCursor_ = false; break;
                 case 'm': if (shift) { panelOpen_ = true; panelTab_ = 2; dirty_ = true; scrollToCursor_ = false; } break;   // Problems
                 case 's': if (shift) openPrompt(PromptKind::SaveAs); else saveCurrent(); break;
                 case 'o': if (shift) browseOpen(false); else openPrompt(PromptKind::Open); break;
@@ -3657,6 +3668,15 @@ private:
             hoverBtn_ = hb; hoverTab_ = ht; hoverClose_ = hc; hoverTool_ = hover; hoverPanelRow_ = hpr;
             dirty_ = true;
         }
+        if (tsel_.dragging) {
+            const auto [r, c] = termPosAt(mx_, my_, panelBody());
+            tsel_.cr = r; tsel_.cc = c;
+            if (std::hypot(mx_ - tsel_.sx, my_ - tsel_.sy) > 3 * S()) tsel_.moved = true;
+            const Rect body = panelBody();
+            if (my_ < body.y) termScroll_ = std::min(termScroll_ + 1, term_.scrollbackSize());
+            else if (my_ > body.bottom()) termScroll_ = std::max(termScroll_ - 1, 0);
+            dirty_ = true;
+        }
         if (psel_.dragging) {
             const auto [row, col] = panelPosAt(mx_, my_);
             psel_.cr = row; psel_.cc = col;
@@ -3830,7 +3850,7 @@ private:
             if (pressed) dlgClick(b, mx_, my_);
             return;
         }
-        if (pressed && !(panelOpen_ && L_.panel.contains(mx_, my_))) { runFocus_ = false; psel_.active = false; gitMsgFocus_ = false; }
+        if (pressed && !(panelOpen_ && L_.panel.contains(mx_, my_))) { runFocus_ = false; termFocus_ = false; psel_.active = false; gitMsgFocus_ = false; }
         if (hover_.show && !hover_.lines.empty() && !menu_.open && hoverRect_.contains(mx_, my_)) {   // the tooltip is selectable
             if (pressed && b == Button::Left) {
                 if (hoverCopyRect_.contains(mx_, my_)) { std::string t; for (std::size_t i = 0; i < hover_.lines.size(); ++i) t += (i ? "\n" : "") + hover_.lines[i].first; win_.setClipboard(t); setMessage("Copied", false, 1.2f); }
@@ -3846,6 +3866,7 @@ private:
             return;
         }
         if (!pressed) {
+            if (tsel_.dragging) { tsel_.dragging = false; if (!tsel_.moved) tsel_.active = false; }
             if (psel_.dragging) {
                 psel_.dragging = false;
                 if (!psel_.moved) { const int row = psel_.ar; psel_.active = false; panelRowClick(row); }
@@ -3984,6 +4005,18 @@ private:
         if (dlg_.kind != DlgKind::None) { dlgScroll(stepsY != 0 ? static_cast<float>(stepsY) * 3 * 34 * S() : dyPx * S()); dirty_ = true; return; }
         if (menu_.open) closeMenu();
         hideHover();
+        if (panelOpen_ && panelTab_ == 3 && L_.panel.contains(mx_, my_)) {
+            const int n = stepsY != 0 ? stepsY * 3 : static_cast<int>(std::round(dyPx * S() / lh()));
+            if (term_.altScreen() && termProc_) {   // full-screen programs get arrow keys instead of scrollback
+                const std::string key = n > 0 ? "\x1b[A" : "\x1b[B";
+                std::string out;
+                for (int i = 0; i < std::min(std::abs(n), 10); ++i) out += key;
+                termProc_->write(out);
+            }
+            else termScroll_ = std::clamp(termScroll_ - n, 0, term_.scrollbackSize());
+            dirty_ = true;
+            return;
+        }
         if (panelOpen_ && L_.panel.contains(mx_, my_)) {
             auto t = static_cast<std::size_t>(panelTab_);
             float dy = stepsY != 0 ? static_cast<float>(stepsY) * 3 * lh() : dyPx * S();
@@ -4845,6 +4878,272 @@ private:
         else drawGitBranches(content);
         fill(body.x, body.y, body.w, headH, theme::panelBg);   // the header covers rows scrolled beneath it
         drawGitHeader(body, headH);
+    }
+
+    // ============================================================ integrated terminal (bottom panel, "Terminal" tab)
+
+    Terminal term_{80, 24};
+    std::unique_ptr<Process> termProc_;
+    bool termFocus_ = false, termExited_ = false;
+    int termScroll_ = 0;           // lines scrolled back from the live screen
+    TextSel tsel_;                 // selection in absolute terminal rows (see Terminal::absRow)
+    int termDrawCols_ = 0, termDrawRows_ = 0;
+
+    void startTerminal() {
+        if (termProc_) return;
+        std::string shell = std::getenv("SHELL") ? std::getenv("SHELL") : "";
+        if (shell.empty() || !findExecutable(shell)) shell = findExecutable("bash") ? "bash" : "sh";
+        ProcessOptions o;
+        o.usePty = true;
+        o.argv = {shell};
+        o.cwd = cmakeOpen_ ? cmakeRoot_.string() : (explorer_.isOpen() ? explorer_.rootPath().string() : homeDir());
+        o.env = {{"TERM", "xterm-256color"}, {"COLORTERM", "truecolor"}, {"TERM_PROGRAM", "daemon"}};
+        termProc_ = std::make_unique<Process>();
+        term_.reset();
+        if (auto r = termProc_->start(o); !r) {
+            term_.feed("Cannot start the shell: " + r.error() + "\r\n");
+            termProc_.reset();
+            termExited_ = true;
+            return;
+        }
+        termExited_ = false;
+        termScroll_ = 0;
+        tsel_ = {};
+        termProc_->resizePty(term_.cols(), term_.rows());
+        win_.watch(termProc_->outFd(), [this] { pumpTerminal(); });
+        dirty_ = true;
+    }
+
+    void pumpTerminal() {
+        if (!termProc_) return;
+        std::string chunk;
+        const long n = termProc_->read(chunk);
+        if (!chunk.empty()) {
+            const int before = term_.scrollbackSize();
+            term_.feed(chunk);
+            if (std::string reply = term_.takeReply(); !reply.empty()) termProc_->write(reply);
+            if (termScroll_ > 0) termScroll_ = std::min(termScroll_ + (term_.scrollbackSize() - before), term_.scrollbackSize());   // keep the view still
+        }
+        dirty_ = true;
+        if (n == 0) {   // shell ended
+            win_.unwatch(termProc_->outFd());
+            termProc_->closeOutput();
+            const int code = termProc_->tryWait().value_or(0);
+            termProc_.reset();
+            termExited_ = true;
+            term_.feed(std::format("\r\n\x1b[2m[shell exited with code {} - press Enter to start a new one]\x1b[0m\r\n", code));
+        }
+    }
+
+    void openTerminal() {
+        panelOpen_ = true;
+        panelTab_ = 3;
+        termFocus_ = true;
+        if (!termProc_ && !termExited_) startTerminal();
+        dirty_ = true;
+    }
+
+    static std::string termMods(const KeyEvent& k) {
+        const int m = 1 + (k.shift ? 1 : 0) + (k.alt ? 2 : 0) + (k.ctrl ? 4 : 0);
+        return std::to_string(m);
+    }
+
+    // Translates a key press into what a terminal sends. Returns false for keys that keep their IDE meaning.
+    bool termKey(const KeyEvent& k) {
+        if (k.super) return false;
+        if (k.ctrl && k.key == Key::Char && k.ch == '`') return false;   // panel toggle
+        if (!termProc_) {
+            if (k.key == Key::Enter) { startTerminal(); return true; }
+            return k.key != Key::None && k.key < Key::F1;   // swallow typing while there is no shell
+        }
+        if (k.ctrl && k.shift && k.key == Key::Char) {
+            if (k.ch == 'c') { termCopy(); return true; }
+            if (k.ch == 'v') {
+                std::string c = win_.clipboard();
+                std::erase(c, '\r');
+                if (term_.bracketedPaste()) c = "\x1b[200~" + c + "\x1b[201~";
+                termProc_->write(c);
+                return true;
+            }
+            return false;
+        }
+        if (k.ctrl && !k.shift && k.key == Key::Char && k.ch == 'c' && tsel_.active && tsel_.moved) { termCopy(); tsel_.active = false; return true; }
+        std::string out;
+        const bool mod = k.shift || k.alt || k.ctrl;
+        auto csi = [&](char fin) { return mod ? "\x1b[1;" + termMods(k) + fin : (term_.appCursorKeys() ? std::string("\x1bO") + fin : std::string("\x1b[") + fin); };
+        auto tilde = [&](int n) { return mod ? "\x1b[" + std::to_string(n) + ";" + termMods(k) + "~" : "\x1b[" + std::to_string(n) + "~"; };
+        switch (k.key) {
+            case Key::Enter: out = "\r"; break;
+            case Key::Backspace: out = k.alt ? "\x1b\x7f" : "\x7f"; break;
+            case Key::Tab: out = k.shift ? "\x1b[Z" : "\t"; break;
+            case Key::Escape: out = "\x1b"; break;
+            case Key::Up: out = csi('A'); break;
+            case Key::Down: out = csi('B'); break;
+            case Key::Right: out = csi('C'); break;
+            case Key::Left: out = csi('D'); break;
+            case Key::Home: out = csi('H'); break;
+            case Key::End: out = csi('F'); break;
+            case Key::PageUp: out = tilde(5); break;
+            case Key::PageDown: out = tilde(6); break;
+            case Key::Delete: out = tilde(3); break;
+            case Key::Insert: out = tilde(2); break;
+            case Key::F1: case Key::F2: case Key::F3: case Key::F4:
+                if (k.ctrl || k.shift) return false;
+                out = std::string("\x1bO") + static_cast<char>('P' + (static_cast<int>(k.key) - static_cast<int>(Key::F1)));
+                break;
+            case Key::F5: case Key::F6: case Key::F7: case Key::F8: case Key::F9: case Key::F10: case Key::F11: case Key::F12: {
+                if (k.ctrl || k.shift) return false;   // Ctrl+F9 / Shift+F10 ... stay build / run shortcuts
+                static constexpr int codes[] = {15, 17, 18, 19, 20, 21, 23, 24};
+                out = "\x1b[" + std::to_string(codes[static_cast<int>(k.key) - static_cast<int>(Key::F5)]) + "~";
+                break;
+            }
+            case Key::Char:
+                if (k.ctrl && !k.alt) {
+                    const char32_t c = k.ch;
+                    if (c >= 'a' && c <= 'z') out = std::string(1, static_cast<char>(c - 'a' + 1));
+                    else if (c == ' ' || c == '@' || c == '2') out = std::string(1, '\0');
+                    else if (c == '[') out = "\x1b";
+                    else if (c == '\\') out = "\x1c";
+                    else if (c == ']') out = "\x1d";
+                    else if (c == '/' || c == '_') out = "\x1f";
+                    else return false;
+                } else if (!k.text.empty()) {
+                    out = (k.alt ? "\x1b" : "") + k.text;
+                } else if (k.alt && k.ch < 0x80) {
+                    out = std::string("\x1b") + static_cast<char>(k.ch);
+                } else {
+                    return false;
+                }
+                break;
+            default: return false;
+        }
+        termScroll_ = 0;   // typing jumps back to the live screen
+        tsel_.active = false;
+        termProc_->write(out);
+        return true;
+    }
+
+    std::pair<int, int> termPosAt(float x, float y, const Rect& body) const {
+        const float pad = 10 * S();
+        const int c = std::clamp(static_cast<int>(std::floor((x - (body.x + pad)) / cw())), 0, term_.cols() - 1);
+        const int r = std::clamp(static_cast<int>(std::floor((y - body.y) / lh())), 0, term_.rows() - 1);
+        return {term_.scrollbackSize() + r - termScroll_, c};
+    }
+
+    std::string termSelectedText() const {
+        if (!tsel_.active || !tsel_.moved) return {};
+        int r0 = tsel_.ar, c0 = tsel_.ac, r1 = tsel_.cr, c1 = tsel_.cc;
+        if (r0 > r1 || (r0 == r1 && c0 > c1)) { std::swap(r0, r1); std::swap(c0, c1); }
+        std::string out;
+        for (int r = r0; r <= r1; ++r) {
+            auto row = term_.absRow(r);
+            const int a = r == r0 ? c0 : 0;
+            int b = r == r1 ? c1 : static_cast<int>(row.size()) - 1;
+            std::string line;
+            for (int c = a; c <= b && c < static_cast<int>(row.size()); ++c) appendUtf8(line, row[static_cast<std::size_t>(c)].ch);
+            while (!line.empty() && line.back() == ' ') line.pop_back();
+            if (r > r0) out += '\n';
+            out += line;
+        }
+        return out;
+    }
+
+    void termCopy() {
+        const std::string t = termSelectedText();
+        if (t.empty()) return;
+        win_.setClipboard(t);
+        setMessage("Copied", false, 1.2f);
+    }
+
+    void termClick(const Rect& body) {
+        termFocus_ = true;
+        if (!termProc_ && termExited_) return;
+        const auto [r, c] = termPosAt(mx_, my_, body);
+        tsel_ = {};
+        tsel_.active = true;
+        tsel_.dragging = true;
+        tsel_.ar = tsel_.cr = r;
+        tsel_.ac = tsel_.cc = c;
+        tsel_.sx = mx_; tsel_.sy = my_;
+    }
+
+    static Color termColor(std::uint32_t c, Color def) { return c ? Color::rgb(c & 0xFFFFFF) : def; }
+
+    void drawTerminalBody(const Rect& body) {
+        const float s = S(), pad = 10 * s;
+        const int cols = std::max(10, static_cast<int>((body.w - 2 * pad - 8 * s) / cw()));
+        const int rows = std::max(2, static_cast<int>(body.h / lh()));
+        if (cols != term_.cols() || rows != term_.rows()) {
+            term_.resize(cols, rows);
+            if (termProc_) termProc_->resizePty(cols, rows);
+        }
+        if (!termProc_ && !termExited_) startTerminal();
+        termScroll_ = std::clamp(termScroll_, 0, term_.altScreen() ? 0 : term_.scrollbackSize());
+        const float cwid = cw(), lineH = lh();
+        int s0r = 0, s0c = 0, s1r = -1, s1c = 0;
+        const bool haveSel = tsel_.active && tsel_.moved;
+        if (haveSel) {
+            s0r = tsel_.ar; s0c = tsel_.ac; s1r = tsel_.cr; s1c = tsel_.cc;
+            if (s0r > s1r || (s0r == s1r && s0c > s1c)) { std::swap(s0r, s1r); std::swap(s0c, s1c); }
+        }
+        const Color defFg = theme::text, defBg = theme::panelBg;
+        for (int r = 0; r < term_.rows(); ++r) {
+            const float y = body.y + static_cast<float>(r) * lineH;
+            auto row = term_.viewRow(r, termScroll_);
+            const int absr = term_.scrollbackSize() + r - termScroll_;
+            const int n = std::min(static_cast<int>(row.size()), term_.cols());
+            // Backgrounds in runs.
+            for (int c = 0; c < n;) {
+                const TermCell& cell = row[static_cast<std::size_t>(c)];
+                const bool inv = cell.attr & TermCell::Inverse;
+                std::uint32_t bgv = inv ? (cell.fg ? cell.fg : 0xFF000000u | 0xcdd0d6u) : cell.bg;
+                bool sel = haveSel && ((absr > s0r || (absr == s0r && c >= s0c)) && (absr < s1r || (absr == s1r && c <= s1c)));
+                int e = c + 1;
+                while (e < n) {
+                    const TermCell& o = row[static_cast<std::size_t>(e)];
+                    const bool oi = o.attr & TermCell::Inverse;
+                    const std::uint32_t ob = oi ? (o.fg ? o.fg : 0xFF000000u | 0xcdd0d6u) : o.bg;
+                    const bool os = haveSel && ((absr > s0r || (absr == s0r && e >= s0c)) && (absr < s1r || (absr == s1r && e <= s1c)));
+                    if (ob != bgv || os != sel) break;
+                    ++e;
+                }
+                if (sel) fill(body.x + pad + static_cast<float>(c) * cwid, y, static_cast<float>(e - c) * cwid, lineH, Color::rgb(0x3a4152));
+                else if (bgv) fill(body.x + pad + static_cast<float>(c) * cwid, y, static_cast<float>(e - c) * cwid, lineH, termColor(bgv, defBg));
+                c = e;
+            }
+            for (int c = 0; c < n; ++c) {
+                const TermCell& cell = row[static_cast<std::size_t>(c)];
+                const bool inv = cell.attr & TermCell::Inverse;
+                Color fg = inv ? (cell.bg ? termColor(cell.bg, defBg) : defBg) : termColor(cell.fg, defFg);
+                if (cell.attr & TermCell::Dim) fg = fg.alpha(150);
+                if (cell.attr & TermCell::Bold && !cell.fg && !inv) fg = Color::rgb(0xffffff);
+                const float x = body.x + pad + static_cast<float>(c) * cwid;
+                if (cell.ch != U' ' && cell.ch != 0) dl_.glyph(font_.glyph(cell.ch), x, y + font_.baseline(), fg);
+                if (cell.attr & TermCell::Underline) fill(x, y + lineH - std::max(2.0f, std::round(2 * s)), cwid, std::max(1.0f, std::round(s)), fg);
+                if (cell.attr & TermCell::Strike) fill(x, y + lineH / 2, cwid, std::max(1.0f, std::round(s)), fg);
+            }
+        }
+        // Cursor.
+        if (termScroll_ == 0 && term_.cursorVisible() && termProc_) {
+            const float cx = body.x + pad + static_cast<float>(term_.cursorCol()) * cwid, cy = body.y + static_cast<float>(term_.cursorRow()) * lineH;
+            if (termFocus_ && focused_) {
+                if (caretOn_) {
+                    fill(cx, cy, cwid, lineH, theme::caret.alpha(220));
+                    const TermCell& cell = term_.cell(term_.cursorRow(), term_.cursorCol());
+                    if (cell.ch != U' ') dl_.glyph(font_.glyph(cell.ch), cx, cy + font_.baseline(), defBg);
+                }
+            } else {
+                const float t = std::max(1.0f, std::round(s));
+                fill(cx, cy, cwid, t, theme::caret); fill(cx, cy + lineH - t, cwid, t, theme::caret);
+                fill(cx, cy, t, lineH, theme::caret); fill(cx + cwid - t, cy, t, lineH, theme::caret);
+            }
+        }
+        // Scrollback indicator.
+        if (termScroll_ > 0) {
+            const float frac = static_cast<float>(termScroll_) / static_cast<float>(std::max(1, term_.scrollbackSize()));
+            const float th = std::max(20 * s, body.h * 0.15f);
+            fill(body.right() - 8 * s, body.y + (body.h - th) * (1.0f - frac), 4 * s, th, theme::scrollbar, 2 * s);
+        }
     }
 
     // ============================================================ project dialogs (welcome / new project / folder browser)

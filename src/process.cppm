@@ -21,6 +21,7 @@ struct ProcessOptions {
     std::string cwd;
     bool pipeStdin = false;       // give the child a pipe on stdin (otherwise /dev/null)
     bool mergeStderr = true;      // stderr shares the stdout pipe (otherwise stderr is discarded)
+    std::vector<std::pair<std::string, std::string>> env;   // variables to set (the rest is inherited)
     bool usePty = false;          // run on a pseudo-terminal: the program behaves as in a terminal (prompts, line-buffered
                                   // output, echoed input) and stdin / stdout / stderr are all the terminal
 };
@@ -87,6 +88,21 @@ public:
         std::vector<char*> argv;
         for (const auto& a : o.argv) argv.push_back(const_cast<char*>(a.c_str()));
         argv.push_back(nullptr);
+        // Environment is assembled before fork (no allocation in the child).
+        std::vector<std::string> envStore;
+        std::vector<char*> envp;
+        if (!o.env.empty()) {
+            for (char** e = environ; e && *e; ++e) {
+                std::string_view v(*e);
+                const auto eq = v.find('=');
+                const bool overridden = eq != std::string_view::npos &&
+                    std::ranges::any_of(o.env, [&](const auto& kv) { return v.substr(0, eq) == kv.first; });
+                if (!overridden) envStore.emplace_back(v);
+            }
+            for (const auto& kv : o.env) envStore.push_back(kv.first + "=" + kv.second);
+            for (auto& e : envStore) envp.push_back(e.data());
+            envp.push_back(nullptr);
+        }
 
         pid_t pid = ::fork();
         if (pid < 0) {
@@ -105,7 +121,8 @@ public:
             ::dup2(slave, 1);
             ::dup2(slave, 2);
             if (!o.cwd.empty() && ::chdir(o.cwd.c_str()) != 0) ::_exit(126);
-            ::execv(exe->c_str(), argv.data());
+            if (!envp.empty()) ::execve(exe->c_str(), argv.data(), envp.data());
+            else ::execv(exe->c_str(), argv.data());
             ::_exit(127);
         }
         if (pid == 0) {  // child
@@ -115,7 +132,8 @@ public:
             ::dup2(out[1], 1);
             ::dup2(o.mergeStderr ? out[1] : devnull, 2);
             if (!o.cwd.empty() && ::chdir(o.cwd.c_str()) != 0) ::_exit(126);
-            ::execv(exe->c_str(), argv.data());
+            if (!envp.empty()) ::execve(exe->c_str(), argv.data(), envp.data());
+            else ::execv(exe->c_str(), argv.data());
             ::_exit(127);
         }
         pid_ = pid;
@@ -140,6 +158,12 @@ public:
     }
 
     int outFd() const { return outFd_; }
+    // Pseudo-terminal size (the program gets SIGWINCH).
+    void resizePty(int cols, int rows) {
+        if (outFd_ < 0) return;
+        winsize ws{static_cast<unsigned short>(rows), static_cast<unsigned short>(cols), 0, 0};
+        ::ioctl(outFd_, TIOCSWINSZ, &ws);
+    }
     bool started() const { return pid_ > 0; }
     pid_t pid() const { return pid_; }
 

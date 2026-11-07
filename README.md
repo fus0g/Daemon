@@ -141,3 +141,9 @@ Daemon talks to the `git` binary (no libgit2). In a repository you get:
 The CMake toolbar has outlined selectors for the build profile and target, and one pill of actions: **Run** (
 Shift+F10), **Debug** (Shift+F9), **Build** (Ctrl+F9), **Regenerate CMake** (Ctrl+Shift+R) and **Stop** (Ctrl+F2). Hovering a button shows its name and shortcut. Debug starts `gdb` on the
 Run panel's terminal (it stops at `main`; type gdb commands there). Use the Debug profile so the program has symbols.
+
+## Integrated terminal
+
+The bottom panel has a **Terminal** tab (Ctrl+` or the terminal button in the activity bar). It runs your `$SHELL` in a real PTY
+in the project folder, with an xterm-256color / truecolor emulator (scrollback, alternate screen, bracketed paste, mouse-wheel
+scrolling). Select with the mouse; copy with Ctrl+Shift+C (or Ctrl+C while text is selected), paste with Ctrl+Shift+V.
