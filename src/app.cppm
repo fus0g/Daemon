@@ -988,7 +988,7 @@ private:
                 fs::create_directories(profile().dir / ".daemon", ec);
                 std::ofstream(profile().dir / ".daemon" / "clangd-start.log", std::ios::app)
                     << "clangd db: " << db->dir.string() << " derived=" << db->derived << " sources=" << db->sources << "\n";
-                argv.push_back("--compile-commands-dir=" + profile().dir.string()); (void)db;
+                argv.push_back("--compile-commands-dir=" + db->dir.string());
                 clangdModules_ = db->derived;
             } else {
                 argv.push_back("--compile-commands-dir=" + profile().dir.string());
