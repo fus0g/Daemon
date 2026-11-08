@@ -7,6 +7,22 @@ namespace fs = std::filesystem;
 
 namespace ide::search {
 
+Matcher::Matcher(const Options& o, std::string replacement) : opt_(o), with_(std::move(replacement)) {
+    if (o.query.empty()) { error_ = "empty"; return; }
+    if (o.regex) {
+        try {
+            std::string pat = o.wholeWord ? "\\b(?:" + o.query + ")\\b" : o.query;
+            auto flags = std::regex::ECMAScript;
+            if (!o.matchCase) flags |= std::regex::icase;
+            re_ = std::regex(pat, flags);
+        } catch (const std::regex_error& e) {
+            error_ = std::string("Invalid regular expression: ") + e.what();
+        }
+    } else {
+        needle_ = o.matchCase ? o.query : lower(o.query);
+    }
+}
+
 bool globMatch(std::string_view pat, std::string_view text) {
     std::size_t p = 0, t = 0, star = std::string_view::npos, mark = 0;
     while (t < text.size()) {
@@ -51,31 +67,31 @@ bool pathMatches(std::string pat, std::string_view rel) {
 }
 
 void Matcher::findAll(std::string_view line, std::vector<Hit>& out, bool wantRepl) const {
-        out.clear();
-        if (!ok()) return;
-        if (opt_.regex) {
-            const std::string s(line);
-            for (auto it = std::sregex_iterator(s.begin(), s.end(), re_), end = std::sregex_iterator(); it != end; ++it) {
-                if (it->length() == 0) continue;
-                Hit h{static_cast<int>(it->position()), static_cast<int>(it->length()), {}};
-                if (wantRepl) h.repl = it->format(with_);
-                out.push_back(std::move(h));
-                if (out.size() >= 200) break;
-            }
-            return;
-        }
-        const std::string hay = opt_.matchCase ? std::string() : lower(line);
-        const std::string_view h = opt_.matchCase ? line : std::string_view(hay);
-        std::size_t at = 0;
-        while ((at = h.find(needle_, at)) != std::string_view::npos) {
-            const std::size_t e = at + needle_.size();
-            if (opt_.wholeWord && ((at > 0 && isWordChar(static_cast<unsigned char>(h[at - 1]))) ||
-                                   (e < h.size() && isWordChar(static_cast<unsigned char>(h[e]))))) { ++at; continue; }
-            out.push_back({static_cast<int>(at), static_cast<int>(needle_.size()), wantRepl ? with_ : std::string()});
-            at = e;
+    out.clear();
+    if (!ok()) return;
+    if (opt_.regex) {
+        const std::string s(line);
+        for (auto it = std::sregex_iterator(s.begin(), s.end(), re_), end = std::sregex_iterator(); it != end; ++it) {
+            if (it->length() == 0) continue;
+            Hit h{static_cast<int>(it->position()), static_cast<int>(it->length()), {}};
+            if (wantRepl) h.repl = it->format(with_);
+            out.push_back(std::move(h));
             if (out.size() >= 200) break;
         }
+        return;
     }
+    const std::string hay = opt_.matchCase ? std::string() : lower(line);
+    const std::string_view h = opt_.matchCase ? line : std::string_view(hay);
+    std::size_t at = 0;
+    while ((at = h.find(needle_, at)) != std::string_view::npos) {
+        const std::size_t e = at + needle_.size();
+        if (opt_.wholeWord && ((at > 0 && isWordChar(static_cast<unsigned char>(h[at - 1]))) ||
+                               (e < h.size() && isWordChar(static_cast<unsigned char>(h[e]))))) { ++at; continue; }
+        out.push_back({static_cast<int>(at), static_cast<int>(needle_.size()), wantRepl ? with_ : std::string()});
+        at = e;
+        if (out.size() >= 200) break;
+    }
+}
 
 std::vector<std::string> listFiles(const fs::path& root, bool* usedGit) {
     std::vector<std::string> out;

@@ -343,25 +343,25 @@ std::uint8_t scanLine(const Lang* L, std::string_view s, std::uint8_t st, std::v
 namespace ide {
 
 void Highlighter::highlight(Buffer& buf, int line, std::vector<Tok>& out) {
-        sync(buf);
-        if (!lang_) {
-            out.assign(buf.line(line).size(), Tok::Normal);
-            return;
-        }
-        while (static_cast<int>(states_.size()) <= line) {
-            int prev = static_cast<int>(states_.size()) - 1;
-            states_.push_back(detail::scanLine(lang_, buf.line(prev), states_.back(), nullptr));
-        }
-        detail::scanLine(lang_, buf.line(line), states_[static_cast<std::size_t>(line)], &out);
+    sync(buf);
+    if (!lang_) {
+        out.assign(buf.line(line).size(), Tok::Normal);
+        return;
     }
+    while (static_cast<int>(states_.size()) <= line) {
+        int prev = static_cast<int>(states_.size()) - 1;
+        states_.push_back(detail::scanLine(lang_, buf.line(prev), states_.back(), nullptr));
+    }
+    detail::scanLine(lang_, buf.line(line), states_[static_cast<std::size_t>(line)], &out);
+}
 
 void Highlighter::sync(Buffer& buf) {
-        if (buf.version() == seenVersion_) return;
-        seenVersion_ = buf.version();
-        int d = buf.takeDirtyLine();
-        if (d != std::numeric_limits<int>::max() && static_cast<std::size_t>(d) + 1 < states_.size())
-            states_.resize(static_cast<std::size_t>(d) + 1);
-        if (states_.empty()) states_.push_back(detail::StNormal);
-    }
+    if (buf.version() == seenVersion_) return;
+    seenVersion_ = buf.version();
+    int d = buf.takeDirtyLine();
+    if (d != std::numeric_limits<int>::max() && static_cast<std::size_t>(d) + 1 < states_.size())
+        states_.resize(static_cast<std::size_t>(d) + 1);
+    if (states_.empty()) states_.push_back(detail::StNormal);
+}
 
 }  // namespace ide

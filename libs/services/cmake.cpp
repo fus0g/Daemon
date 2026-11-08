@@ -182,52 +182,52 @@ std::vector<std::string> splitArgs(std::string_view s) {
 }
 
 void CMakeKnowledge::load() {
-        if (loaded_) return;
-        loaded_ = true;
-        auto run = [](const char* flag) {
-            std::vector<std::string> out;
-            ProcessOptions o;
-            o.argv = {"cmake", flag};
-            auto r = Process::runCapture(o, 10000);
-            std::size_t i = 0;
-            while (i < r.output.size()) {
-                auto e = r.output.find('\n', i);
-                if (e == std::string::npos) e = r.output.size();
-                std::string l = r.output.substr(i, e - i);
-                while (!l.empty() && std::isspace(static_cast<unsigned char>(l.back()))) l.pop_back();
-                if (!l.empty()) out.push_back(std::move(l));
-                i = e + 1;
+    if (loaded_) return;
+    loaded_ = true;
+    auto run = [](const char* flag) {
+        std::vector<std::string> out;
+        ProcessOptions o;
+        o.argv = {"cmake", flag};
+        auto r = Process::runCapture(o, 10000);
+        std::size_t i = 0;
+        while (i < r.output.size()) {
+            auto e = r.output.find('\n', i);
+            if (e == std::string::npos) e = r.output.size();
+            std::string l = r.output.substr(i, e - i);
+            while (!l.empty() && std::isspace(static_cast<unsigned char>(l.back()))) l.pop_back();
+            if (!l.empty()) out.push_back(std::move(l));
+            i = e + 1;
+        }
+        return out;
+    };
+    // Templated names such as CMAKE_<LANG>_COMPILER are expanded for the common languages / configs.
+    auto expand = [](const std::vector<std::string>& in) {
+        std::vector<std::string> out;
+        for (const auto& name : in) {
+            auto lt = name.find('<');
+            if (lt == std::string::npos) { out.push_back(name); continue; }
+            const auto gt = name.find('>', lt);
+            if (gt == std::string::npos) continue;
+            const std::string ph = name.substr(lt, gt - lt + 1);
+            std::vector<std::string> subs;
+            if (ph == "<LANG>") subs = {"C", "CXX", "CUDA", "OBJC", "OBJCXX", "Fortran", "ASM", "HIP"};
+            else if (ph == "<CONFIG>") subs = {"DEBUG", "RELEASE", "RELWITHDEBINFO", "MINSIZEREL"};
+            else continue;
+            for (const auto& sub : subs) {
+                std::string e = name;
+                e.replace(lt, ph.size(), sub);
+                if (e.find('<') == std::string::npos) out.push_back(std::move(e));
+                else { auto again = e; (void)again; }
             }
-            return out;
-        };
-        // Templated names such as CMAKE_<LANG>_COMPILER are expanded for the common languages / configs.
-        auto expand = [](const std::vector<std::string>& in) {
-            std::vector<std::string> out;
-            for (const auto& name : in) {
-                auto lt = name.find('<');
-                if (lt == std::string::npos) { out.push_back(name); continue; }
-                const auto gt = name.find('>', lt);
-                if (gt == std::string::npos) continue;
-                const std::string ph = name.substr(lt, gt - lt + 1);
-                std::vector<std::string> subs;
-                if (ph == "<LANG>") subs = {"C", "CXX", "CUDA", "OBJC", "OBJCXX", "Fortran", "ASM", "HIP"};
-                else if (ph == "<CONFIG>") subs = {"DEBUG", "RELEASE", "RELWITHDEBINFO", "MINSIZEREL"};
-                else continue;
-                for (const auto& sub : subs) {
-                    std::string e = name;
-                    e.replace(lt, ph.size(), sub);
-                    if (e.find('<') == std::string::npos) out.push_back(std::move(e));
-                    else { auto again = e; (void)again; }
-                }
-            }
-            return out;
-        };
-        commands = run("--help-command-list");
-        variables = expand(run("--help-variable-list"));
-        properties = expand(run("--help-property-list"));
-        modules = run("--help-module-list");
-        policies = run("--help-policy-list");
-    }
+        }
+        return out;
+    };
+    commands = run("--help-command-list");
+    variables = expand(run("--help-variable-list"));
+    properties = expand(run("--help-property-list"));
+    modules = run("--help-module-list");
+    policies = run("--help-policy-list");
+}
 
 }  // namespace ide
 

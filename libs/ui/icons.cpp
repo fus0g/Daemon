@@ -205,53 +205,53 @@ char32_t fileGlyph(std::string_view name, FileKind kind) {
 }
 
 void Icons::file(DrawList& dl, FontAtlas& font, float x, float y, int size, std::string_view name, float alpha) {
-        using namespace icon_detail;
-        const FileStyle st = fileStyle(name);
-        const Color c = Color::rgb(st.color);
-        const auto a = [&](Color col) { return col.alpha(static_cast<std::uint8_t>(static_cast<float>(col.a) * alpha)); };
-        if (font.hasIcons()) { glyph(dl, font, x, y, size, fileGlyph(name, st.kind), a(c)); return; }
-        layer(dl, font, 1, 0, size, x, y, a(c), pageLayer);
-        layer(dl, font, 2, 0, size, x, y, a(c.mix(Color::rgb(0xffffff), 0.38f)), foldLayer);
-        layer(dl, font, 10 + static_cast<std::uint32_t>(st.kind), 0, size, x, y, a(Color{0x14, 0x16, 0x1a, 215}),
-              [&] { return markLayer(st.kind); });
-    }
+    using namespace icon_detail;
+    const FileStyle st = fileStyle(name);
+    const Color c = Color::rgb(st.color);
+    const auto a = [&](Color col) { return col.alpha(static_cast<std::uint8_t>(static_cast<float>(col.a) * alpha)); };
+    if (font.hasIcons()) { glyph(dl, font, x, y, size, fileGlyph(name, st.kind), a(c)); return; }
+    layer(dl, font, 1, 0, size, x, y, a(c), pageLayer);
+    layer(dl, font, 2, 0, size, x, y, a(c.mix(Color::rgb(0xffffff), 0.38f)), foldLayer);
+    layer(dl, font, 10 + static_cast<std::uint32_t>(st.kind), 0, size, x, y, a(Color{0x14, 0x16, 0x1a, 215}),
+          [&] { return markLayer(st.kind); });
+}
 
 void Icons::folder(DrawList& dl, FontAtlas& font, float x, float y, int size, std::string_view name, bool open,
-                       float alpha) {
-        using namespace icon_detail;
-        const Color c = Color::rgb(folderColor(name));
-        const auto a = [&](Color col) { return col.alpha(static_cast<std::uint8_t>(static_cast<float>(col.a) * alpha)); };
-        if (font.hasIcons()) { glyph(dl, font, x, y, size, open ? mdi::FolderOpen : mdi::Folder, a(c)); return; }
-        layer(dl, font, 30, 0, size, x, y, a(c.mix(Color::rgb(0x000000), 0.30f)), folderBack);
-        if (open) layer(dl, font, 32, 0, size, x, y, a(c.mix(Color::rgb(0xffffff), 0.14f)), folderOpenFront);
-        else layer(dl, font, 31, 0, size, x, y, a(c), folderFront);
-    }
+                   float alpha) {
+    using namespace icon_detail;
+    const Color c = Color::rgb(folderColor(name));
+    const auto a = [&](Color col) { return col.alpha(static_cast<std::uint8_t>(static_cast<float>(col.a) * alpha)); };
+    if (font.hasIcons()) { glyph(dl, font, x, y, size, open ? mdi::FolderOpen : mdi::Folder, a(c)); return; }
+    layer(dl, font, 30, 0, size, x, y, a(c.mix(Color::rgb(0x000000), 0.30f)), folderBack);
+    if (open) layer(dl, font, 32, 0, size, x, y, a(c.mix(Color::rgb(0xffffff), 0.14f)), folderOpenFront);
+    else layer(dl, font, 31, 0, size, x, y, a(c), folderFront);
+}
 
 void Icons::tool(DrawList& dl, FontAtlas& font, float x, float y, int size, ToolIcon icon, Color color) {
-        using namespace icon_detail;
-        if (font.hasIcons()) {
-            static constexpr char32_t map[] = {mdi::Play, mdi::Stop, mdi::Hammer, mdi::Refresh, mdi::DockBottom, mdi::FileTree,
-                                               mdi::ConsoleLine, mdi::Alert, mdi::Minimize, mdi::Maximize, mdi::Close};
-            glyph(dl, font, x, y, size, map[static_cast<std::size_t>(icon)], color);
-            return;
-        }
-        const auto id = 50 + static_cast<std::uint32_t>(icon);
-        layer(dl, font, id, 0, size, x, y, color, [&] {
-            switch (icon) {
-                case ToolIcon::Play: return playLayer();
-                case ToolIcon::Stop: return stopLayer();
-                case ToolIcon::Build: return hammerLayer();
-                case ToolIcon::Reload: return reloadLayer();
-                case ToolIcon::Panel: return panelLayer();
-                case ToolIcon::Files: return filesLayer();
-                case ToolIcon::Terminal: return terminalLayer();
-                case ToolIcon::Warning: return warningLayer();
-                case ToolIcon::Minimize: return minimizeLayer();
-                case ToolIcon::Maximize: return maximizeLayer();
-                case ToolIcon::Close: return closeLayer();
-            }
-            return Layer{};
-        });
+    using namespace icon_detail;
+    if (font.hasIcons()) {
+        static constexpr char32_t map[] = {mdi::Play, mdi::Stop, mdi::Hammer, mdi::Refresh, mdi::DockBottom, mdi::FileTree,
+                                           mdi::ConsoleLine, mdi::Alert, mdi::Minimize, mdi::Maximize, mdi::Close};
+        glyph(dl, font, x, y, size, map[static_cast<std::size_t>(icon)], color);
+        return;
     }
+    const auto id = 50 + static_cast<std::uint32_t>(icon);
+    layer(dl, font, id, 0, size, x, y, color, [&] {
+        switch (icon) {
+            case ToolIcon::Play: return playLayer();
+            case ToolIcon::Stop: return stopLayer();
+            case ToolIcon::Build: return hammerLayer();
+            case ToolIcon::Reload: return reloadLayer();
+            case ToolIcon::Panel: return panelLayer();
+            case ToolIcon::Files: return filesLayer();
+            case ToolIcon::Terminal: return terminalLayer();
+            case ToolIcon::Warning: return warningLayer();
+            case ToolIcon::Minimize: return minimizeLayer();
+            case ToolIcon::Maximize: return maximizeLayer();
+            case ToolIcon::Close: return closeLayer();
+        }
+        return Layer{};
+    });
+}
 
 }  // namespace ide

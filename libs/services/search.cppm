@@ -59,21 +59,7 @@ struct Hit {
 
 class Matcher {
 public:
-    explicit Matcher(const Options& o, std::string replacement = {}) : opt_(o), with_(std::move(replacement)) {
-        if (o.query.empty()) { error_ = "empty"; return; }
-        if (o.regex) {
-            try {
-                std::string pat = o.wholeWord ? "\\b(?:" + o.query + ")\\b" : o.query;
-                auto flags = std::regex::ECMAScript;
-                if (!o.matchCase) flags |= std::regex::icase;
-                re_ = std::regex(pat, flags);
-            } catch (const std::regex_error& e) {
-                error_ = std::string("Invalid regular expression: ") + e.what();
-            }
-        } else {
-            needle_ = o.matchCase ? o.query : lower(o.query);
-        }
-    }
+    explicit Matcher(const Options& o, std::string replacement = {});
 
     bool ok() const { return error_.empty(); }
     const std::string& error() const { return error_ == "empty" ? empty_ : error_; }
