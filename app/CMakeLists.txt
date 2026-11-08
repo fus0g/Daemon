@@ -6,25 +6,25 @@ target_sources(daemon_app
     options.cppm
     theme.cppm
   PRIVATE
-    app_activity_bar.cpp
-    app_build_run.cpp
-    app_core.cpp
-    app_debugger.cpp
-    app_dialogs.cpp
-    app_documents.cpp
-    app_editor_view.cpp
-    app_file_ops.cpp
-    app_git_view.cpp
-    app_keyboard.cpp
-    app_layout.cpp
-    app_lsp.cpp
-    app_pointer.cpp
-    app_prompts.cpp
-    app_render.cpp
-    app_search_view.cpp
-    app_terminal_view.cpp
-    app_ui_helpers.cpp
-    cli.cpp)
+    cli.cpp
+    impl/activity_bar.cpp
+    impl/build_run.cpp
+    impl/core.cpp
+    impl/debugger.cpp
+    impl/dialogs.cpp
+    impl/documents.cpp
+    impl/editor_view.cpp
+    impl/file_ops.cpp
+    impl/git_view.cpp
+    impl/keyboard.cpp
+    impl/layout.cpp
+    impl/lsp.cpp
+    impl/pointer.cpp
+    impl/prompts.cpp
+    impl/render.cpp
+    impl/search_view.cpp
+    impl/terminal_view.cpp
+    impl/ui_helpers.cpp)
 target_link_libraries(daemon_app PUBLIC daemon_base daemon_text daemon_ui daemon_services PRIVATE daemon_warnings)
 
 add_executable(daemon main.cpp)

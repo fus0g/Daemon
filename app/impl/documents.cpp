@@ -1,4 +1,4 @@
-// app_documents - implementation of module daemon.app.
+// daemon.app / documents - part of the App implementation (see app.cppm for the class).
 module daemon.app;
 import std;
 import daemon.base.util;

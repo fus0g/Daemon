@@ -1,4 +1,4 @@
-// app_activity_bar - implementation of module daemon.app.
+// daemon.app / activity_bar - part of the App implementation (see app.cppm for the class).
 module daemon.app;
 import std;
 import daemon.base.util;

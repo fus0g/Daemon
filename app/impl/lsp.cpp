@@ -1,4 +1,4 @@
-// app_lsp - implementation of module daemon.app.
+// daemon.app / lsp - part of the App implementation (see app.cppm for the class).
 module daemon.app;
 import std;
 import daemon.base.util;

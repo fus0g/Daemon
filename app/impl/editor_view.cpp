@@ -1,4 +1,4 @@
-// app_editor_view - implementation of module daemon.app.
+// daemon.app / editor_view - part of the App implementation (see app.cppm for the class).
 module daemon.app;
 import std;
 import daemon.base.util;

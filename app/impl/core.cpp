@@ -1,4 +1,4 @@
-// app_core - implementation of module daemon.app.
+// daemon.app / core - part of the App implementation (see app.cppm for the class).
 module daemon.app;
 import std;
 import daemon.base.util;

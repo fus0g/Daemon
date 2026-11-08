@@ -1,4 +1,4 @@
-// app_pointer - implementation of module daemon.app.
+// daemon.app / pointer - part of the App implementation (see app.cppm for the class).
 module daemon.app;
 import std;
 import daemon.base.util;

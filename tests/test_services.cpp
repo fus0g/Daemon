@@ -1,4 +1,4 @@
-// Headless tests for the parts of the editor that do not need a window or GPU.
+// Tests for the services libraries.
 #include <cstdlib>
 #include <poll.h>
 import std;
@@ -19,204 +19,9 @@ import daemon.services.terminal;
 import daemon.services.lsp;
 import daemon.ui.font;
 import daemon.ui.draw;
-
-static int failures = 0;
-
-#define CHECK(cond)                                                            \
-    do {                                                                       \
-        if (!(cond)) {                                                         \
-            std::println(std::cerr, "FAIL {}:{}: {}", __FILE__, __LINE__, #cond); \
-            ++failures;                                                        \
-        }                                                                      \
-    } while (0)
+#include "check.hpp"
 
 using namespace ide;
-
-static void testUtf8() {
-    std::string s = "a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80";  // a é € 😀
-    std::size_t i = 0;
-    CHECK(decodeUtf8(s, i) == U'a');
-    CHECK(decodeUtf8(s, i) == U'é');
-    CHECK(decodeUtf8(s, i) == U'€');
-    CHECK(decodeUtf8(s, i) == U'\U0001F600');
-    CHECK(i == s.size());
-    CHECK(utf8Length(s) == 4);
-    CHECK(utf8Prev(s, s.size()) == 6);
-    std::string bad = "\xFF\xC3";
-    i = 0;
-    CHECK(decodeUtf8(bad, i) == kReplacementChar && i == 1);
-    CHECK(displayCol("\tab", 3, 4) == 6);
-    CHECK(byteColAt("\tab", 5, 4) == 2);
-}
-
-static void testBuffer() {
-    Buffer b;
-    b.setText("hello\nworld\n");
-    CHECK(b.lineCount() == 3);
-    CHECK(b.text() == "hello\nworld\n");
-    Pos end = b.replace({0, 5}, {0, 5}, " there\nnew", {}, false);
-    CHECK(end == (Pos{1, 3}));
-    CHECK(b.line(0) == "hello there" && b.line(1) == "new" && b.lineCount() == 4);
-    CHECK(b.undo().has_value());
-    CHECK(b.text() == "hello\nworld\n");
-    CHECK(b.redo().has_value());
-    CHECK(b.line(1) == "new");
-    b.replace({0, 0}, {1, 0}, {}, {});
-    CHECK(b.line(0) == "new");
-    b.undo();
-    b.undo();
-    CHECK(b.text() == "hello\nworld\n");
-
-    b.setText("a\r\nb\r\n");
-    CHECK(b.crlf() && b.line(0) == "a" && b.text() == "a\r\nb\r\n");
-}
-
-static void testCoalescing() {
-    Buffer b;
-    b.setText("");
-    Pos p{0, 0};
-    for (char c : std::string("hello")) p = b.replace(p, p, std::string(1, c), {}, true);
-    CHECK(b.line(0) == "hello");
-    b.undo();
-    CHECK(b.line(0).empty());  // one undo step for the whole word
-
-    b.setText("abc");
-    Pos c{0, 3};
-    for (int k = 0; k < 3; ++k) { Pos from{0, c.col - 1}; b.replace(from, c, {}, {}, true); c = from; }
-    CHECK(b.line(0).empty());
-    b.undo();
-    CHECK(b.line(0) == "abc");
-
-    b.setText("x");
-    b.markSaved();
-    CHECK(!b.modified());
-    b.replace({0, 1}, {0, 1}, "y", {}, true);
-    CHECK(b.modified());
-    b.undo();
-    CHECK(!b.modified());
-}
-
-static void testGroups() {
-    Buffer b;
-    b.setText("a\nb\nc");
-    b.beginGroup();
-    b.replace({0, 0}, {0, 0}, "1", {});
-    b.replace({1, 0}, {1, 0}, "2", {});
-    b.endGroup();
-    CHECK(b.line(0) == "1a" && b.line(1) == "2b");
-    b.undo();
-    CHECK(b.text() == "a\nb\nc");
-}
-
-static void testHighlighter() {
-    Buffer b;
-    b.setText("int main() { /* c\nstill */ return 0; } // x\n\"str\"");
-    Highlighter h;
-    h.setLang(langForPath("main.cpp"));
-    std::vector<Tok> t;
-    h.highlight(b, 0, t);
-    CHECK(t[0] == Tok::Type);      // int
-    CHECK(t[4] == Tok::Function);  // main
-    CHECK(t[13] == Tok::Comment);  // inside block comment
-    h.highlight(b, 1, t);
-    CHECK(t[0] == Tok::Comment);   // continued comment
-    CHECK(t[9] == Tok::Keyword);   // return
-    CHECK(t[16] == Tok::Number);   // 0
-    h.highlight(b, 2, t);
-    CHECK(t[0] == Tok::String);
-
-    // Editing a line must invalidate cached state below it.
-    b.replace({0, 13}, {0, 15}, "", {});  // delete "/*"
-    h.highlight(b, 1, t);
-    CHECK(t[0] != Tok::Comment);
-
-    CHECK(langForPath("/x/CMakeLists.txt") && langForPath("/x/CMakeLists.txt")->name == "CMake");
-    CHECK(langForPath("a.rs") && langForPath("a.rs")->name == "Rust");
-    CHECK(langForPath("a.unknown") == nullptr);
-}
-
-static void testDocumentEditing() {
-    Document d;
-    d.lang = langForPath("x.cpp");
-    d.hl.setLang(d.lang);
-    d.insertText("f");
-    d.insertText("(");  // auto-pairs
-    CHECK(d.buf.line(0) == "f()" && d.cursor.col == 2);
-    d.insertText(")");  // types over the closer
-    CHECK(d.buf.line(0) == "f()" && d.cursor.col == 3);
-    d.insertText("{");
-    d.newline();        // splits {} onto three lines with indentation
-    CHECK(d.buf.lineCount() == 3);
-    CHECK(d.buf.line(1) == "    " && d.cursor == (Pos{1, 4}));
-    d.insertText("x");
-    d.newline();
-    CHECK(d.buf.line(2) == "    ");  // keeps indentation
-
-    d.selectAll();
-    d.deleteSelection();
-    CHECK(d.buf.text().empty());
-    d.undo();
-    CHECK(d.buf.lineCount() == 4 || d.buf.lineCount() == 3);
-
-    Document e;
-    e.buf.setText("one\ntwo\nthree");
-    e.setCursor({1, 0});
-    e.moveLines(-1);
-    CHECK(e.buf.line(0) == "two" && e.buf.line(1) == "one" && e.cursor.line == 0);
-    e.moveLines(1);
-    CHECK(e.buf.line(0) == "one" && e.buf.line(1) == "two");
-    e.duplicateLines();
-    CHECK(e.buf.lineCount() == 4 && e.buf.line(1) == "two" && e.buf.line(2) == "two" && e.cursor.line == 2);
-    e.deleteLines();
-    CHECK(e.buf.lineCount() == 3);
-
-    Document c;
-    c.lang = langForPath("x.py");
-    c.buf.setText("a\n  b\n\nc");
-    c.selectAll();
-    c.toggleComment();
-    CHECK(c.buf.line(0) == "# a" && c.buf.line(1) == "#   b" && c.buf.line(2).empty());
-    c.toggleComment();
-    CHECK(c.buf.line(0) == "a" && c.buf.line(1) == "  b");
-    c.undo();
-    CHECK(c.buf.line(0) == "# a");
-}
-
-static void testNavigationAndSearch() {
-    Document d;
-    d.buf.setText("foo bar_baz  qux\nsecond line foo");
-    d.setCursor({0, 0});
-    d.moveRight(false, true);
-    CHECK(d.cursor.col == 4);
-    d.moveRight(false, true);
-    CHECK(d.cursor.col == 13);  // skips both spaces
-    d.moveLeft(false, true);
-    CHECK(d.cursor.col == 4);
-
-    auto [a, b] = d.wordRange({0, 6});
-    CHECK(a.col == 4 && b.col == 11);
-
-    CHECK(d.find("foo", true, true));
-    CHECK(d.selBegin() == (Pos{1, 12}));
-    CHECK(d.find("foo", true, true));  // wraps
-    CHECK(d.selBegin() == (Pos{0, 0}));
-    CHECK(d.find("FOO", false, false));
-    CHECK(d.selBegin() == (Pos{1, 12}));
-    CHECK(!d.find("nope", true, true));
-    CHECK(d.replaceAll("foo", "X", true) == 2);
-    CHECK(d.buf.line(0) == "X bar_baz  qux" && d.buf.line(1) == "second line X");
-    d.undo();
-    CHECK(d.buf.line(0) == "foo bar_baz  qux");
-
-    Document m;
-    m.buf.setText("a(b[c]{\n})");
-    m.setCursor({0, 1});
-    auto br = m.matchBracket();
-    CHECK(br && br->second == (Pos{1, 1}));
-    m.setCursor({1, 2});
-    br = m.matchBracket();
-    CHECK(br && br->second == (Pos{0, 1}));
-}
 
 static void testFileOps() {
     namespace fs = std::filesystem;
@@ -272,38 +77,6 @@ static void testFileOps() {
     CHECK(fileStyle("PHOTO.PNG").kind == FileKind::Image);
     CHECK(folderColor("src") == 0x6fa8f5 && folderColor("whatever") == 0xdcb56d);
     fs::remove_all(base);
-}
-
-
-static void testJson() {
-    auto v = json::parse(R"({"a":[1,2.5,"x\né😀"],"b":{"c":true,"d":null},"e":-3e2})");
-    CHECK(v.has_value());
-    CHECK((*v)["a"][0].integer() == 1 && (*v)["a"][1].num() == 2.5);
-    CHECK((*v)["a"][2].str() == "x\n\xC3\xA9\xF0\x9F\x98\x80");
-    CHECK((*v)["b"]["c"].boolean() && (*v)["b"]["d"].isNull() && (*v)["e"].num() == -300);
-    CHECK((*v)["missing"]["deeper"].isNull());  // safe chained lookup
-    auto round = json::parse(json::dump(*v));
-    CHECK(round && json::dump(*round) == json::dump(*v));
-    CHECK(!json::parse("{") && !json::parse("[1,]") && !json::parse("{\"a\":1} x") && !json::parse(""));
-    auto o = json::object();
-    o.set("n", 5).set("s", "q\"uote\t").set("arr", json::array().push(1).push(true));
-    CHECK(json::dump(o) == R"({"n":5,"s":"q\"uote\t","arr":[1,true]})");
-    CHECK(utf16Col("a\xF0\x9F\x98\x80z", 5) == 3 && byteColFromUtf16("a\xF0\x9F\x98\x80z", 3) == 5);
-    CHECK(uriToPath(pathToUri("/tmp/a b/é.cpp")) == "/tmp/a b/é.cpp");
-}
-
-static void testProcess() {
-    auto r = Process::runCapture({{"echo", "hello"}});
-    CHECK(r.exitCode == 0 && r.output == "hello\n");
-    r = Process::runCapture({{"sh", "-c", "echo out; echo err 1>&2; exit 3"}});
-    CHECK(r.exitCode == 3 && r.output.find("out") != std::string::npos && r.output.find("err") != std::string::npos);
-    r = Process::runCapture({{"sh", "-c", "sleep 5"}}, 150);
-    CHECK(r.timedOut);
-    r = Process::runCapture({{"definitely-not-a-command-xyz"}});
-    CHECK(!r.error.empty());
-    r = Process::runCapture({{"pwd"}, "/tmp"});
-    CHECK(r.output == "/tmp\n");
-    CHECK(findExecutable("sh").has_value() && !findExecutable("nope-nope").has_value());
 }
 
 static void testCMake() {
@@ -421,35 +194,7 @@ static void testLsp() {
     CHECK(bad.state() == LspClient::State::Failed);
 }
 
-static void testIcons() {
-    using namespace ide::icon_detail;
-    // A rounded rect fills most of the grid; its corners and an empty layer stay clear.
-    std::array<std::uint8_t, 18 * 18> px{};
-    rasterize({rr(8, 8, 7, 7, 2)}, 18, px.data());
-    CHECK(px[9 * 18 + 9] == 255);   // centre fully covered
-    CHECK(px[0] < 40);              // rounded corner nearly empty
-    int edge = 0;
-    for (auto v : px) edge += (v > 0 && v < 255);
-    CHECK(edge > 20);               // anti-aliased edge pixels exist
-    // Subtraction: a hole in the middle.
-    rasterize({rr(8, 8, 7, 7, 1), circ(8, 8, 3, true)}, 18, px.data());
-    CHECK(px[9 * 18 + 9] == 0 && px[2 * 18 + 2] == 255);
-    // The page icon rasterises into the atlas without overflowing and is cached.
-    FontAtlas atlas;
-    if (atlas.load()) {
-        DrawList dl;
-        Icons::file(dl, atlas, 0, 0, 18, "main.cpp");
-        Icons::folder(dl, atlas, 0, 0, 18, "src", true);
-        Icons::chevron(dl, atlas, 0, 0, 12, true, Color::rgb(0xffffff));
-        const std::size_t perFile = atlas.hasIcons() ? 1 : 3;  // one font glyph, or three vector layers
-        CHECK(dl.size() == perFile + (atlas.hasIcons() ? 1 : 2) + 1);
-        std::size_t before = dl.size();
-        Icons::file(dl, atlas, 0, 0, 18, "main.cpp");
-        CHECK(dl.size() == before + perFile);
-    }
-}
-
-void testCMakeCompletion() {
+static void testCMakeCompletion() {
     CMakeKnowledge kb;
     kb.load();
     if (!kb.ready()) return;  // no cmake on this machine
@@ -554,29 +299,6 @@ static void testProjects() {
         unsetenv("XDG_CONFIG_HOME");
     }
     fs::remove_all(root);
-}
-
-static void testPty() {
-    Process p;
-    ProcessOptions o;
-    o.argv = {"sh", "-c", "printf 'Name: '; read x; echo \"got $x\"; exit 3"};
-    o.usePty = true;
-    CHECK(p.start(o).has_value());
-    std::string out;
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (out.find("Name: ") == std::string::npos && std::chrono::steady_clock::now() < deadline) {
-        pollfd pf{p.outFd(), POLLIN, 0};
-        if (::poll(&pf, 1, 100) > 0) p.read(out);
-    }
-    CHECK(out.find("Name: ") != std::string::npos);   // the prompt arrives before any input (no pipe buffering)
-    CHECK(p.write("bob\n"));
-    while (out.find("got bob") == std::string::npos && std::chrono::steady_clock::now() < deadline) {
-        pollfd pf{p.outFd(), POLLIN, 0};
-        if (::poll(&pf, 1, 100) > 0 && p.read(out) == 0) break;
-    }
-    CHECK(out.find("got bob") != std::string::npos);
-    for (int i = 0; i < 100 && !p.tryWait(); ++i) { p.read(out); std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
-    CHECK(p.tryWait().value_or(-1) == 3);
 }
 
 static void testGit() {
@@ -822,28 +544,15 @@ static void testGdbMi() {
     std::filesystem::remove_all(dir);
 }
 
-int main() {
-    testGdbMi();
-    testSearch();
-    testTerminal();
-    testGit();
-    testPty();
-    testProjects();
-    testModules();
-    testCMakeCompletion();
-    testJson();
-    testProcess();
-    testLsp();
-    testCMake();
-    testIcons();
+void runServicesTests() {
     testFileOps();
-    testUtf8();
-    testBuffer();
-    testCoalescing();
-    testGroups();
-    testHighlighter();
-    testDocumentEditing();
-    testNavigationAndSearch();
-    if (failures == 0) std::println("all tests passed");
-    return failures == 0 ? 0 : 1;
+    testCMake();
+    testLsp();
+    testCMakeCompletion();
+    testModules();
+    testProjects();
+    testGit();
+    testTerminal();
+    testSearch();
+    testGdbMi();
 }

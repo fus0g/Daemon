@@ -11,31 +11,36 @@ Requires GCC 15+ (or Clang + libc++), CMake 4.3+, Ninja, and the dev packages fo
 
     cmake -S . -B build -G Ninja
     cmake --build build
-    ./build/daemon [file...]
-    ctest --test-dir build        # headless unit tests
+    ./build/app/daemon [file...]
+    ctest --test-dir build        # headless unit tests (build/tests/daemon_tests)
 
 Options: `--font-size <px>`, `--screenshot out.png` (render, save PNG, exit), `--keys "ctrl+f|t:text|enter"`
 (replay input). Environment: `IDE_FONT=<ttf/otf>` (code font), `IDE_UI_FONT=<ttf/otf>` (interface font), `IDE_GPU=<index>`, `IDE_VALIDATE=1`.
 
-## Layout
+## Source layout
 
-| module         | role                                                              |
-|----------------|-------------------------------------------------------------------|
-| `ide.util`     | UTF-8, file I/O, PNG writer                                       |
-| `ide.text`     | line buffer with grouped / coalescing undo-redo                   |
-| `ide.syntax`   | table-driven highlighter (C/C++, Python, Rust, JS/TS, Go, ...)    |
-| `ide.editor`   | document: cursor, selection, editing commands, find, brackets     |
-| `ide.json`     | JSON value / parser / serialiser (LSP, CMake File API)            |
-| `ide.process`  | child processes with non-blocking pipes, process-group kill        |
-| `ide.cmake`    | profiles, configure/build argv, File API targets, error parsing   |
-| `ide.lsp`      | Language Server Protocol client (clangd)                           |
-| `ide.explorer` | file-tree model for the sidebar                                   |
-| `ide.font`     | system font discovery, stb_truetype rasteriser, glyph atlas       |
-| `ide.icons`    | vector file/folder icons rasterised into the atlas               |
-| `ide.draw`     | colours + per-frame instanced quad list                           |
-| `ide.vulkan`   | swapchain, one pipeline, atlas upload, screenshot readback        |
-| `ide.wayland`  | xdg-shell window, xkbcommon keys, clipboard, cursors, HiDPI scale |
-| `ide.app`      | tabs, prompts, input routing, drawing, frame loop                 |
+Daemon is a stack of static libraries, each a set of C++20 modules. A module is a `.cppm` **interface** (types, declarations and
+small inline functions) plus a `.cpp` **implementation unit** (the larger function bodies); dependencies only point downwards.
+
+```
+app/                 the IDE            daemon_app  (+ the `daemon` executable)
+  app.cppm             class App: state and declarations         impl/*.cpp  its implementation, one file per feature
+  options.cppm theme.cppm cli.cpp main.cpp
+libs/services/       services           daemon_services   (no UI)
+libs/ui/             window / renderer  daemon_ui         (the reusable UI framework, no IDE logic)
+libs/text/           text model         daemon_text
+libs/base/           foundations        daemon_base
+tests/               headless unit tests, one file per library
+third_party/         stb_truetype, Wayland protocol XML, Material Design Icons font      tools/  shader compiler fallback
+```
+
+| library | modules |
+|---|---|
+| `daemon_base` | `daemon.base.util` UTF-8, file I/O, PNG writer · `json` · `process` (pipes, PTYs, process groups) |
+| `daemon_text` | `daemon.text.buffer` line buffer + undo/redo · `syntax` highlighter · `document` cursor / selection / editing commands |
+| `daemon_ui` | `daemon.ui.wayland` xdg-shell window, keyboard, clipboard · `vulkan` renderer · `draw` quad list · `font` atlas · `icons` · `input` · `geometry` |
+| `daemon_services` | `daemon.services.lsp` clangd client · `cmake` · `git` · `gdb` (MI client) · `search` · `terminal` emulator · `project` · `explorer` file tree |
+| `daemon_app` | `daemon.app` (`App`) · `daemon.app.theme` · `daemon.app.options`; `app/impl/` holds the implementation by feature (activity bar, build/run, debugger, dialogs, git view, keyboard, layout, LSP glue, pointer, prompts, render, search view, terminal view ...) |
 
 ## Keys
 
