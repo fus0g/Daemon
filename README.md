@@ -161,3 +161,19 @@ Toggles: match case (`Aa`, Alt+C), whole word (`ab`, Alt+W), regular expression 
 respected) or, outside a repository, from a walk that skips build and vendor folders; binary and >2 MB files are skipped. Unsaved
 editor contents are searched too. Results are grouped per file; click one to jump to it, hover for *replace* / *dismiss*, use the
 button in the replace field for *Replace All* (asks for a second click). Files with unsaved edits are never overwritten.
+
+## Debugger
+
+Debugging runs your program under **gdb** through its machine interface (MI3). Start with the bug button in the toolbar, `Shift+F9`
+or `F5` (`F10` / `F11` start and stop at `main`). The program's own input/output lives in the **Run** tab; the **Debug** tab is a
+console where you can evaluate expressions (`x + 1`, `*ptr`) or run any gdb command (`bt`, `info registers`, `disassemble`).
+
+- **Breakpoints:** click the gutter or `F9`; right-click for conditional breakpoints and logpoints (`log: x = {x}` prints and
+  continues). Edit text accepts a condition, `#N` to skip the first N hits, or `log: message`. Breakpoints can be disabled,
+  function breakpoints and *break on C++ throw* are in the BREAKPOINTS section, and *data breakpoints* (stop when a value changes) are
+  one click on a variable. Breakpoints are saved per project in `.daemon/debug.json` and can be changed while the program runs.
+- **Stepping:** `F5` continue, `F6` pause, `F10` over, `F11` into, `Shift+F11` out, `Ctrl+F10` run to cursor, `Ctrl+Shift+F10` set next
+  statement, `Shift+F5` stop, `Ctrl+Shift+F5` restart (also the floating bar over the editor).
+- **Run and Debug view** (sidebar): VARIABLES (expandable, STL containers via gdb's pretty printers, edit a value, copy, add to watch,
+  watch for changes), WATCH expressions, CALL STACK with threads (click a frame to inspect it) and BREAKPOINTS. Hover an expression in
+  the editor while paused to see its value; changed values are highlighted.

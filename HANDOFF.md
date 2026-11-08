@@ -28,6 +28,7 @@
 | `lsp.cppm` | JSON-RPC LSP client for clangd (async callbacks; cancel, trace via `IDE_LSP_TRACE=1`). |
 | `git.cppm` | shells out to git: status (`--porcelain -z`), blame (`--porcelain --contents`), in-process Myers diff for gutter, log + lane graph, branches, checkout/pull/push/stage/commit. |
 | `search.cppm` | project search/replace engine (`Matcher`, `run`, `replaceInFile`, globs; git `ls-files` for the file list); UI is `drawSearchBody/searchClick/searchKey` in app.cppm (sidebar mode `sideSearch_`, activity id 5, Ctrl+Shift+F/H). |
+| `gdbmi.cppm` | gdb/MI3 client: `parseLine` (records -> json), `Session` (async commands with callbacks, stream/async events). Debugger UI/logic is in app.cppm section "debugger" (`debugLaunch`, `dbgAsync`, `dbgOnStopped`, vars via varobj, breakpoints `bps_` persisted in `.daemon/debug.json`, sidebar mode `sideDebug_`, panel tab 4 "Debug" console, floating `drawDebugBar`). Inferior I/O goes through `Process::openPtyOnly` into the Run tab. Test hooks: `bp:N`, `bpedit:N:text`, `dbgwait`, `dbgframe:N`, `dbgexpand:path`, `dbgeval:`, `dbgwatch:`, `panel:N`. |
 | `explorer.cppm` | file tree model (`Explorer`, `FileNode`, rows) and `fsops` (create/rename/trash/copy/`moveInto`/`isInside`). |
 | `project.cppm` | project templates (`createProject`) and `DaemonState` (recents in `~/.config/daemon/state.json`). |
 | `editor.cppm`, `text.cppm`, `syntax.cppm` | document/buffer, undo, cursors, tokenizer/highlighting. |

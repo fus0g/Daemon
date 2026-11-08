@@ -18,6 +18,7 @@ import ide.cmake;
 import ide.project;
 import ide.git;
 import ide.search;
+import ide.gdbmi;
 import ide.terminal;
 import ide.lsp;
 
@@ -95,7 +96,7 @@ struct Rect {
 class App {
 public:
     explicit App(Options opts) : opt_(std::move(opts)) {}
-    ~App() { lsp_.reset(); }  // while the members its callbacks touch are still alive
+    ~App() { if (dbg_) dbg_->kill(); lsp_.reset(); }  // while the members its callbacks touch are still alive
 
     std::expected<void, std::string> init() {
         fontSize_ = opt_.fontSize;
@@ -154,6 +155,7 @@ public:
             {"home", Key::Home}, {"end", Key::End}, {"pgup", Key::PageUp}, {"pgdn", Key::PageDown}, {"f2", Key::F2}, {"f3", Key::F3}, {"f5", Key::F5}, {"f9", Key::F9}, {"f10", Key::F10}, {"f12", Key::F12}};
         while (pos < spec.size()) {
             auto bar = spec.find('|', pos);
+            const std::size_t tokStart = pos;
             std::string_view tok = spec.substr(pos, bar == std::string_view::npos ? bar : bar - pos);
             const std::size_t next = bar == std::string_view::npos ? spec.size() : bar + 1;
             if (tok.starts_with("sleep:")) {   // test hook: pause the script (and the capture) so asynchronous work can finish
@@ -175,6 +177,22 @@ public:
                 continue;
             }
             pos = next;
+            if (tok.starts_with("bp:") && !docs_.empty()) { dbgToggleBpAt(doc().path, std::atoi(std::string(tok.substr(3)).c_str())); pos = next; continue; }   // test hook: breakpoint on a line
+            if (tok.starts_with("bpedit:") && !docs_.empty()) {   // test hook: bpedit:LINE:TEXT sets condition / skip / logpoint of the breakpoint on LINE
+                const std::string rest(tok.substr(7));
+                const auto c = rest.find(':');
+                if (Breakpoint* b = dbgBpAt(doc().path, std::atoi(rest.substr(0, c).c_str()))) dbgApplyBpEdit(b->uid, rest.substr(c + 1));
+                pos = next; continue;
+            }
+            if (tok.starts_with("dbgwatch:")) { dbgAddWatch(std::string(tok.substr(9))); pos = next; continue; }
+            if (tok == "dbgwait") {   // test hook: until the debugger is paused (or ended)
+                if (buildProc_ || pendingBuild_ || runAfterBuild_ || (dbg_ && dbgState_ != DbgState::Stopped)) { pos = tokStart; return; }
+                pos = next; continue;
+            }
+            if (tok.starts_with("dbgframe:")) { dbgSelectFrame(std::atoi(std::string(tok.substr(9)).c_str())); pos = next; continue; }
+            if (tok.starts_with("panel:")) { panelOpen_ = true; panelTab_ = std::atoi(std::string(tok.substr(6)).c_str()); pos = next; continue; }
+            if (tok.starts_with("dbgeval:")) { panelOpen_ = true; panelTab_ = 4; dbgEval(std::string(tok.substr(8))); pos = next; continue; }
+            if (tok.starts_with("dbgexpand:")) { dbgExpanded_.insert(std::string(tok.substr(10))); if (dbgState_ == DbgState::Stopped) dbgRefreshVars(); pos = next; continue; }
             if (tok.starts_with("replaceall:")) { sReplace_ = {std::string(tok.substr(11)), tok.size() - 11}; searchReplace(-1, -1); pos = next; continue; }   // test hook
             if (tok.starts_with("search:")) { openSearch(false); sQuery_ = {std::string(tok.substr(7)), tok.size() - 7}; startSearch(); pos = next; continue; }   // test hook: run a project search
             if (tok == "side") { focusSidebar(); pos = next; continue; }   // test hook: focus the explorer
@@ -216,7 +234,7 @@ public:
                 continue;
             }
             if (tok.starts_with("gitsub:")) {   // test hook: open the Git tab on a sub-tab (0 changes, 1 history, 2 branches)
-                sidebar_ = true; sideGit_ = true; sideSearch_ = false;
+                sidebar_ = true; sideGit_ = true; sideSearch_ = false; sideDebug_ = false;
                 gitSub_ = std::atoi(std::string(tok.substr(7)).c_str());
                 gitScroll_ = 0;
                 continue;
@@ -347,7 +365,7 @@ public:
 private:
     // ============================================================ state
 
-    enum class PromptKind { None, Find, Replace, Goto, Open, OpenFolder, SaveAs, NewFile, NewFolder, Rename, Delete, RunArgs };
+    enum class PromptKind { None, Find, Replace, Goto, Open, OpenFolder, SaveAs, NewFile, NewFolder, Rename, Delete, RunArgs, DbgWatch, DbgSetValue, DbgBpEdit, DbgFuncBp };
     struct Field {
         std::string label, text;
         std::size_t cur = 0;
@@ -533,6 +551,7 @@ private:
         addRecent(state_, explorer_.rootPath().string());
         saveState(state_);
         gitReset();
+        dbgLoad();
         dirty_ = true;
     }
 
@@ -695,7 +714,7 @@ private:
             }
             if (stepCaret(d, dt)) { animating_ = true; dirty_ = true; }
         }
-        if (sidebar_ && explorer_.isOpen() && !sideGit_ && !sideSearch_) {
+        if (sidebar_ && explorer_.isOpen() && !sideGit_ && !sideSearch_ && !sideDebug_) {
             if (sideReveal_) { revealInSidebar(); sideReveal_ = false; }
             clampSide();
             float diff = sideTarget_ - sideScroll_;
@@ -835,25 +854,26 @@ private:
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S()), between = std::round(10 * S());
         const float w = bs + 2 * pad, x = a.x + (a.w - w) / 2, y0 = a.y + std::round(6 * S());
         auto height = [&](int n) { return static_cast<float>(n) * bs + static_cast<float>(n - 1) * gap + 2 * pad + 2 * activityPadV(); };   // extra room above the first and below the last icon
-        return {x, y0 + (group == 0 ? 0.0f : height(3) + between), w, height(3)};
+        return {x, y0 + (group == 0 ? 0.0f : height(4) + between), w, height(group == 0 ? 4 : 3)};
     }
-    // Buttons by id (0 Explorer, 1 Git, 2 Output, 3 Terminal, 4 Problems, 5 Search); pill 0 shows Explorer, Search, Git.
-    static int activityPos(int id) { static constexpr int pos[6] = {0, 2, 3, 4, 5, 1}; return pos[id]; }
+    // Buttons by id (0 Explorer, 1 Git, 2 Output, 3 Terminal, 4 Problems, 5 Search, 6 Debug); pill 0 shows Explorer, Search, Git, Debug.
+    static int activityPos(int id) { static constexpr int pos[7] = {0, 2, 4, 5, 6, 1, 3}; return pos[id]; }
     Rect activityRect(int i) const {
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S());
         const int p = activityPos(i);
-        const Rect pill = activityPill(p < 3 ? 0 : 1);
-        return {pill.x + pad, pill.y + pad + activityPadV() + static_cast<float>(p < 3 ? p : p - 3) * (bs + gap), bs, bs};
+        const Rect pill = activityPill(p < 4 ? 0 : 1);
+        return {pill.x + pad, pill.y + pad + activityPadV() + static_cast<float>(p < 4 ? p : p - 4) * (bs + gap), bs, bs};
     }
     int activityAt(float x, float y) const {
         if (!L_.activity.contains(x, y)) return 0;
-        for (int i = 0; i < 6; ++i)
+        for (int i = 0; i < 7; ++i)
             if (activityRect(i).contains(x, y)) return i + 1;
         return 0;
     }
     bool activityActive(int i) const {
         switch (i) {
-            case 0: return sidebar_ && !sideGit_ && !sideSearch_;
+            case 0: return sidebar_ && !sideGit_ && !sideSearch_ && !sideDebug_ && !sideDebug_;
+            case 6: return sidebar_ && sideDebug_;
             case 1: return sidebar_ && sideGit_;
             case 5: return sidebar_ && sideSearch_;
             case 2: return panelOpen_ && panelTab_ < 2;
@@ -865,15 +885,19 @@ private:
         switch (i) {
             case 0:
                 if (activityActive(0)) { sidebar_ = false; sideFocus_ = false; }
-                else { sidebar_ = true; sideGit_ = false; sideSearch_ = false; revealCurrent(); }
+                else { sidebar_ = true; sideGit_ = false; sideSearch_ = false; sideDebug_ = false; revealCurrent(); }
                 break;
             case 1:
                 if (activityActive(1)) { sidebar_ = false; gitMsgFocus_ = false; }
-                else { sidebar_ = true; sideGit_ = true; sideSearch_ = false; sideFocus_ = false; gitNextPoll_ = {}; }
+                else { sidebar_ = true; sideGit_ = true; sideSearch_ = false; sideDebug_ = false; sideFocus_ = false; gitNextPoll_ = {}; }
                 break;
             case 5:
                 if (activityActive(5)) { sidebar_ = false; sFocus_ = -1; }
                 else openSearch(false);
+                break;
+            case 6:
+                if (activityActive(6)) sidebar_ = false;
+                else { sidebar_ = true; sideDebug_ = true; sideGit_ = false; sideSearch_ = false; sideFocus_ = false; sFocus_ = -1; }
                 break;
             case 2:
                 if (activityActive(2)) panelOpen_ = false;
@@ -903,14 +927,14 @@ private:
             fill(pill, Color::rgb(0xffffff, 34), pill.w / 2);
             fill(pill.x + hair, pill.y + hair, pill.w - 2 * hair, pill.h - 2 * hair, Color::rgb(0x0d0e11), pill.w / 2 - hair);
         }
-        for (int i = 0; i < 6; ++i) {
+        for (int i = 0; i < 7; ++i) {
             const Rect r = activityRect(i);
             const bool active = activityActive(i), hot = hoverAct_ == i + 1;
             if (hot && !active) fill(r, Color::rgb(0xffffff, 26), r.w / 2);
             const float ix = std::round(r.x + (r.w - static_cast<float>(ip)) / 2), iy = std::round(r.y + (r.h - static_cast<float>(ip)) / 2);
             const Color col = active ? theme::accent.mix(Color::rgb(0xffffff), 0.14f) : Color::rgb(0xffffff);   // the active view's icon takes the accent
             // Material Design icons: file-tree, source-branch, script-text-play (output), console-line (terminal), alert.
-            static constexpr std::array<char32_t, 6> glyphs = {0xF13D2, 0xF062C, 0xF1728, 0xF07B7, 0xF002A, 0xF0349};
+            static constexpr std::array<char32_t, 7> glyphs = {0xF13D2, 0xF062C, 0xF1728, 0xF07B7, 0xF002A, 0xF0349, 0xF00E4};
             Icons::glyph(dl_, font_, ix, iy, ip, glyphs[static_cast<std::size_t>(i)], col);
             if (i == 4 && hasErrors) {
                 const float d = std::round(7 * s);
@@ -1304,7 +1328,7 @@ private:
         p.minimap = {p.editor.right() - mapW, p.editor.y, mapW, p.editor.h};
         const int lines = p.cur ? p.cur->buf.lineCount() : 1;
         const int digits = std::max(3, static_cast<int>(std::to_string(lines).size()));
-        p.gutterW = (static_cast<float>(digits) + 2.5f) * cw();
+        p.gutterW = (static_cast<float>(digits) + 3.4f) * cw();
         p.textX = p.editor.x + p.gutterW;
         p.textW = std::max(0.0f, p.editor.w - p.gutterW - mapW - 12 * s);
 
@@ -1411,6 +1435,7 @@ private:
         if (gitMsgFocus_ && gitView() && gitMsgKey(k)) { dirty_ = true; return; }
         if (sFocus_ >= 0 && searchView() && searchKey(k)) { dirty_ = true; return; }
         if (termFocus_ && panelOpen_ && panelTab_ == 3 && termKey(k)) { dirty_ = true; return; }
+        if (dbgConFocus_ && panelOpen_ && panelTab_ == 4 && dbgConKey(k)) { dirty_ = true; return; }
         if (runFocus_ && runProc_ && panelOpen_ && panelTab_ == 1 && runKey(k)) { dirty_ = true; return; }
         if (tabDrag_.active) {  // a tab is being dragged: Esc cancels, other keys are ignored
             if (k.key == Key::Escape) { tabDrag_ = {}; dirty_ = true; }
@@ -1418,7 +1443,7 @@ private:
         }
         if (menu_.open) { menuKey(k); dirty_ = true; return; }
         if (prompt_.kind != PromptKind::None) { promptKey(k); return; }
-        if (sidebar_ && sideFocus_ && !sideGit_ && !sideSearch_ && explorerKey(k)) { dirty_ = true; return; }
+        if (sidebar_ && sideFocus_ && !sideGit_ && !sideSearch_ && !sideDebug_ && explorerKey(k)) { dirty_ = true; return; }
         editorKey(k);
         dirty_ = true;
     }
@@ -2074,6 +2099,19 @@ private:
                 dirty_ = true;
             });
         }
+        if (dbg_ && dbgState_ == DbgState::Stopped && isCppDoc(d)) {   // value of the expression under the pointer while paused
+            std::string expr;
+            if (d.hasSelection() && at >= d.selBegin() && at <= d.selEnd() && d.selectedText().find('\n') == std::string::npos) expr = d.selectedText();
+            else { auto [wa, wb] = d.wordRange(at); if (wa.line == wb.line && wb.col > wa.col) expr = d.buf.slice(wa, wb); }
+            if (!expr.empty() && (std::isalpha(static_cast<unsigned char>(expr[0])) || expr[0] == '_' || d.hasSelection()))
+                dbg_->send("-data-evaluate-expression " + gdb::quote(expr), [this, seq, at, expr](const gdb::Record& r) {
+                    if (seq != hoverSeq_ || hover_.pos != at || !r.ok()) return;
+                    if (!hover_.lines.empty()) hover_.lines.emplace_back("", 0);
+                    hover_.lines.emplace_back(expr + " = " + r.data["value"].str(), 0);
+                    hover_.show = true;
+                    dirty_ = true;
+                });
+        }
         hover_.show = !hover_.lines.empty();
         dirty_ = true;
     }
@@ -2319,6 +2357,7 @@ private:
         pendingBuild_ = false;
         runAfterBuild_ = false;
         if (buildProc_) buildProc_->terminate();
+        if (dbg_) debugStop();
         if (runProc_) runProc_->terminate();
     }
 
@@ -2428,18 +2467,16 @@ private:
         const CMakeTarget& t = targets_[static_cast<std::size_t>(target_)];
         std::error_code ec;
         if (!fs::exists(t.artifact, ec)) { setMessage("Executable not found: " + t.artifact.string(), true); return; }
+        if (debug) {   // gdb through its machine interface (breakpoints, stepping, variables ...)
+            debugLaunch({t.artifact.string(), t.artifact.parent_path().string(), runArgs_, t.name});
+            return;
+        }
         if (runProc_) { runProc_->terminate(); runProc_.reset(); }
         runOut_.clear();
         runPartial_.clear();
         ProcessOptions o;
         o.usePty = true;   // the program runs on a terminal: prompts show immediately and it can read the keyboard
-        if (debug) {
-            // Debug = gdb on the Run panel's terminal: stops at main, then you drive it with gdb commands.
-            if (!findExecutable("gdb")) { setMessage("gdb was not found - install it to debug", true, 4); return; }
-            o.argv = {"gdb", "-q", "-ex", "set confirm off", "-ex", "set pagination off", "-ex", "break main", "-ex", "run", "--args", t.artifact.string()};
-        } else {
-            o.argv = {t.artifact.string()};
-        }
+        o.argv = {t.artifact.string()};
         for (auto& a : splitArgs(runArgs_)) o.argv.push_back(a);
         o.cwd = t.artifact.parent_path().string();
         std::string cmd;
@@ -2696,6 +2733,7 @@ private:
 
     std::size_t panelRowCount() const {
         if (panelTab_ == 2) return shownProblems_.size();
+        if (panelTab_ == 4) return dbgCon_.size();
         return panelLines().size() + (panelTab_ == 1 && runProc_ ? 1 : 0);   // + the line the program is still writing
     }
     float panelHeadH() const { return std::round(font_.uiLineHeight() + 14 * S()); }
@@ -2784,13 +2822,15 @@ private:
         if (b != Button::Left) return;
         runFocus_ = false;
         termFocus_ = false;
+        dbgConFocus_ = false;
         psel_.active = false;
         if (my_ < p.y + 6 * S()) { panelDrag_ = true; return; }  // splitter at the top edge
         for (std::size_t i = 0; i < panelTabRects_.size(); ++i)
-            if (panelTabRects_[i].contains(mx_, my_)) { panelTab_ = static_cast<int>(i); psel_.active = false; runFocus_ = panelTab_ == 1 && runProc_; termFocus_ = panelTab_ == 3; if (termFocus_ && !termProc_ && !termExited_) startTerminal(); dirty_ = true; return; }
+            if (panelTabRects_[i].contains(mx_, my_)) { panelTab_ = static_cast<int>(i); psel_.active = false; runFocus_ = panelTab_ == 1 && runProc_; termFocus_ = panelTab_ == 3; dbgConFocus_ = panelTab_ == 4; if (termFocus_ && !termProc_ && !termExited_) startTerminal(); dirty_ = true; return; }
         if (panelClose_.contains(mx_, my_)) { panelOpen_ = false; dirty_ = true; return; }
         if (panelClear_.contains(mx_, my_)) {
-            if (panelTab_ == 3) { if (!termProc_) term_.reset(); }
+            if (panelTab_ == 4) dbgCon_.clear();
+            else if (panelTab_ == 3) { if (!termProc_) term_.reset(); }
             else if (panelTab_ == 1) runOut_.clear(); else if (panelTab_ == 0) { buildOut_.clear(); problems_.clear(); }
             else problems_.clear();
             dirty_ = true;
@@ -2798,6 +2838,7 @@ private:
         }
         Rect body = panelBody();
         if (body.contains(mx_, my_) && panelTab_ == 3) { termClick(body); dirty_ = true; return; }
+        if (body.contains(mx_, my_) && panelTab_ == 4) { dbgConFocus_ = dbgConIn_.contains(mx_, my_) || true; dbgIn_.cur = dbgConIn_.contains(mx_, my_) ? dbgIn_.text.size() : dbgIn_.cur; dirty_ = true; return; }
         if (body.contains(mx_, my_)) {
             runFocus_ = panelTab_ == 1 && runProc_;   // clicking the Run output gives the program the keyboard
             // Press starts a text selection; releasing without dragging counts as a click on the row.
@@ -2822,6 +2863,7 @@ private:
         const Rect body = panelBody();
         const std::size_t tab = static_cast<std::size_t>(panelTab_);
         if (panelTab_ == 3) drawTerminalBody(body);
+        else if (panelTab_ == 4) drawDebugConsole(body);
         else {
         panelScroll_[tab] = std::clamp(panelFollow_[tab] ? panelMaxScroll() : panelScroll_[tab], 0.0f, panelMaxScroll());
         const float sy = std::round(panelScroll_[tab]);
@@ -2880,9 +2922,9 @@ private:
 
         // Header: darker band, text tabs with an accent underline (no pills, no borders).
         fill(p.x, p.y, p.w, hh, theme::panelHead);
-        static constexpr std::array<std::string_view, 4> names = {"Build", "Run", "Problems", "Terminal"};
+        static constexpr std::array<std::string_view, 5> names = {"Build", "Run", "Problems", "Terminal", "Debug"};
         float x = p.x + 8 * s;
-        for (std::size_t i = 0; i < 4; ++i) {
+        for (std::size_t i = 0; i < 5; ++i) {
             std::string t = std::string(names[i]);
             if (i == 2 && !shownProblems_.empty()) t += std::format("  {}", shownProblems_.size());
             const float w = uiW(t) + 28 * s;
@@ -2927,7 +2969,8 @@ private:
 
     // New file / new folder / rename / delete are asked for in a card at the bottom of the sidebar (not in the editor).
     bool sidePrompt() const {
-        return prompt_.kind == PromptKind::NewFile || prompt_.kind == PromptKind::NewFolder || prompt_.kind == PromptKind::Rename || prompt_.kind == PromptKind::Delete;
+        return prompt_.kind == PromptKind::NewFile || prompt_.kind == PromptKind::NewFolder || prompt_.kind == PromptKind::Rename || prompt_.kind == PromptKind::Delete ||
+               prompt_.kind == PromptKind::DbgWatch || prompt_.kind == PromptKind::DbgSetValue || prompt_.kind == PromptKind::DbgBpEdit || prompt_.kind == PromptKind::DbgFuncBp;
     }
     float sideCardH() const { return sidePrompt() ? std::round(L_.rowH * 2 + 22 * S()) : 0; }
 
@@ -3023,7 +3066,9 @@ private:
         prompt_ = std::move(p);
         fileOpPath_ = target;
         overwriteArmed_.clear();
-        if (!sidebar_ || sideGit_ || sideSearch_) { sidebar_ = true; sideGit_ = false; sideSearch_ = false; }
+        const bool dbgPrompt = kind == PromptKind::DbgWatch || kind == PromptKind::DbgSetValue || kind == PromptKind::DbgBpEdit || kind == PromptKind::DbgFuncBp;
+        if (dbgPrompt) { sidebar_ = true; }
+        else if (!sidebar_ || sideGit_ || sideSearch_ || sideDebug_) { sidebar_ = true; sideGit_ = false; sideSearch_ = false; sideDebug_ = false; sideDebug_ = false; }
         sideFocus_ = false;
         dirty_ = true;
     }
@@ -3366,6 +3411,7 @@ private:
         if (k.key == Key::F12) { gotoDefinition(); scrollToCursor_ = false; return; }
         if (alt && !ctrl && k.key == Key::Char && k.ch == 'o') { switchHeaderSource(); scrollToCursor_ = false; return; }
         if (alt && !ctrl && k.key == Key::Left) { navBack(); return; }
+        if (debugKey(k)) { scrollToCursor_ = false; return; }
         if (k.key == Key::F9 && ctrl) { cmakeBuild(false); scrollToCursor_ = false; return; }
         if (k.key == Key::F10 && shift) { cmakeBuild(true); scrollToCursor_ = false; return; }
         if (k.key == Key::F9 && shift) { cmakeBuild(true, true); scrollToCursor_ = false; return; }
@@ -3386,7 +3432,7 @@ private:
                 case 'q': requestQuit(); break;
                 case 'f': if (shift) openSearch(false); else openPrompt(PromptKind::Find); scrollToCursor_ = false; break;
                 case 'h': if (shift) openSearch(true); else openPrompt(PromptKind::Replace); scrollToCursor_ = false; break;
-                case 'g': if (shift) { sidebar_ = true; sideGit_ = true; sideSearch_ = false; sideFocus_ = false; gitNextPoll_ = {}; dirty_ = true; scrollToCursor_ = false; } else openPrompt(PromptKind::Goto); break;
+                case 'g': if (shift) { sidebar_ = true; sideGit_ = true; sideSearch_ = false; sideDebug_ = false; sideFocus_ = false; gitNextPoll_ = {}; dirty_ = true; scrollToCursor_ = false; } else openPrompt(PromptKind::Goto); break;
                 case 'z': if (shift) d.redo(); else d.undo(); break;
                 case 'y': d.redo(); break;
                 case 'a': d.selectAll(); break;
@@ -3666,6 +3712,13 @@ private:
                 finishFileOp(text);
                 break;
             }
+            case PromptKind::DbgWatch: case PromptKind::DbgSetValue: case PromptKind::DbgBpEdit: case PromptKind::DbgFuncBp: {
+                const std::string text = f.text;
+                const PromptKind kd = prompt_.kind;
+                closePrompt();
+                dbgFinishPrompt(kd, text);
+                break;
+            }
             case PromptKind::SaveAs: {
                 std::string p = expandPath(f.text);
                 if (p.empty()) break;
@@ -3807,7 +3860,7 @@ private:
             dirty_ = true;
         }
         int hr = -1;
-        if (sidebar_ && !sideGit_ && !sideSearch_ && L_.sideList.contains(mx_, my_)) {
+        if (sidebar_ && !sideGit_ && !sideSearch_ && !sideDebug_ && L_.sideList.contains(mx_, my_)) {
             hr = static_cast<int>(std::floor((my_ - L_.sideList.y + sideScroll_) / L_.sideRow));
             if (hr < 0 || hr >= static_cast<int>(explorer_.rows().size())) hr = -1;
         }
@@ -3830,7 +3883,7 @@ private:
         if (panelOpen_ && panelBody().contains(mx_, my_))
             hpr = static_cast<int>(std::floor((my_ - panelBody().y + panelScroll_[static_cast<std::size_t>(panelTab_)]) / lh()));
         if (gitView()) gitUpdateHover();
-        if (searchView() && L_.side.contains(mx_, my_)) dirty_ = true;
+        if ((searchView() || debugView()) && L_.side.contains(mx_, my_)) dirty_ = true;
         if (hb != hoverBtn_ || ht != hoverTab_ || hc != hoverClose_ || hover != hoverTool_ || hpr != hoverPanelRow_) {
             if (hover != hoverTool_) { toolHoverAt_ = Clock::now(); toolTipShown_ = false; }
             hoverBtn_ = hb; hoverTab_ = ht; hoverClose_ = hc; hoverTool_ = hover; hoverPanelRow_ = hpr;
@@ -4018,7 +4071,7 @@ private:
             if (pressed) dlgClick(b, mx_, my_);
             return;
         }
-        if (pressed && !(panelOpen_ && L_.panel.contains(mx_, my_))) { runFocus_ = false; termFocus_ = false; psel_.active = false; gitMsgFocus_ = false; if (!(sidebar_ && L_.side.contains(mx_, my_))) sFocus_ = -1; }
+        if (pressed && !(panelOpen_ && L_.panel.contains(mx_, my_))) { runFocus_ = false; termFocus_ = false; dbgConFocus_ = false; psel_.active = false; gitMsgFocus_ = false; if (!(sidebar_ && L_.side.contains(mx_, my_))) sFocus_ = -1; }
         if (hover_.show && !hover_.lines.empty() && !menu_.open && hoverRect_.contains(mx_, my_)) {   // the tooltip is selectable
             if (pressed && b == Button::Left) {
                 if (hoverCopyRect_.contains(mx_, my_)) { std::string t; for (std::size_t i = 0; i < hover_.lines.size(); ++i) t += (i ? "\n" : "") + hover_.lines[i].first; win_.setClipboard(t); setMessage("Copied", false, 1.2f); }
@@ -4026,6 +4079,7 @@ private:
             }
             return;
         }
+        if (pressed && b == Button::Left && !menu_.open && dbgBarClick()) return;
         if (menu_.open) {  // the menu captures the click; clicking outside just dismisses it
             if (pressed) {
                 int i = menuItemAt(mx_, my_);
@@ -4063,6 +4117,7 @@ private:
         sideFocus_ = sidebar_ && L_.side.contains(mx_, my_);
         if (sidebar_ && b == Button::Left && L_.split.contains(mx_, my_)) { splitDrag_ = true; return; }
         if (sidebar_ && L_.side.contains(mx_, my_)) {
+            if (sideDebug_) { debugClick(b); return; }
             if (sideSearch_) { searchClick(b); return; }
             if (sideGit_) {   // the Git view handles its own hits
                 if (b == Button::Left && L_.sideList.contains(mx_, my_)) gitPanelClick(); else gitMsgFocus_ = false;
@@ -4160,11 +4215,19 @@ private:
 
         if (docs_.empty() || !L_.editor.contains(mx_, my_)) return;
         Document& d = doc();
+        if (b == Button::Right && mx_ < L_.textX + 0 && L_.editor.contains(mx_, my_)) { openEditorMenu(posAt(d, mx_, my_)); return; }
+        if (b == Button::Right) {
+            const Pos pp = posAt(d, mx_, my_);
+            if (!d.hasSelection() || pp < d.selBegin() || pp > d.selEnd()) d.setCursor(pp);
+            openEditorMenu(pp);
+            return;
+        }
         if (b != Button::Left) return;
         if (inScrollbar(d, mx_, my_)) { scrollbarDrag_ = true; dragStep(d); return; }
         if (inMinimap(mx_, my_)) { miniDrag_ = true; miniJump(d); return; }
-        if (mx_ < L_.textX) {  // gutter: select the whole line
+        if (mx_ < L_.textX) {  // gutter: breakpoint toggle in the left strip, otherwise select the whole line
             int line = posAt(d, mx_, my_).line;
+            if (mx_ < L_.editor.x + 1.9f * cw()) { dbgToggleBpAt(d.path, line + 1); return; }
             d.selectLine(line);
             dragging_ = false;
             return;
@@ -4193,6 +4256,12 @@ private:
         if (dlg_.kind != DlgKind::None) { dlgScroll(stepsY != 0 ? static_cast<float>(stepsY) * 3 * 34 * S() : dyPx * S()); dirty_ = true; return; }
         if (menu_.open) closeMenu();
         hideHover();
+        if (panelOpen_ && panelTab_ == 4 && L_.panel.contains(mx_, my_)) {
+            panelScroll_[4] = std::max(0.0f, panelScroll_[4] + (stepsY != 0 ? static_cast<float>(stepsY) * 3 * lh() : dyPx * S()));
+            panelFollow_[4] = false;
+            dirty_ = true;
+            return;
+        }
         if (panelOpen_ && panelTab_ == 3 && L_.panel.contains(mx_, my_)) {
             const int n = stepsY != 0 ? stepsY * 3 : static_cast<int>(std::round(dyPx * S() / lh()));
             if (term_.altScreen() && termProc_) {   // full-screen programs get arrow keys instead of scrollback
@@ -4213,6 +4282,7 @@ private:
             dirty_ = true;
             return;
         }
+        if (debugView() && L_.side.contains(mx_, my_)) { debugScroll(stepsY != 0 ? static_cast<float>(stepsY) * 3 * L_.sideRow : dyPx * S()); return; }
         if (searchView() && L_.side.contains(mx_, my_)) { searchScroll(stepsY != 0 ? static_cast<float>(stepsY) * 3 * L_.sideRow : dyPx * S()); return; }
         if (gitView() && L_.side.contains(mx_, my_)) {
             gitScroll_ = std::clamp(gitScroll_ + (stepsY != 0 ? static_cast<float>(stepsY) * 3 * lh() : dyPx * S()), 0.0f, gitMax_);
@@ -5363,7 +5433,7 @@ private:
 
     void openSearch(bool replace) {
         if (!explorer_.isOpen()) { setMessage("Open a folder to search in it", false, 2.5f); return; }
-        sidebar_ = true; sideSearch_ = true; sideGit_ = false;
+        sidebar_ = true; sideSearch_ = true; sideGit_ = false; sideDebug_ = false;
         sideFocus_ = false; gitMsgFocus_ = false;
         if (!docs_.empty() && doc().hasSelection()) {
             std::string t = doc().selectedText();
@@ -5723,6 +5793,1212 @@ private:
         else if (fR.contains(mx_, my_)) fill(fR, Color::rgb(0xffffff, 22), 5 * s);
         uiLabelC(fR.x + fR.w / 2, fR.y, fR.h, flt, sFilters_ ? Color::rgb(0xffffff) : theme::dim);
         uiLabel(sd.x + 14 * s, sumR.y, rh, sum, sc, fR.x - 6 * s);
+    }
+
+    // ============================================================ debugger (gdb through its machine interface)
+
+    enum class DbgState { Off, Starting, Running, Stopped };
+    struct Breakpoint {
+        int uid = 0;
+        std::string file; int line = 0;   // line breakpoint: absolute path, 1-based line
+        std::string func;                  // function breakpoint
+        std::string watch;                 // data breakpoint (expression)
+        bool exceptions = false;           // C++ throw
+        std::string cond, log;             // condition; logpoint message with {expr} parts
+        int ignore = 0;
+        bool enabled = true, verified = false;
+        int id = -1, hits = 0;             // gdb's number / hit count while a session runs
+    };
+    struct DbgFrame { int level = 0, line = 0; std::string func, file, full, addr; };
+    struct DbgThread { int id = 0; std::string name, state, func; };
+    struct DbgVar {
+        std::string exp, path, vo, type, value;
+        int numchild = 0;
+        bool expanded = false, loaded = false, changed = false;
+        std::vector<std::shared_ptr<DbgVar>> kids;
+    };
+    using VarP = std::shared_ptr<DbgVar>;
+    struct DbgLaunch { std::string exe, cwd, args, name; };
+    struct ConLine { std::string text; int kind = 0; };   // kinds: 0 output, 1 error, 2 input echo, 3 logpoint, 4 info
+
+    std::unique_ptr<gdb::Session> dbg_;
+    DbgState dbgState_ = DbgState::Off;
+    DbgLaunch dbgLast_;
+    int dbgGen_ = 0, dbgVarGen_ = 0, dbgUid_ = 1, dbgSel_ = 0, dbgThread_ = 0;
+    bool dbgForceMain_ = false, dbgInterrupting_ = false, dbgEndPending_ = false;
+    int dbgEndCode_ = 0;
+    std::string dbgEndWhy_, dbgStopText_;
+    std::vector<std::function<void()>> dbgOps_;
+    std::vector<Breakpoint> bps_;
+    std::vector<std::string> watches_;
+    std::vector<DbgFrame> dbgFrames_;
+    std::vector<DbgThread> dbgThreads_;
+    std::vector<VarP> dbgLocals_, dbgWatchVars_;
+    std::set<std::string> dbgExpanded_;
+    std::map<std::string, std::string> dbgPrev_;
+    struct DbgPos { std::string file; int line = 0; } dbgLine_;   // execution line shown in the editor
+    std::vector<ConLine> dbgCon_;
+    std::string dbgConPartial_;
+    TextBox dbgIn_;
+    std::vector<std::string> dbgHist_;
+    int dbgHistAt_ = -1;
+    bool dbgConFocus_ = false;
+    bool dbgSec_[4] = {true, true, true, true};
+    float dbgScroll_ = 0, dbgMax_ = 0, dbgTop_ = 0;
+    VarP dbgEditVar_;
+    int dbgPromptUid_ = -1;
+    bool sideDebug_ = false;
+    bool debugView() const { return sidebar_ && sideDebug_; }
+    bool debugging() const { return dbg_ != nullptr; }
+
+    // ---- console
+
+    void dbgConsole(std::string text, int kind = 0) {
+        dbgCon_.push_back({std::move(text), kind});
+        if (dbgCon_.size() > 5000) dbgCon_.erase(dbgCon_.begin(), dbgCon_.begin() + 1000);
+        panelFollow_[4] = true;
+        dirty_ = true;
+    }
+    void dbgConsoleStream(const std::string& t) {
+        dbgConPartial_ += t;
+        for (std::size_t nl; (nl = dbgConPartial_.find('\n')) != std::string::npos;) {
+            std::string line = dbgConPartial_.substr(0, nl);
+            dbgConPartial_.erase(0, nl + 1);
+            dbgConsole(std::move(line), 0);
+        }
+    }
+
+    // ---- breakpoints
+
+    fs::path dbgFile() const { return explorer_.isOpen() ? explorer_.rootPath() / ".daemon" / "debug.json" : fs::path(); }
+
+    void dbgSave() {
+        const fs::path f = dbgFile();
+        if (f.empty()) return;
+        auto j = json::object();
+        auto arr = json::array();
+        for (const auto& b : bps_) {
+            auto o = json::object();
+            o.set("file", b.file.empty() ? std::string() : fs::path(b.file).lexically_relative(explorer_.rootPath()).string());
+            o.set("line", b.line); o.set("func", b.func); o.set("watch", b.watch); o.set("exceptions", b.exceptions);
+            o.set("cond", b.cond); o.set("log", b.log); o.set("ignore", b.ignore); o.set("enabled", b.enabled);
+            arr.push(std::move(o));
+        }
+        j.set("breakpoints", std::move(arr));
+        auto w = json::array();
+        for (const auto& e : watches_) w.push(e);
+        j.set("watches", std::move(w));
+        std::error_code ec;
+        fs::create_directories(f.parent_path(), ec);
+        std::ofstream(f, std::ios::binary | std::ios::trunc) << json::dump(j);
+    }
+
+    void dbgLoad() {
+        bps_.clear(); watches_.clear();
+        const fs::path f = dbgFile();
+        if (f.empty()) return;
+        auto text = readFile(f);
+        if (!text) return;
+        auto j = json::parse(*text);
+        if (!j) return;
+        if (auto* a = (*j)["breakpoints"].array())
+            for (const auto& v : *a) {
+                Breakpoint b;
+                b.uid = dbgUid_++;
+                const std::string rel = v["file"].str();
+                b.file = rel.empty() ? std::string() : (explorer_.rootPath() / rel).lexically_normal().string();
+                b.line = v["line"].integer(); b.func = v["func"].str(); b.watch = v["watch"].str();
+                b.exceptions = v["exceptions"].boolean(); b.cond = v["cond"].str(); b.log = v["log"].str();
+                b.ignore = v["ignore"].integer(); b.enabled = v["enabled"].boolean(true);
+                bps_.push_back(std::move(b));
+            }
+        if (auto* a = (*j)["watches"].array()) for (const auto& v : *a) if (v.isString()) watches_.push_back(v.str());
+    }
+
+    Breakpoint* dbgBpByUid(int uid) {
+        for (auto& b : bps_) if (b.uid == uid) return &b;
+        return nullptr;
+    }
+    Breakpoint* dbgBpById(int id) {
+        for (auto& b : bps_) if (b.id == id) return &b;
+        return nullptr;
+    }
+    Breakpoint* dbgBpAt(const std::string& file, int line) {
+        for (auto& b : bps_) if (b.func.empty() && b.watch.empty() && !b.exceptions && b.file == file && b.line == line) return &b;
+        return nullptr;
+    }
+
+    std::string dbgBpTitle(const Breakpoint& b) const {
+        if (b.exceptions) return "C++ exceptions (throw)";
+        if (!b.watch.empty()) return "watch " + b.watch;
+        if (!b.func.empty()) return b.func + "()";
+        return fs::path(b.file).filename().string() + ":" + std::to_string(b.line);
+    }
+
+    // gdb refuses breakpoint changes while the program runs: interrupt, apply, continue.
+    void dbgWhenPaused(std::function<void()> fn) {
+        if (!dbg_) return;
+        if (dbgState_ != DbgState::Running) { fn(); return; }
+        dbgOps_.push_back(std::move(fn));
+        if (!dbgInterrupting_) { dbgInterrupting_ = true; dbg_->send("-exec-interrupt --all"); }
+    }
+
+    static std::string dbgBpCommand(const Breakpoint& b) {
+        if (b.exceptions) return "-catch-throw";
+        if (!b.watch.empty()) return "-break-watch " + gdb::quote(b.watch);
+        std::string c = "-break-insert -f";
+        if (!b.cond.empty()) c += " -c " + gdb::quote(b.cond);
+        if (b.ignore > 0) c += " -i " + std::to_string(b.ignore);
+        if (!b.func.empty()) return c + " " + gdb::quote(b.func);
+        return c + " --source " + gdb::quote(b.file) + " --line " + std::to_string(b.line);
+    }
+
+    void dbgInsert(int uid) {
+        Breakpoint* b = dbgBpByUid(uid);
+        if (!dbg_ || !b) return;
+        const bool enabled = b->enabled, isLine = b->func.empty() && b->watch.empty() && !b->exceptions;
+        dbg_->send(dbgBpCommand(*b), [this, uid, enabled, isLine](const gdb::Record& r) {
+            Breakpoint* p = dbgBpByUid(uid);
+            if (!r.ok()) { if (p) p->verified = false; dbgConsole("Breakpoint: " + r.msg(), 1); return; }
+            const json::Value& bk = r.data["bkpt"].isNull() ? r.data["wpt"] : r.data["bkpt"];
+            const int id = std::atoi(bk["number"].str().c_str());
+            if (!p) { if (dbg_) dbg_->send("-break-delete " + std::to_string(id)); return; }   // removed while it was being inserted
+            p->id = id;
+            p->verified = bk["addr"].str() != "<PENDING>";
+            if (isLine) {
+                const int l = std::atoi(bk["line"].str().c_str());
+                if (l > 0 && l != p->line && p->verified) { p->line = l; dbgSave(); }   // gdb moved it to the next line with code
+            }
+            if (!enabled && dbg_) dbg_->send("-break-disable " + std::to_string(id));
+            dirty_ = true;
+        });
+    }
+
+    void dbgAddBp(Breakpoint b) {
+        b.uid = dbgUid_++;
+        bps_.push_back(std::move(b));
+        const int uid = bps_.back().uid;
+        dbgSave();
+        dbgWhenPaused([this, uid] { dbgInsert(uid); });
+        dirty_ = true;
+    }
+
+    void dbgRemoveBp(int uid) {
+        auto it = std::ranges::find_if(bps_, [&](const Breakpoint& b) { return b.uid == uid; });
+        if (it == bps_.end()) return;
+        const int id = it->id;
+        bps_.erase(it);
+        if (id >= 0) dbgWhenPaused([this, id] { if (dbg_) dbg_->send("-break-delete " + std::to_string(id)); });
+        dbgSave();
+        dirty_ = true;
+    }
+
+    void dbgToggleBpAt(const std::string& file, int line) {
+        if (file.empty()) { setMessage("Save the file first to set breakpoints", true, 2.5f); return; }
+        if (Breakpoint* b = dbgBpAt(file, line)) { dbgRemoveBp(b->uid); return; }
+        Breakpoint nb;
+        nb.file = file; nb.line = line;
+        dbgAddBp(std::move(nb));
+    }
+
+    void dbgSetEnabled(int uid, bool on) {
+        Breakpoint* b = dbgBpByUid(uid);
+        if (!b) return;
+        b->enabled = on;
+        const int id = b->id;
+        if (id >= 0) dbgWhenPaused([this, id, on] { if (dbg_) dbg_->send((on ? "-break-enable " : "-break-disable ") + std::to_string(id)); });
+        dbgSave();
+        dirty_ = true;
+    }
+
+    // Edit text: "expr" = condition, "#N" = ignore the first N hits, "log: text {expr}" = logpoint, empty = plain breakpoint.
+    static std::string dbgBpEditText(const Breakpoint& b) {
+        if (!b.log.empty()) return "log: " + b.log;
+        if (b.ignore > 0 && b.cond.empty()) return "#" + std::to_string(b.ignore);
+        return b.cond;
+    }
+    void dbgApplyBpEdit(int uid, std::string t) {
+        Breakpoint* b = dbgBpByUid(uid);
+        if (!b) return;
+        while (!t.empty() && t.front() == ' ') t.erase(0, 1);
+        b->cond.clear(); b->log.clear(); b->ignore = 0;
+        if (t.starts_with("log:")) { b->log = t.substr(4); while (!b->log.empty() && b->log.front() == ' ') b->log.erase(0, 1); }
+        else if (t.starts_with("#")) b->ignore = std::max(0, std::atoi(t.c_str() + 1));
+        else b->cond = t;
+        const int id = b->id, ign = b->ignore;
+        const std::string cond = b->cond;
+        if (id >= 0)
+            dbgWhenPaused([this, id, cond, ign] {
+                if (!dbg_) return;
+                dbg_->send("-break-condition " + std::to_string(id) + (cond.empty() ? "" : " " + cond));
+                dbg_->send("-break-after " + std::to_string(id) + " " + std::to_string(ign));
+            });
+        dbgSave();
+        dirty_ = true;
+    }
+
+    // ---- starting and ending a session
+
+    void debugLaunch(const DbgLaunch& L) {
+        if (!findExecutable("gdb")) { setMessage("gdb was not found - install it to debug", true, 4); return; }
+        if (dbg_) { dbgEnd("Restarting", 0, true); }
+        dbgLast_ = L;
+        if (runProc_) { win_.unwatch(runProc_->outFd()); runProc_->terminate(); runProc_.reset(); }
+        runOut_.clear(); runPartial_.clear();
+        runProc_ = std::make_unique<Process>();
+        auto tty = runProc_->openPtyOnly();
+        if (!tty) { setMessage("Cannot open a terminal for the program: " + tty.error(), true, 4); runProc_.reset(); return; }
+        dbg_ = std::make_unique<gdb::Session>();
+        if (auto st = dbg_->start({"gdb", "--interpreter=mi3", "-q", "-nx"}, L.cwd); !st) {
+            setMessage("Cannot start gdb: " + st.error(), true, 4);
+            dbg_.reset(); runProc_.reset();
+            return;
+        }
+        runOut_.push_back({"$ " + L.exe + (L.args.empty() ? "" : " " + L.args), 4, -1});
+        runEof_ = false;
+        runFocus_ = true;
+        win_.watch(runProc_->outFd(), [this] { pumpRun(); });
+        win_.watch(dbg_->fd(), [this] { pumpDebug(); });
+        dbg_->onAsync = [this](const gdb::Record& r) { dbgAsync(r); };
+        dbg_->onStream = [this](char k, const std::string& t) { if (k == '~') dbgConsoleStream(t); };
+        dbgState_ = DbgState::Starting;
+        ++dbgGen_;
+        dbgFrames_.clear(); dbgThreads_.clear(); dbgLocals_.clear(); dbgWatchVars_.clear(); dbgLine_ = {}; dbgSel_ = 0;
+        dbgOps_.clear(); dbgInterrupting_ = false; dbgEndPending_ = false;
+        for (auto& b : bps_) { b.id = -1; b.verified = false; b.hits = 0; }
+        dbgConsole("--- Debugging " + L.name + " ---", 4);
+        panelOpen_ = true; panelTab_ = 1; panelFollow_[1] = true;
+        sidebar_ = true; sideDebug_ = true; sideGit_ = false; sideSearch_ = false; sideFocus_ = false;
+        buildStatus_ = "Debugging " + L.name;
+
+        auto& g = *dbg_;
+        g.send("-gdb-set confirm off");
+        g.send("-gdb-set pagination off");
+        g.send("-gdb-set breakpoint pending on");
+        g.send("-gdb-set debuginfod enabled off");
+        g.send("-gdb-set print elements 200");
+        g.send("-gdb-set inferior-tty " + *tty);
+        g.send("-gdb-set cwd " + L.cwd);
+        if (!L.args.empty()) g.send("-gdb-set args " + L.args);
+        g.send("-enable-pretty-printing");
+        g.send("-file-exec-and-symbols " + gdb::quote(L.exe), [this](const gdb::Record& r) { if (!r.ok()) dbgConsole(r.msg(), 1); });
+        bool anyStop = false;
+        for (const auto& b : bps_) if (b.enabled && b.watch.empty()) anyStop = true;
+        for (const auto& b : bps_) dbgInsert(b.uid);
+        const bool stopAtMain = dbgForceMain_ || !anyStop;
+        dbgForceMain_ = false;
+        g.send(stopAtMain ? "-exec-run --start" : "-exec-run", [this](const gdb::Record& r) {
+            if (!r.ok()) { dbgConsole("Cannot run: " + r.msg(), 1); dbgScheduleEnd("Failed to start the program", -1); }
+        });
+        dirty_ = true;
+    }
+
+    void pumpDebug() {
+        if (!dbg_) return;
+        const bool alive = dbg_->pump();
+        dirty_ = true;
+        if (!alive && dbg_ && !dbgEndPending_) dbgScheduleEnd("gdb exited", -1);
+        if (dbgEndPending_) dbgEnd(dbgEndWhy_, dbgEndCode_, false);
+    }
+
+    void dbgScheduleEnd(std::string why, int code) { dbgEndPending_ = true; dbgEndWhy_ = std::move(why); dbgEndCode_ = code; }
+
+    void dbgEnd(const std::string& why, int code, bool quiet) {
+        dbgEndPending_ = false;
+        if (!dbg_) return;
+        win_.unwatch(dbg_->fd());
+        dbg_->kill();
+        dbg_.reset();   // (the destructor reaps gdb; the program dies with it)
+        dbgState_ = DbgState::Off;
+        ++dbgGen_;
+        dbgFrames_.clear(); dbgThreads_.clear(); dbgLocals_.clear(); dbgWatchVars_.clear(); dbgLine_ = {}; dbgOps_.clear(); dbgInterrupting_ = false;
+        for (auto& b : bps_) { b.id = -1; b.verified = false; }
+        if (!dbgConPartial_.empty()) { dbgConsole(dbgConPartial_, 0); dbgConPartial_.clear(); }
+        dbgConsole("--- " + why + " ---", 4);
+        if (runProc_) {
+            win_.unwatch(runProc_->outFd());
+            std::string rest;
+            runProc_->read(rest);
+            if (!rest.empty()) for (auto& l : takeLines(runPartial_, rest)) runOut_.push_back({cleanTerm(l), 0, -1});
+            if (!runPartial_.empty()) { runOut_.push_back({cleanTerm(runPartial_), 0, -1}); runPartial_.clear(); }
+            runOut_.push_back({"", 0, -1});
+            runOut_.push_back({why, code == 0 ? 5 : 2, -1});
+            runProc_.reset();
+            runEof_ = false;
+        }
+        runFocus_ = false;
+        if (!quiet) { buildStatus_ = why; setMessage(why, code != 0, 3.5f); }
+        dirty_ = true;
+    }
+
+    void debugStop() { if (dbg_) dbgEnd("Debugging stopped", 0, false); }
+
+    // ---- events from gdb
+
+    void dbgAsync(const gdb::Record& r) {
+        if (r.kind == '*' && r.cls == "running") {
+            dbgState_ = DbgState::Running;
+            ++dbgGen_; ++dbgVarGen_;
+            dbgLine_ = {};
+            dbgFrames_.clear();
+            dbgThreads_.clear();
+            dirty_ = true;
+        } else if (r.kind == '*' && r.cls == "stopped") {
+            dbgOnStopped(r.data);
+        } else if (r.kind == '=' && (r.cls == "breakpoint-modified" || r.cls == "breakpoint-created")) {
+            const auto& bk = r.data["bkpt"];
+            if (Breakpoint* b = dbgBpById(std::atoi(bk["number"].str().c_str()))) {
+                b->hits = std::atoi(bk["times"].str().c_str());
+                if (r.cls == "breakpoint-modified") b->verified = bk["addr"].str() != "<PENDING>";
+                dirty_ = true;
+            }
+        }
+    }
+
+    void dbgOnStopped(const json::Value& d) {
+        const std::string reason = d["reason"].str();
+        if (reason.starts_with("exited")) {
+            if (reason == "exited-signalled") dbgScheduleEnd("Program terminated by signal " + d["signal-name"].str() + " (" + d["signal-meaning"].str() + ")", 128);
+            else {
+                const int code = std::strtol(d["exit-code"].str("0").c_str(), nullptr, 8);   // gdb prints the code in octal
+                dbgScheduleEnd(reason == "exited-normally" ? "Program exited normally" : std::format("Program exited with code {}", code), code);
+            }
+            return;
+        }
+        if (dbgInterrupting_ && reason == "signal-received" && d["signal-name"].str() == "SIGINT") {   // we paused it to edit breakpoints
+            dbgInterrupting_ = false;
+            dbgState_ = DbgState::Stopped;
+            auto ops = std::move(dbgOps_);
+            dbgOps_.clear();
+            for (auto& op : ops) op();
+            if (dbg_) dbg_->send("-exec-continue");
+            return;
+        }
+        dbgState_ = DbgState::Stopped;
+        ++dbgGen_;
+        if (reason == "breakpoint-hit") {
+            if (Breakpoint* b = dbgBpById(std::atoi(d["bkptno"].str().c_str()))) {
+                b->hits = std::max(b->hits, 0) + 0;
+                if (!b->log.empty()) { dbgRunLogpoint(b->log); return; }
+            }
+        }
+        dbgThread_ = std::atoi(d["thread-id"].str().c_str());
+        dbgSel_ = 0;
+        std::string text;
+        if (reason == "breakpoint-hit") text = "Paused on breakpoint";
+        else if (reason == "end-stepping-range" || reason == "function-finished" || reason == "location-reached") text = "Paused";
+        else if (reason == "signal-received") {
+            text = "Received signal " + d["signal-name"].str() + " (" + d["signal-meaning"].str() + ")";
+            setMessage(text, true, 5);
+            dbgConsole(text, 1);
+        } else if (reason.find("watchpoint") != std::string::npos) {
+            const auto& w = d["wpt"].isNull() ? d["hw-wpt"] : d["wpt"];
+            text = "Watchpoint " + w["exp"].str() + ": " + d["value"]["old"].str() + " -> " + d["value"]["new"].str();
+            if (d["value"]["old"].isNull() && !d["value"]["value"].isNull()) text = "Watchpoint " + w["exp"].str() + " = " + d["value"]["value"].str();
+            dbgConsole(text, 4);
+        } else text = "Paused (" + reason + ")";
+        dbgStopText_ = text;
+        const auto& fr = d["frame"];
+        DbgFrame f;
+        f.func = fr["func"].str(); f.file = fr["file"].str(); f.full = fr["fullname"].str(); f.line = std::atoi(fr["line"].str().c_str()); f.addr = fr["addr"].str();
+        dbgShowFrame(f);
+        dbgRefreshStack();
+        dirty_ = true;
+    }
+
+    void dbgRunLogpoint(const std::string& msg) {
+        std::vector<std::string> parts, exprs;
+        std::string cur;
+        for (std::size_t i = 0; i < msg.size(); ++i) {
+            if (msg[i] == '{') {
+                const auto e = msg.find('}', i);
+                if (e == std::string::npos) { cur += msg.substr(i); break; }
+                parts.push_back(cur); cur.clear();
+                exprs.push_back(msg.substr(i + 1, e - i - 1));
+                i = e;
+            } else cur += msg[i];
+        }
+        parts.push_back(cur);
+        auto vals = std::make_shared<std::vector<std::string>>(exprs.size());
+        auto left = std::make_shared<int>(static_cast<int>(exprs.size()));
+        auto finish = [this, parts, vals] {
+            std::string out;
+            for (std::size_t i = 0; i < parts.size(); ++i) { out += parts[i]; if (i < vals->size()) out += (*vals)[i]; }
+            dbgConsole(out, 3);
+            if (dbg_) dbg_->send("-exec-continue");
+        };
+        if (exprs.empty()) { finish(); return; }
+        for (std::size_t i = 0; i < exprs.size(); ++i)
+            dbg_->send("-data-evaluate-expression " + gdb::quote(exprs[i]), [vals, left, i, finish](const gdb::Record& r) {
+                (*vals)[i] = r.ok() ? r.data["value"].str() : "<" + r.msg() + ">";
+                if (--*left == 0) finish();
+            });
+    }
+
+    // Shows the source line of a frame in the editor and marks it as the execution line.
+    void dbgShowFrame(const DbgFrame& f) {
+        dbgLine_ = {};
+        std::error_code ec;
+        std::string path = !f.full.empty() ? f.full : f.file;
+        if (path.empty() || f.line <= 0 || !fs::is_regular_file(path, ec)) return;
+        path = fs::path(path).lexically_normal().string();
+        dbgLine_ = {path, f.line};
+        openFile(path);
+        if (!docs_.empty() && doc().path == path) {
+            doc().setCursor({f.line - 1, 0});
+            scrollToCursor_ = true;
+        }
+        dirty_ = true;
+    }
+
+    void dbgRefreshStack() {
+        if (!dbg_) return;
+        const int gen = dbgGen_;
+        dbg_->send("-stack-list-frames 0 255", [this, gen](const gdb::Record& r) {
+            if (gen != dbgGen_ || !r.ok()) return;
+            dbgFrames_.clear();
+            if (const auto* a = r.data["stack"].array())
+                for (const auto& v : *a) {
+                    DbgFrame f;
+                    f.level = std::atoi(v["level"].str().c_str()); f.func = v["func"].str(); f.file = v["file"].str();
+                    f.full = v["fullname"].str(); f.line = std::atoi(v["line"].str().c_str()); f.addr = v["addr"].str();
+                    dbgFrames_.push_back(std::move(f));
+                }
+            dirty_ = true;
+        });
+        dbg_->send("-thread-info", [this, gen](const gdb::Record& r) {
+            if (gen != dbgGen_ || !r.ok()) return;
+            dbgThreads_.clear();
+            if (const auto* a = r.data["threads"].array())
+                for (const auto& v : *a) {
+                    DbgThread t;
+                    t.id = std::atoi(v["id"].str().c_str()); t.name = v["name"].str(); t.state = v["state"].str(); t.func = v["frame"]["func"].str();
+                    dbgThreads_.push_back(std::move(t));
+                }
+            dirty_ = true;
+        });
+        dbgRefreshVars();
+    }
+
+    void dbgSelectFrame(int level) {
+        if (!dbg_ || dbgState_ != DbgState::Stopped) return;
+        dbg_->send("-stack-select-frame " + std::to_string(level), [this, level](const gdb::Record& r) {
+            if (!r.ok()) return;
+            dbgSel_ = level;
+            for (const auto& f : dbgFrames_) if (f.level == level) dbgShowFrame(f);
+            dbgRefreshVars();
+        });
+    }
+
+    void dbgSelectThread(int id) {
+        if (!dbg_ || dbgState_ != DbgState::Stopped) return;
+        dbg_->send("-thread-select " + std::to_string(id), [this, id](const gdb::Record& r) {
+            if (!r.ok()) return;
+            dbgThread_ = id;
+            dbgSel_ = 0;
+            dbgRefreshStack();
+            dbg_->send("-stack-info-frame", [this](const gdb::Record& fr) {
+                const auto& f = fr.data["frame"];
+                DbgFrame d;
+                d.func = f["func"].str(); d.file = f["file"].str(); d.full = f["fullname"].str(); d.line = std::atoi(f["line"].str().c_str());
+                dbgShowFrame(d);
+            });
+        });
+    }
+
+    // ---- run control
+
+    void dbgContinueOrStart() {
+        if (!dbg_) { cmakeBuild(true, true); return; }
+        if (dbgState_ == DbgState::Stopped) dbg_->send("-exec-continue");
+    }
+    void dbgStep(const char* cmd) {
+        if (!dbg_) { dbgForceMain_ = true; cmakeBuild(true, true); return; }   // start and stop at main
+        if (dbgState_ == DbgState::Stopped) dbg_->send(cmd);
+    }
+    void dbgPause() { if (dbg_ && dbgState_ == DbgState::Running) dbg_->send("-exec-interrupt --all"); }
+    void dbgRestart() {
+        if (dbgLast_.exe.empty()) { cmakeBuild(true, true); return; }
+        const DbgLaunch l = dbgLast_;
+        debugLaunch(l);
+    }
+    void dbgRunToCursor() {
+        if (!dbg_ || dbgState_ != DbgState::Stopped || docs_.empty() || doc().path.empty()) return;
+        dbg_->send("-break-insert -t -f --source " + gdb::quote(doc().path) + " --line " + std::to_string(doc().cursor.line + 1), [this](const gdb::Record& r) {
+            if (!r.ok()) { setMessage(r.msg(), true); return; }
+            dbg_->send("-exec-continue");
+        });
+    }
+    void dbgSetNextStatement() {
+        if (!dbg_ || dbgState_ != DbgState::Stopped || docs_.empty() || doc().path.empty()) return;
+        dbg_->send("-exec-jump " + gdb::quote(doc().path + ":" + std::to_string(doc().cursor.line + 1)), [this](const gdb::Record& r) {
+            if (!r.ok()) setMessage(r.msg(), true);
+        });
+    }
+
+    // ---- variables and watches
+
+    void dbgCollect(const std::vector<VarP>& v, std::map<std::string, std::string>& out) {
+        for (const auto& n : v) { out[n->path] = n->value; dbgCollect(n->kids, out); }
+    }
+
+    void dbgRefreshVars() {
+        if (!dbg_ || dbgState_ != DbgState::Stopped) return;
+        const int gen = ++dbgVarGen_;
+        dbgPrev_.clear();
+        dbgCollect(dbgLocals_, dbgPrev_);
+        dbgCollect(dbgWatchVars_, dbgPrev_);
+        for (const auto& v : dbgLocals_) if (!v->vo.empty()) dbg_->send("-var-delete " + v->vo);
+        for (const auto& v : dbgWatchVars_) if (!v->vo.empty()) dbg_->send("-var-delete " + v->vo);
+        dbgLocals_.clear();
+        dbgWatchVars_.clear();
+        for (std::size_t i = 0; i < watches_.size(); ++i) {
+            auto v = std::make_shared<DbgVar>();
+            v->exp = watches_[i];
+            v->path = "watch/" + std::to_string(i) + ":" + v->exp;
+            v->value = "...";
+            dbgWatchVars_.push_back(v);
+            dbgCreateVar(v, gen);
+        }
+        dbg_->send("-stack-list-variables --no-values", [this, gen](const gdb::Record& r) {
+            if (gen != dbgVarGen_ || !r.ok()) return;
+            if (const auto* a = r.data["variables"].array())
+                for (const auto& e : *a) {
+                    auto v = std::make_shared<DbgVar>();
+                    v->exp = e["name"].str();
+                    if (v->exp.starts_with("__")) continue;   // compiler-generated (range-for temporaries ...)
+                    v->path = "var/" + v->exp;
+                    v->value = "...";
+                    dbgLocals_.push_back(v);
+                    dbgCreateVar(v, gen);
+                }
+            dirty_ = true;
+        });
+    }
+
+    void dbgCreateVar(const VarP& v, int gen) {
+        if (!dbg_) return;
+        dbg_->send("-var-create - * " + gdb::quote(v->exp), [this, v, gen](const gdb::Record& r) {
+            if (gen != dbgVarGen_) { if (r.ok() && dbg_) dbg_->send("-var-delete " + r.data["name"].str()); return; }
+            if (!r.ok()) { v->value = r.msg().find("unable to create") != std::string::npos ? "<not available in this scope>" : "<" + r.msg() + ">"; v->numchild = 0; dirty_ = true; return; }
+            v->vo = r.data["name"].str();
+            v->type = r.data["type"].str();
+            v->value = r.data["value"].str();
+            v->numchild = std::atoi(r.data["numchild"].str().c_str());
+            if (r.data["dynamic"].str() == "1") v->numchild = std::max(v->numchild, 1);   // pretty-printed containers list their elements lazily
+            if (auto it = dbgPrev_.find(v->path); it != dbgPrev_.end()) v->changed = it->second != v->value;
+            if (v->numchild > 0 && dbgExpanded_.contains(v->path)) dbgExpand(v, gen);
+            dirty_ = true;
+        });
+    }
+
+    // Children of a varobj, with C++ access-specifier pseudo nodes (public / private / protected) spliced into the list.
+    void dbgFetchKids(const std::string& vo, const std::string& parentPath, int gen, std::function<void(std::vector<VarP>, bool)> done) {
+        if (!dbg_) return;
+        dbg_->send("-var-list-children --simple-values " + vo + " 0 300", [this, vo, parentPath, gen, done](const gdb::Record& r) {
+            if (gen != dbgVarGen_) return;
+            if (!r.ok()) { dbgConsole("Cannot list members: " + r.msg(), 1); done({}, false); return; }
+            auto slots = std::make_shared<std::vector<std::vector<VarP>>>();
+            auto left = std::make_shared<int>(0);
+            auto fin = std::make_shared<std::function<void()>>();
+            const bool more = r.data["has_more"].str() == "1";
+            std::vector<std::pair<VarP, bool>> order;   // (child, pseudo)
+            if (const auto* a = r.data["children"].array())
+                for (const auto& c : *a) {
+                    auto k = std::make_shared<DbgVar>();
+                    k->exp = c["exp"].str(); k->vo = c["name"].str(); k->type = c["type"].str(); k->value = c["value"].str();
+                    k->numchild = std::atoi(c["numchild"].str().c_str());
+                    if (c["dynamic"].str() == "1") k->numchild = std::max(k->numchild, 1);
+                    k->path = parentPath + "/" + k->exp;
+                    if (auto it = dbgPrev_.find(k->path); it != dbgPrev_.end()) k->changed = it->second != k->value;
+                    const bool pseudo = (k->exp == "public" || k->exp == "private" || k->exp == "protected") && k->type.empty();
+                    order.push_back({k, pseudo});
+                }
+            slots->resize(order.size());
+            *fin = [this, order, slots, done, more] {
+                std::vector<VarP> out;
+                for (std::size_t i = 0; i < order.size(); ++i) {
+                    if (order[i].second) out.insert(out.end(), (*slots)[i].begin(), (*slots)[i].end());
+                    else out.push_back(order[i].first);
+                }
+                done(std::move(out), more);
+            };
+            for (std::size_t i = 0; i < order.size(); ++i)
+                if (order[i].second) {
+                    ++*left;
+                    dbgFetchKids(order[i].first->vo, parentPath, gen, [slots, left, fin, i](std::vector<VarP> ks, bool) {
+                        (*slots)[i] = std::move(ks);
+                        if (--*left == 0) (*fin)();
+                    });
+                }
+            if (*left == 0) (*fin)();
+        });
+    }
+
+    void dbgExpand(const VarP& v, int gen) {
+        if (!dbg_ || v->vo.empty()) return;
+        dbgFetchKids(v->vo, v->path, gen, [this, v, gen](std::vector<VarP> kids, bool more) {
+            if (gen != dbgVarGen_) return;
+            v->kids = std::move(kids);
+            if (more) {
+                auto m = std::make_shared<DbgVar>();
+                m->exp = "..."; m->path = v->path + "/..."; m->value = "more items not shown";
+                v->kids.push_back(m);
+            }
+            v->loaded = true;
+            v->expanded = true;
+            for (const auto& k : v->kids) if (k->numchild > 0 && dbgExpanded_.contains(k->path)) dbgExpand(k, gen);
+            dirty_ = true;
+        });
+    }
+
+    void dbgToggleVar(const VarP& v) {
+        if (v->numchild <= 0) return;
+        if (v->expanded) { v->expanded = false; dbgExpanded_.erase(v->path); return; }
+        dbgExpanded_.insert(v->path);
+        if (v->loaded) v->expanded = true; else dbgExpand(v, dbgVarGen_);
+    }
+
+    void dbgAddWatch(const std::string& e) {
+        if (e.empty() || std::ranges::find(watches_, e) != watches_.end()) return;
+        watches_.push_back(e);
+        dbgSave();
+        dbgSec_[1] = true;
+        if (dbgState_ == DbgState::Stopped) dbgRefreshVars();
+        dirty_ = true;
+    }
+
+    void dbgSetValue(const VarP& v, const std::string& value) {
+        if (!dbg_ || dbgState_ != DbgState::Stopped || v->vo.empty()) return;
+        dbg_->send("-var-assign " + v->vo + " " + gdb::quote(value), [this](const gdb::Record& r) {
+            if (!r.ok()) { setMessage(r.msg(), true, 4); return; }
+            dbgRefreshVars();
+        });
+    }
+
+    // ---- console input
+
+    std::deque<std::string> dbgEvalQ_;
+    bool dbgEvalBusy_ = false;
+
+    void dbgEval(const std::string& text) {
+        if (text.empty()) return;
+        dbgEvalQ_.push_back(text);
+        if (dbgHist_.empty() || dbgHist_.back() != text) dbgHist_.push_back(text);
+        dbgHistAt_ = -1;
+        if (!dbgEvalBusy_) dbgEvalNext();
+    }
+
+    void dbgEvalNext() {
+        if (dbgEvalQ_.empty()) { dbgEvalBusy_ = false; return; }
+        dbgEvalBusy_ = true;
+        const std::string text = dbgEvalQ_.front();
+        dbgEvalQ_.pop_front();
+        dbgConsole("> " + text, 2);
+        if (!dbg_) { dbgConsole("Not debugging - press F5 to start", 1); dbgEvalNext(); return; }
+        if (dbgState_ != DbgState::Stopped) { dbgConsole("The program is running; pause it first (F6)", 1); dbgEvalNext(); return; }
+        dbg_->send("-data-evaluate-expression " + gdb::quote(text), [this, text](const gdb::Record& r) {
+            if (r.ok()) { dbgConsole(r.data["value"].str(), 0); dbgEvalNext(); return; }
+            if (!dbg_) { dbgEvalBusy_ = false; return; }
+            dbg_->send("-interpreter-exec console " + gdb::quote(text), [this](const gdb::Record& r2) {   // gdb commands: bt, info locals, p x, ...
+                if (!r2.ok()) dbgConsole(r2.msg(), 1);
+                dirty_ = true;
+                dbgEvalNext();
+            });
+        });
+    }
+
+    bool dbgConKey(const KeyEvent& k) {
+        if (k.key == Key::Escape) { dbgConFocus_ = false; return true; }
+        if (k.key == Key::Enter) { const std::string t = dbgIn_.text; dbgIn_ = {}; dbgEval(t); return true; }
+        if (k.key == Key::Up) {
+            if (dbgHist_.empty()) return true;
+            dbgHistAt_ = dbgHistAt_ < 0 ? static_cast<int>(dbgHist_.size()) - 1 : std::max(0, dbgHistAt_ - 1);
+            dbgIn_.text = dbgHist_[static_cast<std::size_t>(dbgHistAt_)]; dbgIn_.cur = dbgIn_.text.size();
+            return true;
+        }
+        if (k.key == Key::Down) {
+            if (dbgHistAt_ < 0) return true;
+            ++dbgHistAt_;
+            if (dbgHistAt_ >= static_cast<int>(dbgHist_.size())) { dbgHistAt_ = -1; dbgIn_ = {}; }
+            else { dbgIn_.text = dbgHist_[static_cast<std::size_t>(dbgHistAt_)]; dbgIn_.cur = dbgIn_.text.size(); }
+            return true;
+        }
+        if (k.ctrl && k.key == Key::Char && k.ch == 'l') { dbgCon_.clear(); return true; }
+        if (k.ctrl && k.key != Key::Char) return false;
+        if (k.key >= Key::F1) return false;
+        if (k.ctrl && k.key == Key::Char && k.ch != 'v' && k.ch != 'a') return false;
+        return editText(dbgIn_, k);
+    }
+
+    void drawDebugConsole(const Rect& body) {
+        const float s = S(), lineH = lh(), inH = std::round(lineH + 10 * s), pad = 10 * s;
+        const Rect list{body.x, body.y, body.w, std::max(0.0f, body.h - inH)};
+        const float total = static_cast<float>(dbgCon_.size()) * lineH;
+        const float maxS = std::max(0.0f, total - list.h);
+        auto& sc = panelScroll_[4];
+        sc = std::clamp(panelFollow_[4] ? maxS : sc, 0.0f, maxS);
+        const float sy = std::round(sc);
+        const int first = std::max(0, static_cast<int>(std::floor(sy / lineH)));
+        const int last = std::min(static_cast<int>(dbgCon_.size()) - 1, static_cast<int>(std::floor((sy + list.h) / lineH)));
+        for (int i = first; i <= last; ++i) {
+            const auto& l = dbgCon_[static_cast<std::size_t>(i)];
+            const float y = list.y + static_cast<float>(i) * lineH - sy;
+            Color c = theme::text;
+            if (l.kind == 1) c = Color::rgb(0xf2777a); else if (l.kind == 2) c = theme::accent.mix(Color::rgb(0xffffff), 0.35f);
+            else if (l.kind == 3) c = Color::rgb(0xe5c07b); else if (l.kind == 4) c = theme::dim;
+            label(list.x + pad, y, cleanTerm(l.text), c, list.right() - pad);
+        }
+        if (dbgCon_.empty()) uiLabel(list.x + pad, list.y + 4 * s, uiH() + 8 * s, "Debug console: evaluate expressions or run gdb commands while paused (e.g. x + 1, bt, info registers)", theme::lineNum, list.right() - pad);
+        // input row
+        const Rect in{body.x + 6 * s, body.bottom() - inH + 3 * s, body.w - 12 * s, inH - 6 * s};
+        fill(in, dbgConFocus_ ? theme::accent : Color::rgb(0xffffff, 30), 7 * s);
+        fill(in.x + 1, in.y + 1, in.w - 2, in.h - 2, Color::rgb(0x07080a), 6 * s);
+        const float x0 = in.x + 10 * s;
+        uiLabel(x0, in.y, in.h, ">", theme::accent);
+        const float tx = x0 + uiW(">") + 8 * s;
+        std::size_t start = 0;
+        const std::size_t cur = std::min(dbgIn_.cur, dbgIn_.text.size());
+        while (start < cur && uiW(std::string_view(dbgIn_.text).substr(start, cur - start)) > in.right() - 10 * s - tx) start = utf8Next(dbgIn_.text, start);
+        if (dbgIn_.text.empty()) uiLabel(tx, in.y, in.h, dbg_ ? "Evaluate expression or gdb command" : "Not debugging", theme::lineNum, in.right() - 10 * s);
+        else uiLabel(tx, in.y, in.h, std::string_view(dbgIn_.text).substr(start), theme::text, in.right() - 10 * s);
+        if (dbgConFocus_ && caretOn_ && focused_) {
+            const float cx = tx + uiW(std::string_view(dbgIn_.text).substr(start, cur - start));
+            fill(std::round(cx), in.y + 6 * s, std::max(2.0f, std::round(1.4f * s)), in.h - 12 * s, theme::caret, s);
+        }
+        dbgConIn_ = in;
+        if (maxS > 0) {
+            const float th = std::max(24 * s, list.h * list.h / (total + list.h * 0.5f));
+            fill(list.right() - 9 * s, list.y + (list.h - th) * std::clamp(sy / maxS, 0.0f, 1.0f), 5 * s, th, theme::scrollbar, 2.5f * s);
+        }
+    }
+    Rect dbgConIn_;
+
+    // ---- the Run and Debug sidebar view
+
+    struct DRow { int kind = 0, idx = 0, depth = 0; VarP var; };   // 1 section, 2 var, 3 hint, 4 thread, 5 frame, 6 breakpoint, 7 status/start
+    std::vector<DRow> dbgRows_;
+    struct DBtn { Rect r; int id; };
+
+    void dbgBuildRows() {
+        dbgRows_.clear();
+        dbgRows_.push_back({7, 0, 0, nullptr});
+        auto addVars = [&](auto&& self, const std::vector<VarP>& vs, int depth) -> void {
+            for (const auto& v : vs) {
+                dbgRows_.push_back({2, 0, depth, v});
+                if (v->expanded) self(self, v->kids, depth + 1);
+            }
+        };
+        dbgRows_.push_back({1, 0, 0, nullptr});
+        if (dbgSec_[0]) {
+            if (dbgState_ != DbgState::Stopped) dbgRows_.push_back({3, 0, 1, nullptr});
+            else addVars(addVars, dbgLocals_, 0);
+        }
+        dbgRows_.push_back({1, 1, 0, nullptr});
+        if (dbgSec_[1]) {
+            if (watches_.empty()) dbgRows_.push_back({3, 1, 1, nullptr});
+            else if (dbgState_ == DbgState::Stopped) addVars(addVars, dbgWatchVars_, 0);
+            else for (std::size_t i = 0; i < watches_.size(); ++i) dbgRows_.push_back({3, 10 + static_cast<int>(i), 1, nullptr});
+        }
+        dbgRows_.push_back({1, 2, 0, nullptr});
+        if (dbgSec_[2]) {
+            if (dbgState_ != DbgState::Stopped) dbgRows_.push_back({3, 2, 1, nullptr});
+            else {
+                if (dbgThreads_.size() > 1) for (std::size_t i = 0; i < dbgThreads_.size(); ++i) dbgRows_.push_back({4, static_cast<int>(i), 0, nullptr});
+                for (std::size_t i = 0; i < dbgFrames_.size(); ++i) dbgRows_.push_back({5, static_cast<int>(i), 0, nullptr});
+            }
+        }
+        dbgRows_.push_back({1, 3, 0, nullptr});
+        if (dbgSec_[3]) {
+            if (bps_.empty()) dbgRows_.push_back({3, 3, 1, nullptr});
+            for (std::size_t i = 0; i < bps_.size(); ++i) dbgRows_.push_back({6, static_cast<int>(i), 0, nullptr});
+        }
+    }
+
+    // Hover buttons of a row (right-aligned), by action id.
+    std::vector<std::pair<int, char32_t>> dbgRowActions(const DRow& r) const {
+        switch (r.kind) {
+            case 1:
+                if (r.idx == 1) return {{10, 0xF0415}};
+                if (r.idx == 3) return {{11, 0xF0CE6}, {8, 0xF0295}, {9, 0xF0C62}};
+                return {};
+            case 2: {
+                const bool isWatchRoot = r.var && r.var->path.starts_with("watch/") && r.var->path.find('/', 6) == std::string::npos;
+                std::vector<std::pair<int, char32_t>> a = {{1, 0xF0CB6}, {7, 0xF018F}, {3, 0xF04FE}};
+                if (isWatchRoot) a.push_back({4, 0xF09E7}); else a.insert(a.begin() + 2, {2, 0xF086C});
+                return a;
+            }
+            case 6: return {{5, 0xF0CB6}, {6, 0xF09E7}};
+            default: return {};
+        }
+    }
+
+    void drawDebugBody() {
+        const Rect& sd = L_.side;
+        const float s = S(), rh = L_.sideRow;
+        dbgBuildRows();
+        dbgTop_ = L_.sideList.y + 4 * s;
+        const float viewH = std::max(0.0f, L_.sideList.bottom() - dbgTop_);
+        const float contentH = static_cast<float>(dbgRows_.size()) * rh;
+        dbgMax_ = std::max(0.0f, contentH - viewH);
+        dbgScroll_ = std::clamp(dbgScroll_, 0.0f, dbgMax_);
+        const float sy = std::round(dbgScroll_);
+        const float indent = std::round(14 * s);
+        static const char* secNames[4] = {"VARIABLES", "WATCH", "CALL STACK", "BREAKPOINTS"};
+        for (std::size_t i = 0; i < dbgRows_.size(); ++i) {
+            const DRow& r = dbgRows_[i];
+            const float y = dbgTop_ + static_cast<float>(i) * rh - sy;
+            if (y + rh < L_.sideList.y || y > L_.sideList.bottom()) continue;
+            const Rect rr{sd.x + 6 * s, y + 1, sd.w - 12 * s, rh - 2};
+            const bool hot = L_.sideList.contains(mx_, my_) && rr.contains(mx_, my_);
+            if (hot && r.kind != 3 && r.kind != 7) fill(rr, r.kind == 1 ? Color::rgb(0xffffff, 10) : theme::sideHover, 6 * s);
+            const float bs = std::round(rh - 8 * s);
+            float rightEdge = sd.right() - 14 * s;
+            if (hot) {
+                float bx = sd.right() - 10 * s - bs;
+                for (const auto& [id, glyph] : dbgRowActions(r)) {
+                    const Rect b{bx, y + 4 * s, bs, bs};
+                    if (b.contains(mx_, my_)) fill(b, Color::rgb(0xffffff, 36), 5 * s);
+                    const int ip = std::max(10, static_cast<int>(std::round(bs * 0.62f)));
+                    Icons::glyph(dl_, font_, std::round(b.x + (b.w - static_cast<float>(ip)) / 2), std::round(b.y + (b.h - static_cast<float>(ip)) / 2), ip, glyph, Color::rgb(0xffffff));
+                    bx -= bs + 2 * s;
+                }
+                rightEdge = bx + bs;
+            }
+            switch (r.kind) {
+                case 7: {   // status / start
+                    const Rect b{sd.x + 12 * s, y + 3 * s, sd.w - 24 * s, rh + 6 * s};
+                    if (!dbg_) {
+                        const bool h2 = b.contains(mx_, my_);
+                        fill(b, theme::accent.alpha(h2 ? 230 : 170), b.h / 2);
+                        fill(b.x + 1, b.y + 1, b.w - 2, b.h - 2, h2 ? Color::rgb(0x15171b) : Color::rgb(0x0a0b0d), b.h / 2 - 1);
+                        const int ip = std::max(14, static_cast<int>(std::round(b.h * 0.5f)));
+                        Icons::glyph(dl_, font_, b.x + 16 * s, b.y + (b.h - static_cast<float>(ip)) / 2, ip, 0xF040A, theme::accent.mix(Color::rgb(0xffffff), 0.14f));
+                        uiLabel(b.x + 16 * s + static_cast<float>(ip) + 10 * s, b.y, b.h, "Start Debugging", theme::text);
+                        uiLabelR(b.right() - 16 * s, b.y, b.h, "F5", theme::lineNum);
+                    } else {
+                        std::string t = dbgState_ == DbgState::Running ? "Running..." : dbgState_ == DbgState::Starting ? "Starting gdb..." : dbgStopText_;
+                        uiLabel(sd.x + 16 * s, y + 3 * s, rh + 6 * s, t, dbgState_ == DbgState::Stopped ? Color::rgb(0xe5c07b) : theme::dim, sd.right() - 12 * s);
+                    }
+                    break;
+                }
+                case 1: {
+                    const int cs = std::max(8, static_cast<int>(std::round(iconSize() * 0.55f)));
+                    Icons::chevron(dl_, font_, sd.x + 10 * s, y + (rh - static_cast<float>(cs)) / 2, cs, dbgSec_[r.idx], theme::dim);
+                    uiLabel(sd.x + 10 * s + static_cast<float>(cs) + 8 * s, y, rh, secNames[r.idx], theme::text, rightEdge);
+                    break;
+                }
+                case 3: {
+                    static const char* hints[4] = {"Not paused", "Add an expression with +", "Not paused", "No breakpoints - click the gutter or press F9"};
+                    std::string t = r.idx >= 10 ? watches_[static_cast<std::size_t>(r.idx - 10)] : hints[r.idx];
+                    uiLabel(sd.x + 28 * s, y, rh, t, theme::lineNum, sd.right() - 12 * s);
+                    break;
+                }
+                case 2: {
+                    const VarP& v = r.var;
+                    float x = sd.x + 12 * s + static_cast<float>(r.depth) * indent;
+                    if (v->numchild > 0) {
+                        const int cs = std::max(8, static_cast<int>(std::round(iconSize() * 0.55f)));
+                        Icons::chevron(dl_, font_, x + (indent - static_cast<float>(cs)) / 2, y + (rh - static_cast<float>(cs)) / 2, cs, v->expanded, theme::dim);
+                    }
+                    x += indent;
+                    const bool isW = v->path.starts_with("watch/") && v->path.find('/', 6) == std::string::npos;
+                    x = uiLabel(x, y, rh, v->exp, isW ? Color::rgb(0xe5c07b) : Color::rgb(0x8cc4ff), rightEdge - 20 * s);
+                    x = uiLabel(x, y, rh, " = ", theme::dim, rightEdge);
+                    std::string val = v->value;
+                    if (val.empty() && v->numchild > 0) val = "{...}";
+                    x = uiLabel(x, y, rh, val, v->changed ? Color::rgb(0xe5c07b) : Color::rgb(0xd4d7dd), rightEdge);
+                    if (!v->type.empty() && !hot && rightEdge - x > 60 * s) uiLabel(x + 10 * s, y, rh, v->type, theme::lineNum, rightEdge);
+                    break;
+                }
+                case 4: {
+                    const DbgThread& t = dbgThreads_[static_cast<std::size_t>(r.idx)];
+                    const bool cur = t.id == dbgThread_;
+                    if (cur) fill(rr, theme::sideSel, 6 * s);
+                    uiLabel(sd.x + 14 * s, y, rh, std::format("Thread {}{}  {}", t.id, t.name.empty() ? "" : " " + t.name, t.func), cur ? theme::text : theme::dim, rightEdge);
+                    break;
+                }
+                case 5: {
+                    const DbgFrame& f = dbgFrames_[static_cast<std::size_t>(r.idx)];
+                    const bool cur = f.level == dbgSel_;
+                    if (cur) fill(rr, theme::accent.alpha(46), 6 * s);
+                    const float x = sd.x + 14 * s;
+                    float xe = uiLabel(x, y, rh, f.func.empty() ? f.addr : f.func, cur ? Color::rgb(0xffffff) : theme::text, rightEdge - 40 * s);
+                    if (f.line > 0) uiLabel(xe + 8 * s, y, rh, fs::path(!f.full.empty() ? f.full : f.file).filename().string() + ":" + std::to_string(f.line), theme::lineNum, rightEdge);
+                    break;
+                }
+                case 6: {
+                    const Breakpoint& b = bps_[static_cast<std::size_t>(r.idx)];
+                    const float d = std::round(11 * s), cx = sd.x + 14 * s;
+                    const bool pending = dbg_ && !b.verified && b.id < 0 && dbgState_ != DbgState::Off;
+                    const Color bc = b.enabled ? Color::rgb(0xe5484d) : theme::lineNum;
+                    if (b.enabled && !pending) fill(cx, y + (rh - d) / 2, d, d, bc, d / 2);
+                    else { fill(cx, y + (rh - d) / 2, d, d, bc, d / 2); fill(cx + 2, y + (rh - d) / 2 + 2, d - 4, d - 4, theme::sideBg, d / 2 - 2); }
+                    float x = uiLabel(cx + d + 8 * s, y, rh, dbgBpTitle(b), b.enabled ? theme::text : theme::dim, rightEdge - 20 * s);
+                    std::string extra;
+                    if (!b.log.empty()) extra = "log: " + b.log; else if (!b.cond.empty()) extra = "if " + b.cond; else if (b.ignore > 0) extra = "skip " + std::to_string(b.ignore);
+                    if (b.hits > 0) extra += (extra.empty() ? "" : "  ") + std::string("hits ") + std::to_string(b.hits);
+                    if (!extra.empty()) uiLabel(x + 8 * s, y, rh, extra, theme::lineNum, rightEdge);
+                    break;
+                }
+                default: break;
+            }
+        }
+        if (contentH > viewH) {
+            const float thumbH = std::max(24 * s, viewH * viewH / (contentH + viewH * 0.5f));
+            fill(sd.right() - 9 * s, dbgTop_ + (viewH - thumbH) * std::clamp(sy / std::max(1.0f, dbgMax_), 0.0f, 1.0f), 5 * s, thumbH, theme::scrollbar, 2.5f * s);
+        }
+        fill(sd.x, L_.sideList.y, sd.w, 4 * s, theme::sideBg);
+    }
+
+    void dbgPromptFor(PromptKind k, const std::string& label, const std::string& text = {}) {
+        openFileOp(k, {}, label, text, !text.empty());
+    }
+
+    void debugClick(Button b) {
+        if (b != Button::Left) return;
+        dbgBuildRows();
+        const float rh = L_.sideRow, s = S();
+        if (!L_.sideList.contains(mx_, my_) || my_ < dbgTop_) return;
+        const int row = static_cast<int>(std::floor((my_ - dbgTop_ + dbgScroll_) / rh));
+        if (row < 0 || row >= static_cast<int>(dbgRows_.size())) return;
+        const DRow r = dbgRows_[static_cast<std::size_t>(row)];
+        const float y = dbgTop_ + static_cast<float>(row) * rh - dbgScroll_, bs = std::round(rh - 8 * s);
+        // action buttons
+        float bx = L_.side.right() - 10 * s - bs;
+        for (const auto& [id, glyph] : dbgRowActions(r)) {
+            (void)glyph;
+            if (Rect{bx, y + 4 * s, bs, bs}.contains(mx_, my_)) { dbgAction(id, r); return; }
+            bx -= bs + 2 * s;
+        }
+        switch (r.kind) {
+            case 7: if (!dbg_) dbgContinueOrStart(); break;
+            case 1: dbgSec_[r.idx] = !dbgSec_[r.idx]; break;
+            case 2: dbgToggleVar(r.var); break;
+            case 4: dbgSelectThread(dbgThreads_[static_cast<std::size_t>(r.idx)].id); break;
+            case 5: dbgSelectFrame(dbgFrames_[static_cast<std::size_t>(r.idx)].level); break;
+            case 6: {
+                Breakpoint& bp = bps_[static_cast<std::size_t>(r.idx)];
+                if (mx_ < L_.side.x + 14 * s + std::round(11 * s) + 6 * s) { dbgSetEnabled(bp.uid, !bp.enabled); break; }
+                if (!bp.file.empty() && bp.line > 0) {
+                    openFile(bp.file);
+                    if (!docs_.empty() && doc().path == bp.file) { doc().setCursor({bp.line - 1, 0}); scrollToCursor_ = true; }
+                }
+                break;
+            }
+            default: break;
+        }
+        dirty_ = true;
+    }
+
+    // The full C expression of a variable (members of members, array elements...), asked from gdb for children.
+    void dbgVarExpr(const VarP& v, std::function<void(const std::string&)> done) {
+        const bool root = v->path.find('/', v->path.find('/') + 1) == std::string::npos;
+        if (root || !dbg_ || v->vo.empty()) { done(v->exp); return; }
+        dbg_->send("-var-info-path-expression " + v->vo, [this, done, v](const gdb::Record& r) {
+            done(r.ok() ? r.data["path_expr"].str() : v->exp);
+            dirty_ = true;
+        });
+    }
+
+    void dbgAction(int id, const DRow& r) {
+        switch (id) {
+            case 1: if (r.var && dbgState_ == DbgState::Stopped) { dbgEditVar_ = r.var; dbgPromptFor(PromptKind::DbgSetValue, "New value of " + r.var->exp, r.var->value); } break;
+            case 2: if (r.var) dbgVarExpr(r.var, [this](const std::string& e) { dbgAddWatch(e); }); break;
+            case 3: if (r.var) dbgVarExpr(r.var, [this](const std::string& e) { Breakpoint nb; nb.watch = e; dbgAddBp(std::move(nb)); setMessage("Data breakpoint on " + e + ": the program stops when it changes", false, 3); }); break;
+            case 4: if (r.var) {
+                const auto at = r.var->path.find(':');
+                const int i = std::atoi(r.var->path.c_str() + 6);
+                (void)at;
+                if (i >= 0 && i < static_cast<int>(watches_.size())) { watches_.erase(watches_.begin() + i); dbgSave(); if (dbgState_ == DbgState::Stopped) dbgRefreshVars(); }
+            } break;
+            case 5: if (r.idx >= 0 && r.idx < static_cast<int>(bps_.size())) {
+                const Breakpoint& b = bps_[static_cast<std::size_t>(r.idx)];
+                dbgPromptUid_ = b.uid;
+                dbgPromptFor(PromptKind::DbgBpEdit, "Condition, #N skip count, or log: message {expr}  -  " + dbgBpTitle(b), dbgBpEditText(b));
+            } break;
+            case 6: if (r.idx >= 0 && r.idx < static_cast<int>(bps_.size())) dbgRemoveBp(bps_[static_cast<std::size_t>(r.idx)].uid); break;
+            case 7: if (r.var) { win_.setClipboard(r.var->value); setMessage("Copied value", false, 1.2f); } break;
+            case 8: dbgPromptFor(PromptKind::DbgFuncBp, "Break on function (e.g. main, ns::fn)"); break;
+            case 9: { auto uids = std::vector<int>(); for (const auto& b : bps_) uids.push_back(b.uid); for (int u : uids) dbgRemoveBp(u); break; }
+            case 10: dbgPromptFor(PromptKind::DbgWatch, "Watch expression"); break;
+            case 11: {   // break when a C++ exception is thrown
+                auto it = std::ranges::find_if(bps_, [](const Breakpoint& b) { return b.exceptions; });
+                if (it != bps_.end()) dbgRemoveBp(it->uid);
+                else { Breakpoint nb; nb.exceptions = true; dbgAddBp(std::move(nb)); }
+                break;
+            }
+            default: break;
+        }
+        dirty_ = true;
+    }
+
+    void dbgFinishPrompt(PromptKind k, const std::string& t) {
+        switch (k) {
+            case PromptKind::DbgWatch: dbgAddWatch(t); break;
+            case PromptKind::DbgSetValue: if (dbgEditVar_) dbgSetValue(dbgEditVar_, t); break;
+            case PromptKind::DbgBpEdit: dbgApplyBpEdit(dbgPromptUid_, t); break;
+            case PromptKind::DbgFuncBp: if (!t.empty()) { Breakpoint nb; nb.func = t; dbgAddBp(std::move(nb)); } break;
+            default: break;
+        }
+    }
+
+    void debugScroll(float dy) {
+        dbgScroll_ = std::clamp(dbgScroll_ + dy, 0.0f, dbgMax_);
+        dirty_ = true;
+    }
+
+    // ---- floating control bar over the editor
+
+    struct DbgBarBtn { Rect r; int cmd; };
+    std::vector<DbgBarBtn> dbgBar_;
+
+    void drawDebugBar() {
+        dbgBar_.clear();
+        if (!dbg_ || L_.island.w < 200 * S()) return;
+        const float s = S(), bs = std::round(uiH() + 14 * s), pad = std::round(5 * s), gap = std::round(2 * s);
+        struct B { int cmd; char32_t glyph; const char* tip; bool enabled; Color col; };
+        const bool st = dbgState_ == DbgState::Stopped, run = dbgState_ == DbgState::Running;
+        const B btns[] = {
+            {run ? 1 : 0, run ? 0xF03E4u : 0xF040Au, run ? "Pause (F6)" : "Continue (F5)", st || run, Color::rgb(0xffffff)},
+            {2, 0xF01B7, "Step Over (F10)", st, Color::rgb(0xffffff)},
+            {3, 0xF01B9, "Step Into (F11)", st, Color::rgb(0xffffff)},
+            {4, 0xF01B8, "Step Out (Shift+F11)", st, Color::rgb(0xffffff)},
+            {5, 0xF0709, "Restart (Ctrl+Shift+F5)", true, Color::rgb(0xffffff)},
+            {6, 0xF04DB, "Stop (Shift+F5)", true, Color::rgb(0xf2777a)},
+        };
+        const float w = pad * 2 + 6 * bs + 5 * gap;
+        const Rect bar{std::round(L_.island.x + (L_.island.w - w) / 2), L_.island.y + L_.tabs.h + 8 * s, w, bs + pad * 2};
+        glassPanel(bar, bar.h / 2);
+        float x = bar.x + pad;
+        for (const auto& b : btns) {
+            const Rect r{x, bar.y + pad, bs, bs};
+            dbgBar_.push_back({r, b.cmd});
+            const bool hot = r.contains(mx_, my_) && b.enabled;
+            if (hot) fill(r, Color::rgb(0xffffff, 34), bs / 2);
+            const int ip = std::max(14, static_cast<int>(std::round(bs * 0.58f)));
+            Color c = b.col;
+            if (!b.enabled) c = c.alpha(70);
+            Icons::glyph(dl_, font_, std::round(r.x + (bs - static_cast<float>(ip)) / 2), std::round(r.y + (bs - static_cast<float>(ip)) / 2), ip, b.glyph, c);
+            if (hot) dbgBarTip_ = b.tip, dbgBarTipRect_ = r;
+            x += bs + gap;
+        }
+        if (!dbgBarTip_.empty() && dbgBarTipRect_.contains(mx_, my_)) {
+            const float tw = uiW(dbgBarTip_) + 20 * s, th = std::round(uiH() + 10 * s);
+            const Rect t{std::clamp(dbgBarTipRect_.x + dbgBarTipRect_.w / 2 - tw / 2, 4 * s, L_.status.w - tw - 4 * s), bar.bottom() + 6 * s, tw, th};
+            glassPanel(t, 7 * s);
+            uiLabelC(t.x + t.w / 2, t.y, t.h, dbgBarTip_, theme::text);
+        } else dbgBarTip_.clear();
+    }
+    std::string dbgBarTip_;
+    Rect dbgBarTipRect_;
+
+    void dbgCommand(int cmd) {
+        switch (cmd) {
+            case 0: dbgContinueOrStart(); break;
+            case 1: dbgPause(); break;
+            case 2: dbgStep("-exec-next"); break;
+            case 3: dbgStep("-exec-step"); break;
+            case 4: dbgStep("-exec-finish"); break;
+            case 5: dbgRestart(); break;
+            case 6: debugStop(); break;
+            default: break;
+        }
+        dirty_ = true;
+    }
+
+    bool dbgBarClick() {
+        for (const auto& b : dbgBar_)
+            if (b.r.contains(mx_, my_)) { dbgCommand(b.cmd); return true; }
+        return false;
+    }
+
+    // Debugger keys: F5 continue / start, Shift+F5 stop, Ctrl+Shift+F5 restart, F6 pause, F9 breakpoint, F10 over, F11 into,
+    // Shift+F11 out, Ctrl+F10 run to cursor, Ctrl+Shift+F10 set next statement.
+    bool debugKey(const KeyEvent& k) {
+        const bool ctrl = k.ctrl, shift = k.shift, alt = k.alt;
+        if (alt) return false;
+        switch (k.key) {
+            case Key::F5:
+                if (ctrl && shift) { dbgRestart(); return true; }
+                if (shift) { debugStop(); return true; }
+                if (ctrl) return false;
+                dbgContinueOrStart(); return true;
+            case Key::F6: if (ctrl || shift) return false; dbgPause(); return true;
+            case Key::F9:
+                if (ctrl || shift || docs_.empty()) return false;
+                dbgToggleBpAt(doc().path, doc().cursor.line + 1); return true;
+            case Key::F10:
+                if (ctrl && shift) { dbgSetNextStatement(); return true; }
+                if (ctrl) { dbgRunToCursor(); return true; }
+                if (shift) return false;   // Shift+F10 stays "build and run"
+                dbgStep("-exec-next"); return true;
+            case Key::F11:
+                if (ctrl) return false;
+                dbgStep(shift ? "-exec-finish" : "-exec-step"); return true;
+            default: return false;
+        }
+    }
+
+    // Editor context menu (right click): breakpoints, debugger actions and the usual clipboard entries.
+    void openEditorMenu(Pos p) {
+        if (docs_.empty()) return;
+        Document& d = doc();
+        const bool sel = d.hasSelection(), stopped = dbgState_ == DbgState::Stopped;
+        const std::string path = d.path;
+        const int line = p.line + 1;
+        std::vector<std::tuple<std::string, std::string, bool, std::function<void()>>> items;
+        items.emplace_back("Toggle Breakpoint", "F9", false, [this, path, line] { dbgToggleBpAt(path, line); });
+        items.emplace_back("Add Conditional Breakpoint...", "", false, [this, path, line] {
+            if (path.empty()) return;
+            Breakpoint* b = dbgBpAt(path, line);
+            if (!b) { Breakpoint nb; nb.file = path; nb.line = line; dbgAddBp(std::move(nb)); b = dbgBpAt(path, line); }
+            if (b) { dbgPromptUid_ = b->uid; dbgPromptFor(PromptKind::DbgBpEdit, "Condition, #N skip count, or log: message {expr}", dbgBpEditText(*b)); }
+        });
+        items.emplace_back("Add Logpoint...", "", false, [this, path, line] {
+            if (path.empty()) return;
+            Breakpoint* b = dbgBpAt(path, line);
+            if (!b) { Breakpoint nb; nb.file = path; nb.line = line; dbgAddBp(std::move(nb)); b = dbgBpAt(path, line); }
+            if (b) { dbgPromptUid_ = b->uid; dbgPromptFor(PromptKind::DbgBpEdit, "Logpoint message, e.g. x = {x}", "log: "); }
+        });
+        if (stopped) {
+            items.emplace_back("Run to Cursor", "Ctrl+F10", false, [this, p] { if (!docs_.empty()) { doc().setCursor(p); dbgRunToCursor(); } });
+            items.emplace_back("Set Next Statement", "Ctrl+Shift+F10", false, [this, p] { if (!docs_.empty()) { doc().setCursor(p); dbgSetNextStatement(); } });
+        }
+        if (sel && d.selectedText().find('\n') == std::string::npos) {
+            const std::string t = d.selectedText();
+            items.emplace_back("Add to Watch", "", false, [this, t] { dbgAddWatch(t); sidebar_ = true; sideDebug_ = true; sideGit_ = false; sideSearch_ = false; });
+            if (stopped) items.emplace_back("Evaluate in Debug Console", "", false, [this, t] { panelOpen_ = true; panelTab_ = 4; dbgEval(t); });
+        }
+        items.emplace_back("Cut", "Ctrl+X", false, [this] { if (!docs_.empty()) copy(true); });
+        items.emplace_back("Copy", "Ctrl+C", false, [this] { if (!docs_.empty()) copy(false); });
+        items.emplace_back("Paste", "Ctrl+V", false, [this] { if (!docs_.empty()) paste(); });
+        items.emplace_back("Select All", "Ctrl+A", false, [this] { if (!docs_.empty()) doc().selectAll(); });
+        openCustomMenu(mx_, my_, items);
+    }
+
+    // Breakpoint dots and the execution marker in the gutter of `d`, plus the execution line highlight in the text area.
+    void drawDebugGutter(const Document& d, int ln, float y, float lineH) {
+        const float s = S(), cell = cw();
+        const Rect& e = L_.editor;
+        for (const auto& b : bps_) {
+            if (b.file != d.path || b.line - 1 != ln || !b.func.empty() || !b.watch.empty() || b.exceptions) continue;
+            const float dsz = std::round(std::min(lineH - 6 * s, 1.1f * cell));
+            const float cx = e.x + std::round(0.5f * cell), cy = y + (lineH - dsz) / 2;
+            const bool pending = dbg_ && !b.verified && dbgState_ != DbgState::Off;
+            const Color c = b.enabled ? Color::rgb(0xe5484d) : Color::rgb(0x6b6f78);
+            if (!b.log.empty()) {   // logpoint: diamond
+                const int ip = std::max(10, static_cast<int>(std::round(dsz * 1.25f)));
+                Icons::glyph(dl_, font_, cx - 1, y + (lineH - static_cast<float>(ip)) / 2, ip, 0xF0B8A, c);
+            } else if (pending || !b.cond.empty()) {
+                fill(cx, cy, dsz, dsz, c, dsz / 2);
+                fill(cx + 2 * s, cy + 2 * s, dsz - 4 * s, dsz - 4 * s, b.cond.empty() ? theme::editorBg : theme::editorBg.mix(c, 0.35f), (dsz - 4 * s) / 2);
+            } else fill(cx, cy, dsz, dsz, c, dsz / 2);
+        }
+        if (dbgLine_.line > 0 && dbgLine_.file == d.path && dbgLine_.line - 1 == ln) {
+            const int ip = std::max(12, static_cast<int>(std::round(lineH * 0.8f)));
+            Icons::glyph(dl_, font_, e.x + std::round(0.2f * cell), y + (lineH - static_cast<float>(ip)) / 2 - 1, ip, 0xF0734, Color::rgb(0xe5c07b));
+        }
     }
 
     // ============================================================ project dialogs (welcome / new project / folder browser)
@@ -6487,6 +7763,7 @@ private:
         drawCompletion();
         drawHover();
         drawMenu();
+        drawDebugBar();
         drawTabDrag();
         drawFileDrag();
         drawToolTip();
@@ -6538,6 +7815,12 @@ private:
         fill(sd, theme::sideBg);
         const float headH = L_.tabs.h;
 
+        if (sideDebug_) {
+            drawDebugBody();
+            fill(sd.x, sd.y, sd.w, headH, theme::sideBg);
+            uiLabel(sd.x + 16 * s, sd.y, headH, "RUN AND DEBUG", theme::dim, sd.right() - 12 * s);
+            return;
+        }
         if (sideSearch_) {
             drawSearchBody();
             fill(sd.x, sd.y, sd.w, headH, theme::sideBg);
@@ -6744,6 +8027,7 @@ private:
             const float y = e.y + static_cast<float>(ln) * line - sy;
             const std::string& str = d.buf.line(ln);
             if (!hasSel && ln == d.cursor.line) fill(e.x, y, e.w, line, theme::lineHl);
+            if (dbgLine_.line > 0 && dbgLine_.line - 1 == ln && dbgLine_.file == d.path) fill(e.x, y, e.w, line, Color::rgb(0xe5c07b, 38));
             if (showMatches)
                 for (int c : findAll(str, findText_, matchCase_)) {
                     float x0 = baseX + static_cast<float>(displayCol(str, c, d.tabWidth)) * cell;
@@ -6870,6 +8154,7 @@ private:
                   active ? theme::lineNumActive : theme::lineNum);
             if (auto wit = worstSeverity.find(ln); wit != worstSeverity.end())
                 fill(e.x + std::round(3 * s), y + std::round(3 * s), std::max(2.0f, std::round(3 * s)), line - std::round(6 * s), diagColor(wit->second), 1.5f * s);
+            drawDebugGutter(d, ln, y, line);
             if (gd && ln < static_cast<int>(gd->kinds.size()) && gd->kinds[static_cast<std::size_t>(ln)])   // change bar vs HEAD
                 fill(e.x + L_.gutterW - std::round(5 * s), y + 1, std::max(2.0f, std::round(3 * s)), line - 2,
                      gd->kinds[static_cast<std::size_t>(ln)] == 1 ? Color::rgb(0x4fb36d) : Color::rgb(0x5b9bff), 1.5f * s);
@@ -7131,10 +8416,10 @@ private:
     std::vector<ModuleDecl> modules_;
     bool clangdModules_ = false;
     float panelH_ = 230;   // logical px
-    std::array<float, 4> panelScroll_{};
-    std::array<bool, 4> panelFollow_{true, true, true, false};
+    std::array<float, 5> panelScroll_{};
+    std::array<bool, 5> panelFollow_{true, true, true, false, true};
     int hoverPanelRow_ = -1, hoverTool_ = 0;
-    std::array<Rect, 4> panelTabRects_{};
+    std::array<Rect, 5> panelTabRects_{};
     Rect panelClear_, panelClose_;
     ToolRects tool_;
     std::vector<std::function<void()>> menuActions_;
