@@ -74,48 +74,14 @@ public:
     // Single-line text on a monospace grid. `y` is the top of the line box.
     // Returns the x coordinate after the last drawn cell.
     float text(FontAtlas& font, float x, float y, std::string_view s, Color c,
-               float maxX = std::numeric_limits<float>::infinity()) {
-        const float cw = font.cellW(), base = y + font.baseline();
-        for (std::size_t i = 0; i < s.size();) {
-            char32_t cp = decodeUtf8(s, i);
-            if (cp < 0x20 || cp == 0x7f) cp = (cp == '\t') ? ' ' : 0xFFFD;
-            if (x + cw > maxX) break;
-            if (cp != ' ') glyph(font.glyph(cp), x, base, c);
-            x += cw;
-        }
-        return x;
-    }
+               float maxX = std::numeric_limits<float>::infinity());
 
     // Heading text (the larger UI face). `y` is the top of the heading line box.
-    float titleText(FontAtlas& font, float x, float y, std::string_view s, Color c) {
-        const float base = std::round(y) + font.titleBaseline();
-        for (std::size_t i = 0; i < s.size();) {
-            char32_t cp = decodeUtf8(s, i);
-            if (cp < 0x20 || cp == 0x7f) continue;
-            const Glyph& g = font.titleGlyph(cp);
-            glyph(g, x, base, c);
-            x += g.advance;
-        }
-        return x;
-    }
+    float titleText(FontAtlas& font, float x, float y, std::string_view s, Color c);
 
     // Proportional UI text. `y` is the top of the UI line box; returns the x after the last glyph.
     float uiText(FontAtlas& font, float x, float y, std::string_view s, Color c,
-                 float maxX = std::numeric_limits<float>::infinity()) {
-        const float base = std::round(y) + font.uiBaseline();
-        const Glyph* prev = nullptr;
-        for (std::size_t i = 0; i < s.size();) {
-            char32_t cp = decodeUtf8(s, i);
-            if (cp < 0x20 || cp == 0x7f) continue;
-            const Glyph& g = font.uiGlyph(cp);
-            if (prev) x += font.uiKern(*prev, g);
-            if (x + g.advance > maxX + 0.5f) break;
-            glyph(g, x, base, c);
-            x += g.advance;
-            prev = &g;
-        }
-        return x;
-    }
+                 float maxX = std::numeric_limits<float>::infinity());
 
 private:
     std::vector<Instance> items_;

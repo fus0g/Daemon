@@ -55,14 +55,20 @@ add_custom_target(daemon_shaders DEPENDS ${SHADER_INCS})
 add_library(daemon_ui STATIC)
 target_sources(daemon_ui
   PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
-    input.cppm
     draw.cppm
     font.cppm
+    geometry.cppm
     icons.cppm
+    input.cppm
     vulkan.cppm
     wayland.cppm
   PRIVATE
-    stb_impl.cpp)
+    draw.cpp
+    font.cpp
+    icons.cpp
+    stb_impl.cpp
+    vulkan.cpp
+    wayland.cpp)
 target_link_libraries(daemon_ui PUBLIC daemon_base)
 target_link_libraries(daemon_ui PRIVATE daemon_warnings)
 target_link_libraries(daemon_ui PUBLIC daemon_protocols Vulkan::Vulkan
