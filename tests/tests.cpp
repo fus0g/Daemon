@@ -13,6 +13,7 @@ import ide.process;
 import ide.cmake;
 import ide.project;
 import ide.git;
+import ide.search;
 import ide.terminal;
 import ide.lsp;
 import ide.font;
@@ -716,7 +717,52 @@ static void testTerminal() {
     }
 }
 
+static void testSearch() {
+    namespace sr = ide::search;
+    CHECK(sr::globMatch("*.cpp", "a.cpp") && !sr::globMatch("*.cpp", "a.hpp"));
+    CHECK(sr::pathMatches("*.cpp", "src/a.cpp") && sr::pathMatches("src", "src/a/b.txt") && !sr::pathMatches("tests", "src/a.cpp"));
+    CHECK(sr::pathMatches("src/**", "src/a/b.txt"));
+    std::vector<sr::Hit> h;
+    sr::Options o; o.query = "foo";
+    sr::Matcher(o).findAll("Foo foo FOO", h);
+    CHECK(h.size() == 3);
+    o.matchCase = true; sr::Matcher(o).findAll("Foo foo FOO", h);
+    CHECK(h.size() == 1 && h[0].col == 4);
+    o.matchCase = false; o.wholeWord = true; sr::Matcher(o).findAll("foo foobar _foo foo", h);
+    CHECK(h.size() == 2);
+    sr::Options r; r.regex = true; r.query = "a(\\d+)";
+    sr::Matcher mr(r, "<$1>"); mr.findAll("a12 b a7", h, true);
+    CHECK(h.size() == 2 && h[0].repl == "<12>" && h[1].repl == "<7>");
+    CHECK(!sr::Matcher(sr::Options{.query = "(", .regex = true}).ok());
+    int n = 0;
+    std::string out = sr::replaceInText("one foo\r\nfoo two\nlast", o, "BAR", nullptr, n);
+    CHECK(out == "one BAR\r\nBAR two\nlast" && n == 2);
+    n = 0;
+    std::set<std::pair<int, int>> only{{1, 0}};
+    out = sr::replaceInText("foo\nfoo foo\n", o, "X", &only, n);
+    CHECK(out == "foo\nX foo\n" && n == 1);
+    // End to end on a scratch folder.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "daemon-search-test";
+    std::filesystem::remove_all(dir); std::filesystem::create_directories(dir / "sub");
+    ide::writeFile(dir / "a.txt", "hello needle\nnothing\n");
+    ide::writeFile(dir / "sub" / "b.cpp", "needle needle\n");
+    ide::writeFile(dir / "bin.dat", std::string("needle\0x", 8));
+    sr::Options so; so.query = "needle";
+    auto res = sr::run(dir, so, {}, nullptr);
+    CHECK(res.total == 3 && res.files.size() == 2);
+    so.include = "*.cpp";
+    res = sr::run(dir, so, {}, nullptr);
+    CHECK(res.total == 2 && res.files.size() == 1);
+    so.include.clear(); so.exclude = "sub";
+    res = sr::run(dir, so, {}, nullptr);
+    CHECK(res.total == 1);
+    so.exclude.clear();
+    CHECK(sr::replaceInFile(dir / "sub" / "b.cpp", so, "pin", nullptr) == 2 && *ide::readFile(dir / "sub" / "b.cpp") == "pin pin\n");
+    std::filesystem::remove_all(dir);
+}
+
 int main() {
+    testSearch();
     testTerminal();
     testGit();
     testPty();

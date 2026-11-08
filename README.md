@@ -152,3 +152,12 @@ scrolling). Select with the mouse; copy with Ctrl+Shift+C (or Ctrl+C while text 
 
 New file / new folder / rename / delete are asked for in a card at the bottom of the sidebar. Files and folders can be dragged
 onto a folder in the tree (or the empty area for the project root) to move them; open tabs follow the moved files.
+
+## Search and replace in files
+
+`Ctrl+Shift+F` (or the magnifier in the activity bar) opens project-wide search in the sidebar; `Ctrl+Shift+H` focuses the replace field.
+Toggles: match case (`Aa`, Alt+C), whole word (`ab`, Alt+W), regular expression (`.*`, Alt+R; `$1` works in the replacement), and
+**Filters** for *files to include / exclude* globs (comma separated, e.g. `*.cpp, src/**`). Files are taken from git (`.gitignore` is
+respected) or, outside a repository, from a walk that skips build and vendor folders; binary and >2 MB files are skipped. Unsaved
+editor contents are searched too. Results are grouped per file; click one to jump to it, hover for *replace* / *dismiss*, use the
+button in the replace field for *Replace All* (asks for a second click). Files with unsaved edits are never overwritten.

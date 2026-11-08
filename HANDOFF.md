@@ -27,6 +27,7 @@
 | `cmake.cppm` | CMake profiles (`cmake-build-debug/…`), File-API targets, build/run, **clangd compile-DB derivation** (`prepareClangdDb`), C++20 module scanner, CMakeLists completion data. |
 | `lsp.cppm` | JSON-RPC LSP client for clangd (async callbacks; cancel, trace via `IDE_LSP_TRACE=1`). |
 | `git.cppm` | shells out to git: status (`--porcelain -z`), blame (`--porcelain --contents`), in-process Myers diff for gutter, log + lane graph, branches, checkout/pull/push/stage/commit. |
+| `search.cppm` | project search/replace engine (`Matcher`, `run`, `replaceInFile`, globs; git `ls-files` for the file list); UI is `drawSearchBody/searchClick/searchKey` in app.cppm (sidebar mode `sideSearch_`, activity id 5, Ctrl+Shift+F/H). |
 | `explorer.cppm` | file tree model (`Explorer`, `FileNode`, rows) and `fsops` (create/rename/trash/copy/`moveInto`/`isInside`). |
 | `project.cppm` | project templates (`createProject`) and `DaemonState` (recents in `~/.config/daemon/state.json`). |
 | `editor.cppm`, `text.cppm`, `syntax.cppm` | document/buffer, undo, cursors, tokenizer/highlighting. |
@@ -37,6 +38,7 @@
 - **Right activity bar:** pill0 = Explorer(0), Git(1); pill1 = Output(2), Terminal(3), Problems(4). `activityActive/activityClick/activityRect/activityPill`. Icons are Material Design Icons (white, active = accent).
 - **Bottom panel** (`panelTab_`): 0 Build, 1 Run (PTY stdin, `runFocus_`), 2 Problems (project-wide LSP/compiler problems, also badges in explorer), 3 Terminal. `drawPanel`, `panelClick`; header names array and loops are size 4; `panelTabRects_`/`panelScroll_`/`panelFollow_` arrays are size 4.
 - **Terminal:** `startTerminal/pumpTerminal/openTerminal/termKey/drawTerminalBody/termClick`; spawns `$SHELL` in project root with `TERM=xterm-256color`, `COLORTERM=truecolor`; output pumped through `win_.watch(fd)`. Ctrl+` opens/toggles; Ctrl+Shift+C/V copy/paste; wheel scrolls scrollback (arrow keys in alt screen).
+- **File watching:** `DirWatcher` (inotify, explorer.cppm) feeds `handleFsChanges` → explorer refresh, `checkDocsOnDisk` (reload unmodified docs), git refresh, search re-run.
 - **Sidebar:** explorer (`drawSidebar`) or Git view (`sideGit_`). New file/folder/rename/delete use a card at the bottom of the sidebar (`sidePrompt()`, `drawSidePrompt`, prompt still driven by `prompt_`/`promptKey`). Drag to move: `fdrag_`, `fileDropTarget`, `finishFileDrag`; row click activates on mouse *release* (`dragRow_`). Other prompts (find/goto/open/save-as/run args) still use the bottom editor prompt bar (`drawPrompt`).
 - **Tabs / panes:** drag tabs to reorder, move between panes or split (`tabDrag_`, `Zone`, `performDrop`); animated open/close.
 - **Toolbar** (in title bar): profile & target chips, one outlined pill with Run/Debug(gdb)/Build/Regenerate/Stop (Stop red when a run is active).

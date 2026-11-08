@@ -17,6 +17,7 @@ import ide.process;
 import ide.cmake;
 import ide.project;
 import ide.git;
+import ide.search;
 import ide.terminal;
 import ide.lsp;
 
@@ -174,6 +175,8 @@ public:
                 continue;
             }
             pos = next;
+            if (tok.starts_with("replaceall:")) { sReplace_ = {std::string(tok.substr(11)), tok.size() - 11}; searchReplace(-1, -1); pos = next; continue; }   // test hook
+            if (tok.starts_with("search:")) { openSearch(false); sQuery_ = {std::string(tok.substr(7)), tok.size() - 7}; startSearch(); pos = next; continue; }   // test hook: run a project search
             if (tok == "side") { focusSidebar(); pos = next; continue; }   // test hook: focus the explorer
             if (tok == "filedrag") {   // test hook: show a drag of the 1st row over the 3rd
                 auto& rows = explorer_.rows();
@@ -213,7 +216,7 @@ public:
                 continue;
             }
             if (tok.starts_with("gitsub:")) {   // test hook: open the Git tab on a sub-tab (0 changes, 1 history, 2 branches)
-                sidebar_ = true; sideGit_ = true;
+                sidebar_ = true; sideGit_ = true; sideSearch_ = false;
                 gitSub_ = std::atoi(std::string(tok.substr(7)).c_str());
                 gitScroll_ = 0;
                 continue;
@@ -486,6 +489,7 @@ private:
         if (explorer_.isOpen()) explorer_.refresh();
         checkDocsOnDisk();
         gitNextPoll_ = {};
+        if (sideSearch_ && !sQuery_.text.empty()) scheduleSearch();   // results may be stale
         syncFsWatches();
         dirty_ = true;
     }
@@ -646,6 +650,7 @@ private:
         if (hoverTool_ >= 3 && !toolTipShown_) consider(toolHoverAt_ + std::chrono::milliseconds(390));
         if (gitRoot_ && focused_) consider(gitNextPoll_);
         if (fsPending_) consider(fsEventAt_ + std::chrono::milliseconds(150));
+        if (sPending_) consider(sRunAt_);
         if (nextBlameWake_ > Clock::now()) consider(nextBlameWake_);
         if (lsp_ && cmakeOpen_) consider(nextDbCheck_);
         if (hover_.pending) consider(hover_.due);
@@ -654,6 +659,7 @@ private:
 
     void update(Clock::time_point now, float dt) {
         if (fsPending_ && now >= fsEventAt_ + std::chrono::milliseconds(150)) { fsPending_ = false; handleFsChanges(); }
+        if (sPending_ && now >= sRunAt_) startSearch();
         if (now >= fsSyncAt_) { fsSyncAt_ = now + std::chrono::seconds(1); syncFsWatches(); }
         if (focused_ && opt_.screenshot.empty() && now >= nextBlink_) {
             caretOn_ = !caretOn_;
@@ -689,7 +695,7 @@ private:
             }
             if (stepCaret(d, dt)) { animating_ = true; dirty_ = true; }
         }
-        if (sidebar_ && explorer_.isOpen() && !sideGit_) {
+        if (sidebar_ && explorer_.isOpen() && !sideGit_ && !sideSearch_) {
             if (sideReveal_) { revealInSidebar(); sideReveal_ = false; }
             clampSide();
             float diff = sideTarget_ - sideScroll_;
@@ -829,23 +835,27 @@ private:
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S()), between = std::round(10 * S());
         const float w = bs + 2 * pad, x = a.x + (a.w - w) / 2, y0 = a.y + std::round(6 * S());
         auto height = [&](int n) { return static_cast<float>(n) * bs + static_cast<float>(n - 1) * gap + 2 * pad + 2 * activityPadV(); };   // extra room above the first and below the last icon
-        return {x, y0 + (group == 0 ? 0.0f : height(2) + between), w, height(group == 0 ? 2 : 3)};
+        return {x, y0 + (group == 0 ? 0.0f : height(3) + between), w, height(3)};
     }
+    // Buttons by id (0 Explorer, 1 Git, 2 Output, 3 Terminal, 4 Problems, 5 Search); pill 0 shows Explorer, Search, Git.
+    static int activityPos(int id) { static constexpr int pos[6] = {0, 2, 3, 4, 5, 1}; return pos[id]; }
     Rect activityRect(int i) const {
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S());
-        const Rect pill = activityPill(i < 2 ? 0 : 1);
-        return {pill.x + pad, pill.y + pad + activityPadV() + static_cast<float>(i < 2 ? i : i - 2) * (bs + gap), bs, bs};
+        const int p = activityPos(i);
+        const Rect pill = activityPill(p < 3 ? 0 : 1);
+        return {pill.x + pad, pill.y + pad + activityPadV() + static_cast<float>(p < 3 ? p : p - 3) * (bs + gap), bs, bs};
     }
     int activityAt(float x, float y) const {
         if (!L_.activity.contains(x, y)) return 0;
-        for (int i = 0; i < 5; ++i)
+        for (int i = 0; i < 6; ++i)
             if (activityRect(i).contains(x, y)) return i + 1;
         return 0;
     }
     bool activityActive(int i) const {
         switch (i) {
-            case 0: return sidebar_ && !sideGit_;
+            case 0: return sidebar_ && !sideGit_ && !sideSearch_;
             case 1: return sidebar_ && sideGit_;
+            case 5: return sidebar_ && sideSearch_;
             case 2: return panelOpen_ && panelTab_ < 2;
             case 3: return panelOpen_ && panelTab_ == 3;
             default: return panelOpen_ && panelTab_ == 2;
@@ -855,11 +865,15 @@ private:
         switch (i) {
             case 0:
                 if (activityActive(0)) { sidebar_ = false; sideFocus_ = false; }
-                else { sidebar_ = true; sideGit_ = false; revealCurrent(); }
+                else { sidebar_ = true; sideGit_ = false; sideSearch_ = false; revealCurrent(); }
                 break;
             case 1:
                 if (activityActive(1)) { sidebar_ = false; gitMsgFocus_ = false; }
-                else { sidebar_ = true; sideGit_ = true; sideFocus_ = false; gitNextPoll_ = {}; }
+                else { sidebar_ = true; sideGit_ = true; sideSearch_ = false; sideFocus_ = false; gitNextPoll_ = {}; }
+                break;
+            case 5:
+                if (activityActive(5)) { sidebar_ = false; sFocus_ = -1; }
+                else openSearch(false);
                 break;
             case 2:
                 if (activityActive(2)) panelOpen_ = false;
@@ -889,14 +903,14 @@ private:
             fill(pill, Color::rgb(0xffffff, 34), pill.w / 2);
             fill(pill.x + hair, pill.y + hair, pill.w - 2 * hair, pill.h - 2 * hair, Color::rgb(0x0d0e11), pill.w / 2 - hair);
         }
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 6; ++i) {
             const Rect r = activityRect(i);
             const bool active = activityActive(i), hot = hoverAct_ == i + 1;
             if (hot && !active) fill(r, Color::rgb(0xffffff, 26), r.w / 2);
             const float ix = std::round(r.x + (r.w - static_cast<float>(ip)) / 2), iy = std::round(r.y + (r.h - static_cast<float>(ip)) / 2);
             const Color col = active ? theme::accent.mix(Color::rgb(0xffffff), 0.14f) : Color::rgb(0xffffff);   // the active view's icon takes the accent
             // Material Design icons: file-tree, source-branch, script-text-play (output), console-line (terminal), alert.
-            static constexpr std::array<char32_t, 5> glyphs = {0xF13D2, 0xF062C, 0xF1728, 0xF07B7, 0xF002A};
+            static constexpr std::array<char32_t, 6> glyphs = {0xF13D2, 0xF062C, 0xF1728, 0xF07B7, 0xF002A, 0xF0349};
             Icons::glyph(dl_, font_, ix, iy, ip, glyphs[static_cast<std::size_t>(i)], col);
             if (i == 4 && hasErrors) {
                 const float d = std::round(7 * s);
@@ -1395,6 +1409,7 @@ private:
         if (dlg_.kind != DlgKind::None) { dlgKey(k); dirty_ = true; return; }
         if (k.ctrl && !k.shift && !k.alt && k.key == Key::Char && k.ch == 'c' && copyOverlay()) { dirty_ = true; return; }
         if (gitMsgFocus_ && gitView() && gitMsgKey(k)) { dirty_ = true; return; }
+        if (sFocus_ >= 0 && searchView() && searchKey(k)) { dirty_ = true; return; }
         if (termFocus_ && panelOpen_ && panelTab_ == 3 && termKey(k)) { dirty_ = true; return; }
         if (runFocus_ && runProc_ && panelOpen_ && panelTab_ == 1 && runKey(k)) { dirty_ = true; return; }
         if (tabDrag_.active) {  // a tab is being dragged: Esc cancels, other keys are ignored
@@ -1403,7 +1418,7 @@ private:
         }
         if (menu_.open) { menuKey(k); dirty_ = true; return; }
         if (prompt_.kind != PromptKind::None) { promptKey(k); return; }
-        if (sidebar_ && sideFocus_ && !sideGit_ && explorerKey(k)) { dirty_ = true; return; }
+        if (sidebar_ && sideFocus_ && !sideGit_ && !sideSearch_ && explorerKey(k)) { dirty_ = true; return; }
         editorKey(k);
         dirty_ = true;
     }
@@ -3008,7 +3023,7 @@ private:
         prompt_ = std::move(p);
         fileOpPath_ = target;
         overwriteArmed_.clear();
-        if (!sidebar_ || sideGit_) { sidebar_ = true; sideGit_ = false; }
+        if (!sidebar_ || sideGit_ || sideSearch_) { sidebar_ = true; sideGit_ = false; sideSearch_ = false; }
         sideFocus_ = false;
         dirty_ = true;
     }
@@ -3369,9 +3384,9 @@ private:
                 case 'n': if (shift) newProjectOpen(); else newDoc(); break;
                 case 'w': closeTab(cur_); break;
                 case 'q': requestQuit(); break;
-                case 'f': openPrompt(PromptKind::Find); break;
-                case 'h': openPrompt(PromptKind::Replace); break;
-                case 'g': if (shift) { sidebar_ = true; sideGit_ = true; sideFocus_ = false; gitNextPoll_ = {}; dirty_ = true; scrollToCursor_ = false; } else openPrompt(PromptKind::Goto); break;
+                case 'f': if (shift) openSearch(false); else openPrompt(PromptKind::Find); scrollToCursor_ = false; break;
+                case 'h': if (shift) openSearch(true); else openPrompt(PromptKind::Replace); scrollToCursor_ = false; break;
+                case 'g': if (shift) { sidebar_ = true; sideGit_ = true; sideSearch_ = false; sideFocus_ = false; gitNextPoll_ = {}; dirty_ = true; scrollToCursor_ = false; } else openPrompt(PromptKind::Goto); break;
                 case 'z': if (shift) d.redo(); else d.undo(); break;
                 case 'y': d.redo(); break;
                 case 'a': d.selectAll(); break;
@@ -3792,7 +3807,7 @@ private:
             dirty_ = true;
         }
         int hr = -1;
-        if (sidebar_ && !sideGit_ && L_.sideList.contains(mx_, my_)) {
+        if (sidebar_ && !sideGit_ && !sideSearch_ && L_.sideList.contains(mx_, my_)) {
             hr = static_cast<int>(std::floor((my_ - L_.sideList.y + sideScroll_) / L_.sideRow));
             if (hr < 0 || hr >= static_cast<int>(explorer_.rows().size())) hr = -1;
         }
@@ -3815,6 +3830,7 @@ private:
         if (panelOpen_ && panelBody().contains(mx_, my_))
             hpr = static_cast<int>(std::floor((my_ - panelBody().y + panelScroll_[static_cast<std::size_t>(panelTab_)]) / lh()));
         if (gitView()) gitUpdateHover();
+        if (searchView() && L_.side.contains(mx_, my_)) dirty_ = true;
         if (hb != hoverBtn_ || ht != hoverTab_ || hc != hoverClose_ || hover != hoverTool_ || hpr != hoverPanelRow_) {
             if (hover != hoverTool_) { toolHoverAt_ = Clock::now(); toolTipShown_ = false; }
             hoverBtn_ = hb; hoverTab_ = ht; hoverClose_ = hc; hoverTool_ = hover; hoverPanelRow_ = hpr;
@@ -4002,7 +4018,7 @@ private:
             if (pressed) dlgClick(b, mx_, my_);
             return;
         }
-        if (pressed && !(panelOpen_ && L_.panel.contains(mx_, my_))) { runFocus_ = false; termFocus_ = false; psel_.active = false; gitMsgFocus_ = false; }
+        if (pressed && !(panelOpen_ && L_.panel.contains(mx_, my_))) { runFocus_ = false; termFocus_ = false; psel_.active = false; gitMsgFocus_ = false; if (!(sidebar_ && L_.side.contains(mx_, my_))) sFocus_ = -1; }
         if (hover_.show && !hover_.lines.empty() && !menu_.open && hoverRect_.contains(mx_, my_)) {   // the tooltip is selectable
             if (pressed && b == Button::Left) {
                 if (hoverCopyRect_.contains(mx_, my_)) { std::string t; for (std::size_t i = 0; i < hover_.lines.size(); ++i) t += (i ? "\n" : "") + hover_.lines[i].first; win_.setClipboard(t); setMessage("Copied", false, 1.2f); }
@@ -4047,6 +4063,7 @@ private:
         sideFocus_ = sidebar_ && L_.side.contains(mx_, my_);
         if (sidebar_ && b == Button::Left && L_.split.contains(mx_, my_)) { splitDrag_ = true; return; }
         if (sidebar_ && L_.side.contains(mx_, my_)) {
+            if (sideSearch_) { searchClick(b); return; }
             if (sideGit_) {   // the Git view handles its own hits
                 if (b == Button::Left && L_.sideList.contains(mx_, my_)) gitPanelClick(); else gitMsgFocus_ = false;
                 return;
@@ -4196,6 +4213,7 @@ private:
             dirty_ = true;
             return;
         }
+        if (searchView() && L_.side.contains(mx_, my_)) { searchScroll(stepsY != 0 ? static_cast<float>(stepsY) * 3 * L_.sideRow : dyPx * S()); return; }
         if (gitView() && L_.side.contains(mx_, my_)) {
             gitScroll_ = std::clamp(gitScroll_ + (stepsY != 0 ? static_cast<float>(stepsY) * 3 * lh() : dyPx * S()), 0.0f, gitMax_);
             dirty_ = true;
@@ -5317,6 +5335,396 @@ private:
         }
     }
 
+    // ============================================================ project search & replace (sidebar "Search" view)
+
+    struct SHit { Rect r; int kind = 0; };   // 1-4 fields, 5 case, 6 word, 7 regex, 8 replace all, 9 filters
+    std::vector<SHit> sHits_;
+    TextBox sQuery_, sReplace_, sInclude_, sExclude_;
+    int sFocus_ = -1;                        // focused field: 0 query, 1 replace, 2 include, 3 exclude
+    bool sCase_ = false, sWord_ = false, sRegex_ = false, sFilters_ = false;
+    std::vector<search::FileResult> sRes_;
+    int sTotal_ = 0;
+    bool sTrunc_ = false, sBusy_ = false, sPending_ = false, sSearched_ = false;
+    std::string sError_;
+    Clock::time_point sRunAt_{}, sReplaceArmAt_{};
+    std::shared_ptr<std::atomic<int>> sGen_ = std::make_shared<std::atomic<int>>(0);
+    struct SRow { int file = 0, match = -1; };   // match < 0: the file header row
+    std::vector<SRow> sRows_;
+    bool sRowsDirty_ = true;
+    float sScroll_ = 0, sMax_ = 0, sResultsTop_ = 0;
+    bool searchView() const { return sidebar_ && sideSearch_; }
+
+    search::Options searchOptions() const {
+        search::Options o;
+        o.query = sQuery_.text; o.matchCase = sCase_; o.wholeWord = sWord_; o.regex = sRegex_;
+        o.include = sInclude_.text; o.exclude = sExclude_.text;
+        return o;
+    }
+
+    void openSearch(bool replace) {
+        if (!explorer_.isOpen()) { setMessage("Open a folder to search in it", false, 2.5f); return; }
+        sidebar_ = true; sideSearch_ = true; sideGit_ = false;
+        sideFocus_ = false; gitMsgFocus_ = false;
+        if (!docs_.empty() && doc().hasSelection()) {
+            std::string t = doc().selectedText();
+            if (t.find('\n') == std::string::npos && !t.empty() && t != sQuery_.text) { sQuery_ = {t, t.size()}; sPending_ = true; sRunAt_ = Clock::now(); }
+        }
+        sFocus_ = replace ? 1 : 0;
+        sQuery_.cur = sQuery_.text.size();
+        if (replace) sReplace_.cur = sReplace_.text.size();
+        dirty_ = true;
+    }
+
+    void scheduleSearch() { sPending_ = true; sRunAt_ = Clock::now() + std::chrono::milliseconds(280); dirty_ = true; }
+
+    void rebuildSearchRows() {
+        sRows_.clear();
+        for (int i = 0; i < static_cast<int>(sRes_.size()); ++i) {
+            sRows_.push_back({i, -1});
+            if (sRes_[static_cast<std::size_t>(i)].collapsed) continue;
+            for (int m = 0; m < static_cast<int>(sRes_[static_cast<std::size_t>(i)].matches.size()); ++m) sRows_.push_back({i, m});
+        }
+        sRowsDirty_ = false;
+    }
+
+    void recountSearch() {
+        sTotal_ = 0;
+        for (const auto& f : sRes_) sTotal_ += static_cast<int>(f.matches.size());
+        sRowsDirty_ = true;
+    }
+
+    void startSearch() {
+        sPending_ = false;
+        const int gen = ++*sGen_;
+        sSearched_ = false;
+        if (sQuery_.text.empty() || !explorer_.isOpen()) {
+            sRes_.clear(); sTotal_ = 0; sError_.clear(); sBusy_ = false; sTrunc_ = false; sRowsDirty_ = true; sScroll_ = 0;
+            dirty_ = true;
+            return;
+        }
+        const search::Options o = searchOptions();
+        if (search::Matcher m(o); !m.ok()) {   // typos in a regex are reported, not searched
+            sRes_.clear(); sTotal_ = 0; sError_ = m.error(); sBusy_ = false; sTrunc_ = false; sRowsDirty_ = true;
+            dirty_ = true;
+            return;
+        }
+        std::map<std::string, std::string> overrides;   // unsaved edits are searched too
+        for (const auto& d : docs_) if (!d->path.empty() && d->modified()) overrides[d->path] = d->buf.text();
+        sBusy_ = true;
+        sError_.clear();
+        const fs::path root = explorer_.rootPath();
+        auto g = sGen_;
+        spawn([this, g, gen, root, o, overrides]() -> std::function<void()> {
+            auto r = search::run(root, o, overrides, [g, gen] { return g->load() != gen; });
+            return [this, g, gen, r = std::move(r)]() mutable {
+                if (g->load() != gen) return;   // a newer search superseded this one
+                sRes_ = std::move(r.files);
+                sTotal_ = r.total; sTrunc_ = r.truncated; sError_ = r.error;
+                sBusy_ = false; sSearched_ = true; sRowsDirty_ = true; sScroll_ = 0;
+            };
+        });
+        dirty_ = true;
+    }
+
+    void searchOpenMatch(int fi, int mi) {
+        if (fi < 0 || fi >= static_cast<int>(sRes_.size())) return;
+        const auto& f = sRes_[static_cast<std::size_t>(fi)];
+        openFile(f.path);
+        if (docs_.empty() || doc().path != f.path) return;
+        if (mi >= 0 && mi < static_cast<int>(f.matches.size())) {
+            const auto& m = f.matches[static_cast<std::size_t>(mi)];
+            doc().select({m.line, m.col}, {m.line, m.col + m.len});
+            scrollToCursor_ = true;
+        }
+        sFocus_ = -1;
+        sideFocus_ = false;
+        dirty_ = true;
+    }
+
+    // fi/mi: -1/-1 everything, fi/-1 one file, fi/mi a single occurrence.
+    void searchReplace(int fi, int mi) {
+        const search::Options o = searchOptions();
+        const std::string with = sReplace_.text;
+        int total = 0, files = 0, skipped = 0;
+        for (int i = 0; i < static_cast<int>(sRes_.size()); ++i) {
+            if (fi >= 0 && i != fi) continue;
+            const auto& fr = sRes_[static_cast<std::size_t>(i)];
+            const bool unsaved = std::ranges::any_of(docs_, [&](const auto& d) { return d->path == fr.path && d->modified(); });
+            if (unsaved) { ++skipped; continue; }   // never overwrite the user's unsaved edits
+            std::set<std::pair<int, int>> only;
+            if (mi >= 0) { const auto& m = fr.matches[static_cast<std::size_t>(mi)]; only.insert({m.line, m.col}); }
+            else for (const auto& m : fr.matches) only.insert({m.line, m.col});
+            const int n = search::replaceInFile(fr.path, o, with, &only);
+            if (n > 0) { total += n; ++files; } else if (n < 0) ++skipped;
+        }
+        checkDocsOnDisk();   // open, unmodified files reload right away
+        explorer_.refresh();
+        gitNextPoll_ = {};
+        std::string msg = std::format("Replaced {} occurrence{} in {} file{}", total, total == 1 ? "" : "s", files, files == 1 ? "" : "s");
+        if (skipped > 0) msg += std::format(" ({} skipped: unsaved changes or unreadable)", skipped);
+        setMessage(msg, skipped > 0 && total == 0, 4);
+        startSearch();
+    }
+
+    void searchDismiss(int fi, int mi) {
+        if (fi < 0 || fi >= static_cast<int>(sRes_.size())) return;
+        auto& f = sRes_[static_cast<std::size_t>(fi)];
+        if (mi >= 0 && mi < static_cast<int>(f.matches.size())) f.matches.erase(f.matches.begin() + mi);
+        if (mi < 0 || f.matches.empty()) sRes_.erase(sRes_.begin() + fi);
+        recountSearch();
+        dirty_ = true;
+    }
+
+    bool searchKey(const KeyEvent& k) {
+        TextBox* boxes[4] = {&sQuery_, &sReplace_, &sInclude_, &sExclude_};
+        auto visible = [&](int i) { return i < 2 || sFilters_; };
+        if (k.key == Key::Escape) { sFocus_ = -1; return true; }
+        if (k.key == Key::Tab) {
+            int n = sFocus_;
+            for (int step = 0; step < 4; ++step) { n = (n + (k.shift ? 3 : 1)) % 4; if (visible(n)) break; }
+            sFocus_ = n;
+            return true;
+        }
+        if (k.key == Key::Enter) {
+            if (k.ctrl && sFocus_ == 1) { searchReplace(-1, -1); return true; }
+            startSearch();
+            return true;
+        }
+        if (k.alt && !k.ctrl && k.key == Key::Char) {
+            if (k.ch == 'c') { sCase_ = !sCase_; startSearch(); return true; }
+            if (k.ch == 'w') { sWord_ = !sWord_; startSearch(); return true; }
+            if (k.ch == 'r') { sRegex_ = !sRegex_; startSearch(); return true; }
+        }
+        if (k.ctrl && k.key != Key::Char) return false;
+        if (k.key >= Key::F1) return false;
+        if (k.ctrl && k.key == Key::Char && k.ch != 'v' && k.ch != 'a') return false;   // IDE shortcuts keep working
+        if (sFocus_ < 0 || sFocus_ > 3) return false;
+        TextBox& t = *boxes[sFocus_];
+        const std::string before = t.text;
+        const bool used = editText(t, k);
+        if (used && t.text != before && sFocus_ != 1) scheduleSearch();
+        return used;
+    }
+
+    void searchClick(Button b) {
+        if (b != Button::Left) return;
+        sFocus_ = -1;
+        for (auto it = sHits_.rbegin(); it != sHits_.rend(); ++it) {
+            if (!it->r.contains(mx_, my_)) continue;
+            switch (it->kind) {
+                case 1: case 2: case 3: case 4: {
+                    sFocus_ = it->kind - 1;
+                    TextBox& t = sFocus_ == 0 ? sQuery_ : sFocus_ == 1 ? sReplace_ : sFocus_ == 2 ? sInclude_ : sExclude_;
+                    t.cur = caretFromX(t.text, mx_ - (it->r.x + 10 * S()));   // approximate: ignores horizontal scroll of long text
+                    break;
+                }
+                case 5: sCase_ = !sCase_; startSearch(); sFocus_ = 0; break;
+                case 6: sWord_ = !sWord_; startSearch(); sFocus_ = 0; break;
+                case 7: sRegex_ = !sRegex_; startSearch(); sFocus_ = 0; break;
+                case 8: {
+                    if (sTotal_ == 0) break;
+                    const auto now = Clock::now();
+                    if (now - sReplaceArmAt_ < std::chrono::seconds(4)) { sReplaceArmAt_ = {}; searchReplace(-1, -1); }
+                    else {
+                        sReplaceArmAt_ = now;
+                        setMessage(std::format("Replace {} occurrence{} with \"{}\"? Click again to confirm", sTotal_, sTotal_ == 1 ? "" : "s", sReplace_.text), false, 4);
+                    }
+                    break;
+                }
+                case 9: sFilters_ = !sFilters_; break;
+                default: break;
+            }
+            dirty_ = true;
+            return;
+        }
+        if (!L_.sideList.contains(mx_, my_) || my_ < sResultsTop_) return;
+        if (sRowsDirty_) rebuildSearchRows();
+        const float rh = L_.sideRow;
+        const int row = static_cast<int>(std::floor((my_ - sResultsTop_ + sScroll_) / rh));
+        if (row < 0 || row >= static_cast<int>(sRows_.size())) return;
+        const SRow r = sRows_[static_cast<std::size_t>(row)];
+        const float s = S(), bs = std::round(rh - 8 * s);
+        const Rect dismiss{L_.side.right() - 10 * s - bs, sResultsTop_ + static_cast<float>(row) * rh - sScroll_ + 4 * s, bs, bs};
+        const Rect repl{dismiss.x - 2 * s - bs, dismiss.y, bs, bs};
+        if (dismiss.contains(mx_, my_)) { searchDismiss(r.file, r.match); return; }
+        if (repl.contains(mx_, my_)) { searchReplace(r.file, r.match); return; }
+        if (r.match < 0) { auto& f = sRes_[static_cast<std::size_t>(r.file)]; f.collapsed = !f.collapsed; sRowsDirty_ = true; }
+        else searchOpenMatch(r.file, r.match);
+        dirty_ = true;
+    }
+
+    void searchScroll(float dy) {
+        sScroll_ = std::clamp(sScroll_ + dy, 0.0f, sMax_);
+        dirty_ = true;
+    }
+
+    void searchField(const Rect& r, TextBox& t, bool focused, int kind, std::string_view placeholder, float rightPad) {
+        const float s = S();
+        sHits_.push_back({r, kind});
+        fill(r, focused ? theme::accent : Color::rgb(0xffffff, 34), 7 * s);
+        fill(r.x + 1, r.y + 1, r.w - 2, r.h - 2, Color::rgb(0x07080a), 6 * s);
+        const float x0 = r.x + 10 * s, maxX = r.right() - rightPad;
+        std::size_t start = 0;
+        const std::size_t cur = std::min(t.cur, t.text.size());
+        while (start < cur && uiW(std::string_view(t.text).substr(start, cur - start)) > maxX - x0 - 4 * s) start = utf8Next(t.text, start);
+        if (t.text.empty()) uiLabel(x0, r.y, r.h, placeholder, theme::lineNum, maxX);
+        else uiLabel(x0, r.y, r.h, std::string_view(t.text).substr(start), theme::text, maxX);
+        if (focused && caretOn_ && focused_) {
+            const float cx = x0 + uiW(std::string_view(t.text).substr(start, cur - start));
+            fill(std::round(cx), r.y + 7 * s, std::max(2.0f, std::round(1.4f * s)), r.h - 14 * s, theme::caret, s);
+        }
+    }
+
+    // Small toggle ("Aa", "ab", ".*") docked inside the right edge of a field; returns its left edge.
+    float searchChip(float right, const Rect& field, std::string_view label, bool on, int kind) {
+        const float s = S();
+        const float w = std::max(uiW(label) + 12 * s, std::round(26 * s));
+        const Rect c{right - w, field.y + 4 * s, w, field.h - 8 * s};
+        sHits_.push_back({c, kind});
+        const bool hot = c.contains(mx_, my_);
+        if (on) fill(c, theme::accent.alpha(80), 5 * s);
+        else if (hot) fill(c, Color::rgb(0xffffff, 24), 5 * s);
+        uiLabelC(c.x + c.w / 2, c.y, c.h, label, on ? Color::rgb(0xffffff) : theme::dim);
+        return c.x - 2 * s;
+    }
+
+    void drawSearchBody() {
+        const Rect& sd = L_.side;
+        const float s = S(), rh = L_.sideRow, fh = std::round(uiH() + 12 * s), gap = std::round(6 * s);
+        sHits_.clear();
+        const float x0 = sd.x + 10 * s, w = sd.w - 20 * s;
+        float y = L_.sideList.y + 6 * s;
+        const Rect qR{x0, y, w, fh};
+        y += fh + gap;
+        const Rect rR{x0, y, w, fh};
+        y += fh + gap;
+        Rect iR{}, eR{};
+        if (sFilters_) { iR = {x0, y, w, fh}; y += fh + gap; eR = {x0, y, w, fh}; y += fh + gap; }
+        const Rect sumR{sd.x, y, sd.w, rh};
+        sResultsTop_ = std::round(sumR.bottom() + 2 * s);
+
+        // ---- results (drawn first; the field block is painted over rows that scroll beneath it)
+        if (sRowsDirty_) rebuildSearchRows();
+        const float listBottom = L_.sideList.bottom();
+        const float viewH = std::max(0.0f, listBottom - sResultsTop_);
+        sMax_ = std::max(0.0f, static_cast<float>(sRows_.size()) * rh - viewH * 0.5f);
+        sScroll_ = std::clamp(sScroll_, 0.0f, sMax_);
+        const float sy = std::round(sScroll_);
+        const int first = std::max(0, static_cast<int>(std::floor(sy / rh)));
+        const int last = std::min(static_cast<int>(sRows_.size()) - 1, static_cast<int>(std::floor((sy + viewH) / rh)));
+        const bool hasRepl = !sReplace_.text.empty();
+        const float indent = std::round(16 * s);
+        for (int i = first; i <= last; ++i) {
+            const SRow r = sRows_[static_cast<std::size_t>(i)];
+            const auto& f = sRes_[static_cast<std::size_t>(r.file)];
+            const float ry = sResultsTop_ + static_cast<float>(i) * rh - sy;
+            const Rect rr{sd.x + 6 * s, ry + 1, sd.w - 12 * s, rh - 2};
+            const bool hot = L_.sideList.contains(mx_, my_) && my_ >= sResultsTop_ && rr.contains(mx_, my_);
+            if (hot) fill(rr, theme::sideHover, 6 * s);
+            const float bs = std::round(rh - 8 * s);
+            const Rect dismiss{sd.right() - 10 * s - bs, ry + 4 * s, bs, bs};
+            const Rect repl{dismiss.x - 2 * s - bs, dismiss.y, bs, bs};
+            auto actionIcon = [&](const Rect& b, char32_t g) {
+                if (b.contains(mx_, my_)) fill(b, Color::rgb(0xffffff, 36), 5 * s);
+                const int ip = std::max(10, static_cast<int>(std::round(bs * 0.62f)));
+                Icons::glyph(dl_, font_, std::round(b.x + (b.w - static_cast<float>(ip)) / 2), std::round(b.y + (b.h - static_cast<float>(ip)) / 2), ip, g, Color::rgb(0xffffff));
+            };
+            if (r.match < 0) {
+                const int cs = std::max(8, static_cast<int>(std::round(iconSize() * 0.55f)));
+                Icons::chevron(dl_, font_, sd.x + 12 * s + (indent - static_cast<float>(cs)) / 2, ry + (rh - static_cast<float>(cs)) / 2, cs, !f.collapsed, theme::dim);
+                const float ix = sd.x + 12 * s + indent, iy = ry + (rh - iconSize()) / 2;
+                const std::string name = fs::path(f.rel).filename().string();
+                drawFileIcon(ix, iy, name);
+                const float nx = ix + iconSize() + 8 * s;
+                const float rightEdge = hot ? repl.x - 6 * s : sd.right() - 14 * s;
+                float after = uiLabel(nx, ry, rh, name, theme::text, rightEdge - 30 * s);
+                const std::string dir = fs::path(f.rel).parent_path().generic_string();
+                if (!dir.empty()) uiLabel(after + 8 * s, ry, rh, dir, theme::lineNum, rightEdge - 30 * s);
+                if (hot) { actionIcon(repl, 0xF06D4); actionIcon(dismiss, 0xF0156); }
+                else {
+                    const std::string cnt = std::to_string(f.matches.size());
+                    const float bw = std::max(uiW(cnt) + 12 * s, 20 * s), bh = std::round(uiH() + 2 * s);
+                    const Rect badge{sd.right() - 14 * s - bw, ry + (rh - bh) / 2, bw, bh};
+                    fill(badge, Color::rgb(0xffffff, 26), bh / 2);
+                    uiLabelC(badge.x + badge.w / 2, badge.y, badge.h, cnt, theme::dim);
+                }
+            } else {
+                const auto& m = f.matches[static_cast<std::size_t>(r.match)];
+                float x = sd.x + 12 * s + indent * 2;
+                const float maxX = (hot ? repl.x - 6 * s : sd.right() - 14 * s);
+                const std::string_view pv = m.preview;
+                const std::size_t pc = std::min(static_cast<std::size_t>(std::max(0, m.pcol)), pv.size());
+                const std::size_t pl = std::min(static_cast<std::size_t>(m.len), pv.size() - pc);
+                const Color base = Color::rgb(0xb9bdc6);
+                x = uiLabel(x, ry, rh, pv.substr(0, pc), base, maxX);
+                const float mw = uiW(pv.substr(pc, pl));
+                if (hasRepl) {
+                    fill(x, ry + 4 * s, std::min(mw, maxX - x), rh - 8 * s, Color::rgb(0xe06c75, 60), 3 * s);
+                    const float xe = uiLabel(x, ry, rh, pv.substr(pc, pl), Color::rgb(0xe9a3a8), maxX);
+                    fill(x, ry + rh / 2, std::max(0.0f, std::min(mw, maxX - x)), std::max(1.0f, std::round(s)), Color::rgb(0xe9a3a8));
+                    const float nw = uiW(sReplace_.text);
+                    fill(xe, ry + 4 * s, std::max(0.0f, std::min(nw, maxX - xe)), rh - 8 * s, Color::rgb(0x73c990, 60), 3 * s);
+                    x = uiLabel(xe, ry, rh, sReplace_.text, Color::rgb(0xa5e0b8), maxX);
+                } else {
+                    fill(x, ry + 4 * s, std::min(mw, maxX - x), rh - 8 * s, Color::rgb(0xe5c07b, 70), 3 * s);
+                    x = uiLabel(x, ry, rh, pv.substr(pc, pl), Color::rgb(0xffffff), maxX);
+                }
+                if (pc + pl < pv.size()) uiLabel(x, ry, rh, pv.substr(pc + pl), base, maxX);
+                if (hot) { actionIcon(repl, 0xF06D4); actionIcon(dismiss, 0xF0156); }
+            }
+        }
+        if (static_cast<float>(sRows_.size()) * rh > viewH) {
+            const float contentH = static_cast<float>(sRows_.size()) * rh;
+            const float thumbH = std::max(24 * s, viewH * viewH / (contentH + viewH * 0.5f));
+            const float thumbY = sResultsTop_ + (viewH - thumbH) * std::clamp(sy / sMax_, 0.0f, 1.0f);
+            fill(sd.right() - 9 * s, thumbY, 5 * s, thumbH, theme::scrollbar, 2.5f * s);
+        }
+
+        // ---- inputs and summary (opaque, so results scrolling underneath disappear)
+        fill(sd.x, L_.sideList.y, sd.w, sResultsTop_ - L_.sideList.y, theme::sideBg);
+        sHits_.clear();
+        {
+            auto chipW = [&](std::string_view l) { return std::max(uiW(l) + 12 * s, std::round(26 * s)) + 2 * s; };
+            const float reserve = chipW(".*") + chipW("ab") + chipW("Aa") + 10 * s;
+            searchField(qR, sQuery_, sFocus_ == 0, 1, "Search", reserve);
+            float rp = qR.right() - 6 * s;
+            rp = searchChip(rp, qR, ".*", sRegex_, 7);
+            rp = searchChip(rp, qR, "ab", sWord_, 6);
+            searchChip(rp, qR, "Aa", sCase_, 5);
+        }
+        {   // replace-all button docked in the replace field
+            const float bw = std::round(fh - 6 * s);
+            const Rect b{rR.right() - 3 * s - bw, rR.y + 3 * s, bw, rR.h - 6 * s};
+            searchField(rR, sReplace_, sFocus_ == 1, 2, "Replace", bw + 12 * s);
+            sHits_.push_back({b, 8});
+            const bool armed = Clock::now() - sReplaceArmAt_ < std::chrono::seconds(4);
+            if (armed) fill(b, theme::accent.alpha(120), 5 * s);
+            else if (b.contains(mx_, my_)) fill(b, Color::rgb(0xffffff, 28), 5 * s);
+            const int ip = std::max(12, static_cast<int>(std::round(b.h * 0.7f)));
+            Icons::glyph(dl_, font_, std::round(b.x + (b.w - static_cast<float>(ip)) / 2), std::round(b.y + (b.h - static_cast<float>(ip)) / 2), ip, 0xF06D4,
+                         sTotal_ > 0 ? Color::rgb(0xffffff) : theme::lineNum);
+        }
+        if (sFilters_) {
+            searchField(iR, sInclude_, sFocus_ == 2, 3, "files to include (*.cpp, src/**)", 10 * s);
+            searchField(eR, sExclude_, sFocus_ == 3, 4, "files to exclude", 10 * s);
+        }
+        // summary line
+        std::string sum;
+        Color sc = theme::dim;
+        if (!sError_.empty()) { sum = sError_; sc = sError_ == "Type to search" ? theme::lineNum : Color::rgb(0xf2777a); }
+        else if (sBusy_ || sPending_) sum = "Searching...";
+        else if (sSearched_ && sTotal_ == 0) sum = "No results";
+        else if (sTotal_ > 0) sum = std::format("{}{} result{} in {} file{}", sTotal_, sTrunc_ ? "+" : "", sTotal_ == 1 ? "" : "s", sRes_.size(), sRes_.size() == 1 ? "" : "s");
+        const std::string flt = "Filters";
+        const float fw = uiW(flt) + 16 * s;
+        const Rect fR{sd.right() - 10 * s - fw, sumR.y + 3 * s, fw, rh - 6 * s};
+        sHits_.push_back({fR, 9});
+        if (sFilters_) fill(fR, theme::accent.alpha(60), 5 * s);
+        else if (fR.contains(mx_, my_)) fill(fR, Color::rgb(0xffffff, 22), 5 * s);
+        uiLabelC(fR.x + fR.w / 2, fR.y, fR.h, flt, sFilters_ ? Color::rgb(0xffffff) : theme::dim);
+        uiLabel(sd.x + 14 * s, sumR.y, rh, sum, sc, fR.x - 6 * s);
+    }
+
     // ============================================================ project dialogs (welcome / new project / folder browser)
 
     enum DlgId : int {
@@ -6130,6 +6538,13 @@ private:
         fill(sd, theme::sideBg);
         const float headH = L_.tabs.h;
 
+        if (sideSearch_) {
+            drawSearchBody();
+            fill(sd.x, sd.y, sd.w, headH, theme::sideBg);
+            uiLabel(sd.x + 16 * s, sd.y, headH, "SEARCH", theme::dim, sd.right() - 12 * s);
+            if (explorer_.isOpen()) uiLabelR(sd.right() - 16 * s, sd.y, headH, explorer_.rootName(), theme::lineNum);
+            return;
+        }
         if (sideGit_) {   // Source Control instead of the file tree
             drawGitBody(L_.sideList);
             fill(sd.x, sd.y, sd.w, headH, theme::sideBg);
@@ -6642,6 +7057,7 @@ private:
     TaskKind buildKind_ = TaskKind::None;
     bool runFocus_ = false, scriptSleeping_ = false;
     Clock::time_point scriptSleepUntil_{};
+    bool sideSearch_ = false;   // the sidebar shows project search
     bool sideGit_ = false;   // the right-hand island shows Git instead of the file explorer
     bool gitView() const { return sidebar_ && sideGit_; }
     bool debugRun_ = false, toolTipShown_ = false;
