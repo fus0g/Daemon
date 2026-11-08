@@ -855,7 +855,7 @@ private:
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S()), between = std::round(10 * S());
         const float w = bs + 2 * pad, x = a.x + (a.w - w) / 2, y0 = a.y + std::round(6 * S());
         auto height = [&](int n) { return static_cast<float>(n) * bs + static_cast<float>(n - 1) * gap + 2 * pad + 2 * activityPadV(); };   // extra room above the first and below the last icon
-        return {x, y0 + static_cast<float>(group) * (height(3) + between), w, height(group == 2 ? 1 : 3)};
+        return {x, y0 + static_cast<float>(group) * (height(3) + between), w, group == 2 ? w : height(3)};   // the lone Debug button gets a circle
     }
     // Buttons by id (0 Explorer, 1 Git, 2 Output, 3 Terminal, 4 Problems, 5 Search, 6 Debug). Pills: Explorer / Search / Git,
     // Output / Terminal / Problems, and Debug on its own.
@@ -865,7 +865,7 @@ private:
         const int p = activityPos(i);
         const int g = p < 3 ? 0 : p < 6 ? 1 : 2;
         const Rect pill = activityPill(g);
-        return {pill.x + pad, pill.y + pad + activityPadV() + static_cast<float>(p - g * 3) * (bs + gap), bs, bs};
+        return {pill.x + pad, pill.y + pad + (g == 2 ? 0.0f : activityPadV()) + static_cast<float>(p - g * 3) * (bs + gap), bs, bs};
     }
     int activityAt(float x, float y) const {
         if (!L_.activity.contains(x, y)) return 0;
