@@ -1,4 +1,4 @@
-// ide.wayland — the windowing layer: a native Wayland client (xdg-shell, xkbcommon,
+// daemon.wayland — the windowing layer: a native Wayland client (xdg-shell, xkbcommon,
 // wl_data_device clipboard, themed cursors, integer HiDPI scale).
 module;
 #include <wayland-client.h>
@@ -13,10 +13,10 @@ module;
 #include <sys/mman.h>
 #include <sys/timerfd.h>
 #include <unistd.h>
-export module ide.wayland;
+export module daemon.ui.wayland;
 import std;
-import ide.input;
-import ide.util;
+import daemon.ui.input;
+import daemon.base.util;
 
 export namespace ide {
 

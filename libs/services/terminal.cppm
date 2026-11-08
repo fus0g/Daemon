@@ -1,6 +1,6 @@
-// ide.terminal — a small VT100 / xterm terminal emulator (screen buffer, scrollback, colours, alternate screen).
+// daemon.terminal — a small VT100 / xterm terminal emulator (screen buffer, scrollback, colours, alternate screen).
 // Pure logic: feed() consumes the bytes a program writes to its terminal, the grid can then be drawn by the UI.
-export module ide.terminal;
+export module daemon.services.terminal;
 import std;
 
 export namespace ide {

@@ -1,10 +1,10 @@
-// ide.cmake — CMake project support in the style of CLion: build profiles, configure / build
+// daemon.cmake — CMake project support in the style of CLion: build profiles, configure / build
 // command lines, target discovery through the CMake File API, and compiler diagnostics parsing.
-export module ide.cmake;
+export module daemon.services.cmake;
 import std;
-import ide.json;
-import ide.process;
-import ide.util;
+import daemon.base.json;
+import daemon.base.process;
+import daemon.base.util;
 
 namespace fs = std::filesystem;
 

@@ -1,4 +1,4 @@
-// ide.process — spawning child processes with non-blocking pipes (build tools, programs, clangd).
+// daemon.process — spawning child processes with non-blocking pipes (build tools, programs, clangd).
 module;
 #include <fcntl.h>
 #include <poll.h>
@@ -9,7 +9,7 @@ module;
 #include <termios.h>
 #include <unistd.h>
 #include <cerrno>
-export module ide.process;
+export module daemon.base.process;
 import std;
 
 namespace fs = std::filesystem;

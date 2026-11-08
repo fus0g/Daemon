@@ -1,9 +1,9 @@
-// ide.project — project templates (the "New Project" flow) and the recent-projects list.
-export module ide.project;
+// daemon.project — project templates (the "New Project" flow) and the recent-projects list.
+export module daemon.services.project;
 import std;
-import ide.json;
-import ide.process;
-import ide.util;
+import daemon.base.json;
+import daemon.base.process;
+import daemon.base.util;
 
 namespace fs = std::filesystem;
 

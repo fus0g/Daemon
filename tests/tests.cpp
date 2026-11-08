@@ -2,23 +2,23 @@
 #include <cstdlib>
 #include <poll.h>
 import std;
-import ide.util;
-import ide.text;
-import ide.syntax;
-import ide.editor;
-import ide.explorer;
-import ide.icons;
-import ide.json;
-import ide.process;
-import ide.cmake;
-import ide.project;
-import ide.git;
-import ide.search;
-import ide.gdbmi;
-import ide.terminal;
-import ide.lsp;
-import ide.font;
-import ide.draw;
+import daemon.base.util;
+import daemon.text.buffer;
+import daemon.text.syntax;
+import daemon.text.document;
+import daemon.services.explorer;
+import daemon.ui.icons;
+import daemon.base.json;
+import daemon.base.process;
+import daemon.services.cmake;
+import daemon.services.project;
+import daemon.services.git;
+import daemon.services.search;
+import daemon.services.gdb;
+import daemon.services.terminal;
+import daemon.services.lsp;
+import daemon.ui.font;
+import daemon.ui.draw;
 
 static int failures = 0;
 
@@ -366,7 +366,7 @@ static void testLsp() {
     int stateChanges = 0;
     c.onDiagnostics = [&](const std::string& p, std::vector<LspDiag> d) { diagPath = p; diags = std::move(d); };
     c.onState = [&](LspClient::State) { ++stateChanges; };
-    auto st = c.start({"python3", "-I", std::string(IDE_SOURCE_DIR) + "/tests/mock_lsp.py"}, "/tmp");
+    auto st = c.start({"python3", "-I", std::string(DAEMON_SOURCE_DIR) + "/tests/mock_lsp.py"}, "/tmp");
     CHECK(st.has_value());
     auto waitFor = [&](auto pred, int ms = 5000) {
         auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);

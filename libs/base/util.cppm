@@ -1,5 +1,5 @@
-// ide.util — UTF-8 helpers, file I/O and a tiny PNG writer (used for --screenshot).
-export module ide.util;
+// daemon.util — UTF-8 helpers, file I/O and a tiny PNG writer (used for --screenshot).
+export module daemon.base.util;
 import std;
 
 export namespace ide {

@@ -1,14 +1,14 @@
-// ide.lsp — a Language Server Protocol client (JSON-RPC over stdio), built for clangd.
+// daemon.lsp — a Language Server Protocol client (JSON-RPC over stdio), built for clangd.
 //
 // It is single-threaded and event-loop driven: the app watches `fd()` and calls `pump()` when it is
 // readable. Requests take callbacks that run from `pump()`.
 module;
 #include <unistd.h>
-export module ide.lsp;
+export module daemon.services.lsp;
 import std;
-import ide.json;
-import ide.process;
-import ide.util;
+import daemon.base.json;
+import daemon.base.process;
+import daemon.base.util;
 
 namespace fs = std::filesystem;
 

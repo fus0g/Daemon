@@ -1,9 +1,9 @@
-// ide.explorer — the file-tree model behind the sidebar (no rendering, no windowing).
+// daemon.explorer — the file-tree model behind the sidebar (no rendering, no windowing).
 module;
 #include <sys/inotify.h>
 #include <unistd.h>
 #include <cerrno>
-export module ide.explorer;
+export module daemon.services.explorer;
 import std;
 
 namespace fs = std::filesystem;

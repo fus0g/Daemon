@@ -1,11 +1,11 @@
-// ide.syntax — table-driven, line-oriented syntax highlighter.
+// daemon.syntax — table-driven, line-oriented syntax highlighter.
 //
 // The highlighter tokenises one line at a time, carrying a tiny state (inside a block
 // comment / multi-line string) from line to line. States are cached per line and
 // invalidated from the first edited line, so only visible lines are ever scanned.
-export module ide.syntax;
+export module daemon.text.syntax;
 import std;
-import ide.text;
+import daemon.text.buffer;
 
 export namespace ide {
 

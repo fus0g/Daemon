@@ -1,7 +1,7 @@
-// ide.json — a small JSON value type, parser and serialiser (used for LSP and the CMake File API).
-export module ide.json;
+// daemon.json — a small JSON value type, parser and serialiser (used for LSP and the CMake File API).
+export module daemon.base.json;
 import std;
-import ide.util;
+import daemon.base.util;
 
 export namespace ide::json {
 

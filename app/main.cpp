@@ -1,5 +1,5 @@
 import std;
-import ide.app;
+import daemon.app;
 
 namespace {
 

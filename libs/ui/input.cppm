@@ -1,5 +1,5 @@
-// ide.input — platform-independent input event types.
-export module ide.input;
+// daemon.input — platform-independent input event types.
+export module daemon.ui.input;
 import std;
 
 export namespace ide {

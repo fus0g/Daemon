@@ -1,7 +1,7 @@
-// ide.text — the text buffer: lines of UTF-8, with grouped/coalescing undo & redo.
-export module ide.text;
+// daemon.text — the text buffer: lines of UTF-8, with grouped/coalescing undo & redo.
+export module daemon.text.buffer;
 import std;
-import ide.util;
+import daemon.base.util;
 
 export namespace ide {
 

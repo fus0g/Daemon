@@ -1,11 +1,11 @@
-// ide.editor — a document: buffer + cursor/selection + editing commands (no rendering).
+// daemon.editor — a document: buffer + cursor/selection + editing commands (no rendering).
 module;
 #include <cerrno>
-export module ide.editor;
+export module daemon.text.document;
 import std;
-import ide.util;
-import ide.text;
-import ide.syntax;
+import daemon.base.util;
+import daemon.text.buffer;
+import daemon.text.syntax;
 
 export namespace ide {
 

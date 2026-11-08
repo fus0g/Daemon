@@ -1,13 +1,13 @@
-// ide.font — system font discovery, glyph rasterisation (stb_truetype) and a CPU-side
+// daemon.font — system font discovery, glyph rasterisation (stb_truetype) and a CPU-side
 // R8 glyph atlas that the Vulkan renderer mirrors into a GPU texture.
 //
 // Two font roles share the atlas: the monospace *code* font (cell grid, used in the editor and
 // terminal-like output) and a proportional *UI* font for all chrome, with real advances and kerning.
 module;
 #include "stb_truetype.h"
-export module ide.font;
+export module daemon.ui.font;
 import std;
-import ide.util;
+import daemon.base.util;
 
 namespace fs = std::filesystem;
 

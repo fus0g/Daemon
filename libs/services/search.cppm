@@ -1,8 +1,8 @@
-// ide.search — project-wide find and replace (no UI): matcher, file enumeration, search and replace passes.
-export module ide.search;
+// daemon.search — project-wide find and replace (no UI): matcher, file enumeration, search and replace passes.
+export module daemon.services.search;
 import std;
-import ide.util;
-import ide.process;
+import daemon.base.util;
+import daemon.base.process;
 
 namespace fs = std::filesystem;
 

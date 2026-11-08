@@ -1,9 +1,9 @@
-// ide.git — thin git integration: repository status, line-level diff against HEAD, blame, staging and commits.
+// daemon.git — thin git integration: repository status, line-level diff against HEAD, blame, staging and commits.
 // Everything shells out to the `git` binary; calls are blocking and meant to run on a worker thread.
-export module ide.git;
+export module daemon.services.git;
 import std;
-import ide.process;
-import ide.util;
+import daemon.base.process;
+import daemon.base.util;
 
 namespace fs = std::filesystem;
 

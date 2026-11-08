@@ -1,8 +1,8 @@
-// ide.draw — colours and the per-frame list of instanced quads handed to the renderer.
-export module ide.draw;
+// daemon.draw — colours and the per-frame list of instanced quads handed to the renderer.
+export module daemon.ui.draw;
 import std;
-import ide.util;
-import ide.font;
+import daemon.base.util;
+import daemon.ui.font;
 
 export namespace ide {
 

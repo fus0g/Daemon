@@ -1,12 +1,12 @@
-// ide.icons — vector icons for the file explorer and tabs.
+// daemon.icons — vector icons for the file explorer and tabs.
 //
 // Icons are described on a 16x16 design grid with a few primitives (rounded rects, circles,
 // capsules, polygons, rings), rasterised once per pixel size with 6x6 supersampling into the glyph
 // atlas, and drawn as tinted masks. They stay crisp at any scale and cost nothing per frame.
-export module ide.icons;
+export module daemon.ui.icons;
 import std;
-import ide.draw;
-import ide.font;
+import daemon.ui.draw;
+import daemon.ui.font;
 
 namespace fs = std::filesystem;
 

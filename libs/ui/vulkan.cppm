@@ -1,4 +1,4 @@
-// ide.vulkan — the renderer.
+// daemon.vulkan — the renderer.
 //
 // One graphics pipeline draws everything: a single instanced triangle strip per quad,
 // sampling an R8 coverage atlas (glyphs, plus a solid white block for rectangles).
@@ -7,11 +7,11 @@ module;
 #define VK_USE_PLATFORM_WAYLAND_KHR
 #include <vulkan/vulkan.h>
 #include <wayland-client.h>
-export module ide.vulkan;
+export module daemon.ui.vulkan;
 import std;
-import ide.util;
-import ide.draw;
-import ide.font;
+import daemon.base.util;
+import daemon.ui.draw;
+import daemon.ui.font;
 
 namespace ide {
 

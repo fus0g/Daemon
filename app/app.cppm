@@ -1,26 +1,26 @@
-// ide.app — the application: tabs, editor view, prompts, input routing and the frame loop.
-export module ide.app;
+// daemon.app — the application: tabs, editor view, prompts, input routing and the frame loop.
+export module daemon.app;
 import std;
-import ide.util;
-import ide.input;
-import ide.text;
-import ide.syntax;
-import ide.font;
-import ide.draw;
-import ide.vulkan;
-import ide.wayland;
-import ide.editor;
-import ide.explorer;
-import ide.icons;
-import ide.json;
-import ide.process;
-import ide.cmake;
-import ide.project;
-import ide.git;
-import ide.search;
-import ide.gdbmi;
-import ide.terminal;
-import ide.lsp;
+import daemon.base.util;
+import daemon.ui.input;
+import daemon.text.buffer;
+import daemon.text.syntax;
+import daemon.ui.font;
+import daemon.ui.draw;
+import daemon.ui.vulkan;
+import daemon.ui.wayland;
+import daemon.text.document;
+import daemon.services.explorer;
+import daemon.ui.icons;
+import daemon.base.json;
+import daemon.base.process;
+import daemon.services.cmake;
+import daemon.services.project;
+import daemon.services.git;
+import daemon.services.search;
+import daemon.services.gdb;
+import daemon.services.terminal;
+import daemon.services.lsp;
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
