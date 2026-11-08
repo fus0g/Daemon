@@ -121,6 +121,7 @@ private:
     // (Re)creates the swapchain for the current requested extent. Leaves extent_ at 0x0
     // (and swapchain_ null) when the surface has no size yet.
     void createSwapchain();
+    void recoverFrames();
 
     // A sampled copy of the frame (taken between the scene and overlay passes) that the glass shader blurs.
     void destroyScene() {

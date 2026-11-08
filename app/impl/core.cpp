@@ -260,7 +260,7 @@ int App::run() {
         auto now = Clock::now();
         int timeout = -1;
         if (dirty_ || animating_) {
-            timeout = skipped_ ? 16 : 0;
+            timeout = (skipped_ || failures > 0) ? (failures > 0 ? 250 : 16) : 0;
         } else {
             auto wake = nextWake();
             if (wake) timeout = static_cast<int>(std::max<long long>(
@@ -278,7 +278,7 @@ int App::run() {
                 case RenderStatus::Presented: dirty_ = false; skipped_ = false; failures = 0; ++frames_; break;
                 case RenderStatus::Skipped: skipped_ = true; break;
                 case RenderStatus::Failed:
-                    if (++failures >= 3) { std::println(std::cerr, "fatal: rendering keeps failing"); return 1; }
+                    if (++failures >= 60) { std::println(std::cerr, "fatal: rendering keeps failing"); return 1; }
                     break;
             }
             if (!opt_.screenshot.empty()) screenshotStep();

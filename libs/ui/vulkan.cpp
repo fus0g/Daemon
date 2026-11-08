@@ -66,9 +66,28 @@ RenderStatus Renderer::render(const DrawList& dl, FontAtlas& font, Color clear) 
             return renderImpl(dl, font, clear);
         } catch (const VkFailure& e) {
             std::println(std::cerr, "render error: {}", e.what());
+            recoverFrames();
             return RenderStatus::Failed;
         }
     }
+
+// After a failed frame the acquire semaphore may still be signaled and the swapchain stale
+// (surface lost, suspend/resume): rebuild the per-frame sync objects and the swapchain.
+void Renderer::recoverFrames() {
+    vkDeviceWaitIdle(device_);
+    for (auto& f : frames_) {
+        if (f.imageAvailable) vkDestroySemaphore(device_, f.imageAvailable, nullptr);
+        VkSemaphoreCreateInfo si{VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO};
+        f.imageAvailable = VK_NULL_HANDLE;
+        vkCreateSemaphore(device_, &si, nullptr, &f.imageAvailable);
+        if (f.fence) vkDestroyFence(device_, f.fence, nullptr);
+        VkFenceCreateInfo fi{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+        fi.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+        f.fence = VK_NULL_HANDLE;
+        vkCreateFence(device_, &fi, nullptr, &f.fence);
+    }
+    swapDirty_ = true;
+}
 
 void Renderer::createInstance() {
         VkApplicationInfo app{VK_STRUCTURE_TYPE_APPLICATION_INFO};
@@ -546,7 +565,11 @@ RenderStatus Renderer::renderImpl(const DrawList& dl, FontAtlas& font, Color cle
         if (!swapchain_) return RenderStatus::Skipped;
 
         Frame& f = frames_[frameIdx_];
-        check(vkWaitForFences(device_, 1, &f.fence, VK_TRUE, UINT64_MAX), "vkWaitForFences");
+        {   // bounded: a stalled GPU (e.g. after suspend) must not freeze the UI thread
+            VkResult wr = vkWaitForFences(device_, 1, &f.fence, VK_TRUE, 200'000'000);
+            if (wr == VK_TIMEOUT) return RenderStatus::Skipped;
+            check(wr, "vkWaitForFences");
+        }
 
         // A bounded wait keeps the app responsive if the compositor stops releasing buffers
         // (e.g. the window is hidden) so Wayland pings are still answered.
@@ -556,8 +579,6 @@ RenderStatus Renderer::renderImpl(const DrawList& dl, FontAtlas& font, Color cle
         if (ar == VK_TIMEOUT || ar == VK_NOT_READY) return RenderStatus::Skipped;
         if (ar != VK_SUCCESS && ar != VK_SUBOPTIMAL_KHR) check(ar, "vkAcquireNextImageKHR");
         if (ar == VK_SUBOPTIMAL_KHR) swapDirty_ = true;
-        check(vkResetFences(device_, 1, &f.fence), "vkResetFences");
-
         // --- upload instance data
         std::size_t count = std::min(dl.size(), kMaxInstances);
         if (dl.size() > kMaxInstances) std::println(std::cerr, "warning: draw list truncated ({} quads)", dl.size());
@@ -718,6 +739,7 @@ RenderStatus Renderer::renderImpl(const DrawList& dl, FontAtlas& font, Color cle
         si.pCommandBuffers = &cb;
         si.signalSemaphoreCount = 1;
         si.pSignalSemaphores = &renderDone_[idx];
+        check(vkResetFences(device_, 1, &f.fence), "vkResetFences");
         check(vkQueueSubmit(queue_, 1, &si, f.fence), "vkQueueSubmit");
 
         VkPresentInfoKHR pi{VK_STRUCTURE_TYPE_PRESENT_INFO_KHR};
@@ -731,7 +753,7 @@ RenderStatus Renderer::renderImpl(const DrawList& dl, FontAtlas& font, Color cle
         else if (pr != VK_SUCCESS) check(pr, "vkQueuePresentKHR");
 
         if (shot) {
-            check(vkWaitForFences(device_, 1, &f.fence, VK_TRUE, UINT64_MAX), "vkWaitForFences(screenshot)");
+            check(vkWaitForFences(device_, 1, &f.fence, VK_TRUE, 5'000'000'000), "vkWaitForFences(screenshot)");
             std::vector<std::uint8_t> px(static_cast<std::size_t>(extent_.width) * extent_.height * 4);
             std::memcpy(px.data(), shotMap, px.size());
             const bool bgra = format_ == VK_FORMAT_B8G8R8A8_UNORM || format_ == VK_FORMAT_B8G8R8A8_SRGB;
