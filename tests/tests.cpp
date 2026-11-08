@@ -14,6 +14,7 @@ import ide.cmake;
 import ide.project;
 import ide.git;
 import ide.search;
+import ide.gdbmi;
 import ide.terminal;
 import ide.lsp;
 import ide.font;
@@ -761,7 +762,68 @@ static void testSearch() {
     std::filesystem::remove_all(dir);
 }
 
+static void testGdbMi() {
+    auto r = gdb::parseLine("12^done,bkpt={number=\"1\",type=\"breakpoint\",addr=\"0x1139\",line=\"4\"}");
+    CHECK(r && r->kind == '^' && r->token == 12 && r->cls == "done" && r->data["bkpt"]["line"].str() == "4");
+    r = gdb::parseLine("*stopped,reason=\"breakpoint-hit\",frame={addr=\"0x1\",func=\"main\",args=[{name=\"argc\",value=\"1\"},{name=\"argv\",value=\"0x7ff\"}],file=\"a.c\",line=\"7\"},thread-id=\"1\"");
+    CHECK(r && r->kind == '*' && r->cls == "stopped" && r->data["frame"]["args"][std::size_t(1)]["name"].str() == "argv");
+    r = gdb::parseLine("^done,stack=[frame={level=\"0\",func=\"f\"},frame={level=\"1\",func=\"main\"}]");
+    CHECK(r && r->data["stack"].array() && r->data["stack"].array()->size() == 2 && (*r->data["stack"].array())[1]["func"].str() == "main");
+    r = gdb::parseLine("~\"hello \\\"x\\\"\\n\\303\\251\"");
+    CHECK(r && r->kind == '~' && r->text == "hello \"x\"\n\xC3\xA9");
+    r = gdb::parseLine("^error,msg=\"No symbol \\\"zz\\\" in current context.\"");
+    CHECK(r && !r->ok() && r->msg() == "No symbol \"zz\" in current context.");
+    CHECK(!gdb::parseLine("(gdb) ") && !gdb::parseLine(""));
+    CHECK(gdb::quote("a\"b") == "\"a\\\"b\"");
+    // Live session against a tiny program (skipped when gdb or a compiler is missing).
+    if (!findExecutable("gdb") || !findExecutable("g++")) return;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "daemon-gdb-test";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    writeFile(dir / "t.cpp", "int add(int a, int b) {\n    int c = a + b;\n    return c;\n}\nint main() {\n    int x = add(2, 3);\n    return x == 5 ? 0 : 1;\n}\n");
+    ProcessOptions co;
+    co.argv = {"g++", "-g", "-O0", "-o", (dir / "t").string(), (dir / "t.cpp").string()};
+    if (Process::runCapture(co, 60000).exitCode != 0) { std::println(std::cerr, "(skipping live gdb test: compile failed)"); return; }
+    gdb::Session ses;
+    CHECK(ses.start({"gdb", "--interpreter=mi3", "-q", "-nx"}, dir.string()).has_value());
+    bool stopped = false, exited = false;
+    std::string reason, func;
+    ses.onAsync = [&](const gdb::Record& r) {
+        if (r.kind == '*' && r.cls == "stopped") {
+            reason = r.data["reason"].str();
+            func = r.data["frame"]["func"].str();
+            if (reason == "exited-normally") exited = true; else stopped = true;
+        }
+    };
+    int bpLine = 0, value = -1;
+    std::string localName;
+    ses.send("-gdb-set confirm off");
+    ses.send("-file-exec-and-symbols " + gdb::quote((dir / "t").string()));
+    ses.send("-break-insert --source " + gdb::quote((dir / "t.cpp").string()) + " --line 3", [&](const gdb::Record& r) { bpLine = std::atoi(r.data["bkpt"]["line"].str().c_str()); });
+    ses.send("-exec-run");
+    auto pumpUntil = [&](const std::function<bool()>& done) {
+        for (int i = 0; i < 400 && !done(); ++i) { ses.pump(); std::this_thread::sleep_for(std::chrono::milliseconds(25)); }
+        return done();
+    };
+    CHECK(pumpUntil([&] { return stopped; }));
+    CHECK(bpLine == 3 && reason == "breakpoint-hit" && func == "add");
+    ses.send("-data-evaluate-expression c", [&](const gdb::Record& r) { value = std::atoi(r.data["value"].str().c_str()); });
+    ses.send("-stack-list-variables --simple-values", [&](const gdb::Record& r) {
+        const auto* a = r.data["variables"].array();
+        if (a && !a->empty()) localName = (*a)[0]["name"].str();
+    });
+    CHECK(pumpUntil([&] { return value >= 0 && !localName.empty(); }));
+    CHECK(value == 5 && !localName.empty());
+    stopped = false;
+    ses.send("-exec-continue");
+    CHECK(pumpUntil([&] { return exited; }));
+    ses.send("-gdb-exit");
+    pumpUntil([&] { return !ses.pump(); });
+    std::filesystem::remove_all(dir);
+}
+
 int main() {
+    testGdbMi();
     testSearch();
     testTerminal();
     testGit();

@@ -94,6 +94,7 @@ target_sources(ide_core PUBLIC FILE_SET CXX_MODULES BASE_DIRS src FILES
   src/project.cppm
   src/git.cppm
   src/search.cppm
+  src/gdbmi.cppm
   src/terminal.cppm
   src/lsp.cppm
   src/text.cppm

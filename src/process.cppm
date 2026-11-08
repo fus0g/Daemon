@@ -157,6 +157,28 @@ public:
         return {};
     }
 
+    // A pseudo-terminal without a child: the caller hands `slavePath` to another program (e.g. gdb's inferior-tty) and
+    // reads / writes the master side here. The slave end is kept closed on our side so EOF arrives when the user is done.
+    std::expected<std::string, std::string> openPtyOnly() {
+        const int master = ::posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+        if (master < 0) return std::unexpected(std::strerror(errno));
+        char name[128];
+        if (::grantpt(master) != 0 || ::unlockpt(master) != 0 || ::ptsname_r(master, name, sizeof name) != 0) {
+            const std::string e = std::strerror(errno);
+            ::close(master);
+            return std::unexpected(e);
+        }
+        // Keep the slave open until the other program has opened it (otherwise the master would report EOF immediately).
+        ptySlave_ = ::open(name, O_RDWR | O_NOCTTY | O_CLOEXEC);
+        winsize ws{30, 120, 0, 0};
+        ::ioctl(master, TIOCSWINSZ, &ws);
+        outFd_ = master;
+        inFd_ = ::fcntl(master, F_DUPFD_CLOEXEC, 3);
+        ::fcntl(outFd_, F_SETFL, ::fcntl(outFd_, F_GETFL) | O_NONBLOCK);
+        return std::string(name);
+    }
+    void releasePtySlave() { if (ptySlave_ >= 0) { ::close(ptySlave_); ptySlave_ = -1; } }
+
     int outFd() const { return outFd_; }
     // Pseudo-terminal size (the program gets SIGWINCH).
     void resizePty(int cols, int rows) {
@@ -262,12 +284,13 @@ public:
 
 private:
     void closeFds() {
+        releasePtySlave();
         closeStdin();
         closeOutput();
     }
 
     pid_t pid_ = -1;
-    int outFd_ = -1, inFd_ = -1;
+    int outFd_ = -1, inFd_ = -1, ptySlave_ = -1;
     bool exited_ = true;
     int status_ = 0;
 };
