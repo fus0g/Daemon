@@ -185,6 +185,7 @@ public:
                 pos = next; continue;
             }
             if (tok.starts_with("dbgwatch:")) { dbgAddWatch(std::string(tok.substr(9))); pos = next; continue; }
+            if (tok == "debugview") { activityClick(6); pos = next; continue; }   // test hook: open the Debug sidebar + console
             if (tok == "dbgwait") {   // test hook: until the debugger is paused (or ended)
                 if (buildProc_ || pendingBuild_ || runAfterBuild_ || (dbg_ && dbgState_ != DbgState::Stopped)) { pos = tokStart; return; }
                 pos = next; continue;
@@ -854,15 +855,17 @@ private:
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S()), between = std::round(10 * S());
         const float w = bs + 2 * pad, x = a.x + (a.w - w) / 2, y0 = a.y + std::round(6 * S());
         auto height = [&](int n) { return static_cast<float>(n) * bs + static_cast<float>(n - 1) * gap + 2 * pad + 2 * activityPadV(); };   // extra room above the first and below the last icon
-        return {x, y0 + (group == 0 ? 0.0f : height(4) + between), w, height(group == 0 ? 4 : 3)};
+        return {x, y0 + static_cast<float>(group) * (height(3) + between), w, height(group == 2 ? 1 : 3)};
     }
-    // Buttons by id (0 Explorer, 1 Git, 2 Output, 3 Terminal, 4 Problems, 5 Search, 6 Debug); pill 0 shows Explorer, Search, Git, Debug.
-    static int activityPos(int id) { static constexpr int pos[7] = {0, 2, 4, 5, 6, 1, 3}; return pos[id]; }
+    // Buttons by id (0 Explorer, 1 Git, 2 Output, 3 Terminal, 4 Problems, 5 Search, 6 Debug). Pills: Explorer / Search / Git,
+    // Output / Terminal / Problems, and Debug on its own.
+    static int activityPos(int id) { static constexpr int pos[7] = {0, 2, 3, 4, 5, 1, 6}; return pos[id]; }
     Rect activityRect(int i) const {
         const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S());
         const int p = activityPos(i);
-        const Rect pill = activityPill(p < 4 ? 0 : 1);
-        return {pill.x + pad, pill.y + pad + activityPadV() + static_cast<float>(p < 4 ? p : p - 4) * (bs + gap), bs, bs};
+        const int g = p < 3 ? 0 : p < 6 ? 1 : 2;
+        const Rect pill = activityPill(g);
+        return {pill.x + pad, pill.y + pad + activityPadV() + static_cast<float>(p - g * 3) * (bs + gap), bs, bs};
     }
     int activityAt(float x, float y) const {
         if (!L_.activity.contains(x, y)) return 0;
@@ -895,9 +898,12 @@ private:
                 if (activityActive(5)) { sidebar_ = false; sFocus_ = -1; }
                 else openSearch(false);
                 break;
-            case 6:
-                if (activityActive(6)) sidebar_ = false;
-                else { sidebar_ = true; sideDebug_ = true; sideGit_ = false; sideSearch_ = false; sideFocus_ = false; sFocus_ = -1; }
+            case 6:   // the debugger lives in two places: the sidebar view and the Debug console; open or close both together
+                if (activityActive(6) && panelOpen_ && panelTab_ == 4) { sidebar_ = false; panelOpen_ = false; }
+                else {
+                    sidebar_ = true; sideDebug_ = true; sideGit_ = false; sideSearch_ = false; sideFocus_ = false; sFocus_ = -1;
+                    panelOpen_ = true; panelTab_ = 4; panelFollow_[4] = true; runFocus_ = false; termFocus_ = false;
+                }
                 break;
             case 2:
                 if (activityActive(2)) panelOpen_ = false;
@@ -922,7 +928,7 @@ private:
         const int ip = std::max(15, static_cast<int>(std::round(activityCell() * 0.64f)));
         const bool hasErrors = !problems_.empty() ||
                                std::ranges::any_of(shownProblems_, [](const Problem& p) { return p.severity == Severity::Error; });
-        for (int g = 0; g < 2; ++g) {   // white outline, dark fill (same as the toolbar pill)
+        for (int g = 0; g < 3; ++g) {   // white outline, dark fill (same as the toolbar pill)
             const Rect pill = activityPill(g);
             fill(pill, Color::rgb(0xffffff, 34), pill.w / 2);
             fill(pill.x + hair, pill.y + hair, pill.w - 2 * hair, pill.h - 2 * hair, Color::rgb(0x0d0e11), pill.w / 2 - hair);
@@ -6494,14 +6500,15 @@ private:
         dbgEvalBusy_ = true;
         const std::string text = dbgEvalQ_.front();
         dbgEvalQ_.pop_front();
-        dbgConsole("> " + text, 2);
+        dbgConsole(text, 2);
         if (!dbg_) { dbgConsole("Not debugging - press F5 to start", 1); dbgEvalNext(); return; }
         if (dbgState_ != DbgState::Stopped) { dbgConsole("The program is running; pause it first (F6)", 1); dbgEvalNext(); return; }
         dbg_->send("-data-evaluate-expression " + gdb::quote(text), [this, text](const gdb::Record& r) {
-            if (r.ok()) { dbgConsole(r.data["value"].str(), 0); dbgEvalNext(); return; }
+            if (r.ok()) { dbgConsole(r.data["value"].str(), 5); dbgEvalNext(); return; }
             if (!dbg_) { dbgEvalBusy_ = false; return; }
-            dbg_->send("-interpreter-exec console " + gdb::quote(text), [this](const gdb::Record& r2) {   // gdb commands: bt, info locals, p x, ...
-                if (!r2.ok()) dbgConsole(r2.msg(), 1);
+            const std::string evalError = r.msg();
+            dbg_->send("-interpreter-exec console " + gdb::quote(text), [this, evalError](const gdb::Record& r2) {   // gdb commands: bt, info locals, p x, ...
+                if (!r2.ok()) dbgConsole(r2.msg().starts_with("Undefined command") ? evalError : r2.msg(), 1);   // not a command: report the expression's error
                 dirty_ = true;
                 dbgEvalNext();
             });
@@ -6532,39 +6539,72 @@ private:
     }
 
     void drawDebugConsole(const Rect& body) {
-        const float s = S(), lineH = lh(), inH = std::round(lineH + 10 * s), pad = 10 * s;
-        const Rect list{body.x, body.y, body.w, std::max(0.0f, body.h - inH)};
-        const float total = static_cast<float>(dbgCon_.size()) * lineH;
+        const float s = S(), lineH = std::round(lh() + 3 * s), inH = std::round(lineH + 14 * s), pad = 12 * s, headH = std::round(uiH() + 14 * s);
+        // status strip
+        {
+            const Color dot = !dbg_ ? theme::lineNum : dbgState_ == DbgState::Stopped ? Color::rgb(0xe5c07b) : Color::rgb(0x73c990);
+            const float d = std::round(8 * s);
+            fill(body.x + pad, body.y + (headH - d) / 2, d, d, dot, d / 2);
+            std::string t = !dbg_ ? "Not debugging" : dbgState_ == DbgState::Stopped ? dbgStopText_ : dbgState_ == DbgState::Running ? "Running" : "Starting";
+            if (dbg_ && dbgState_ == DbgState::Stopped && dbgLine_.line > 0) t += "  -  " + fs::path(dbgLine_.file).filename().string() + ":" + std::to_string(dbgLine_.line);
+            uiLabel(body.x + pad + d + 10 * s, body.y, headH, t, dbg_ ? theme::text : theme::dim, body.right() - pad);
+            fill(body.x, body.y + headH - 1, body.w, std::max(1.0f, std::round(s * 0.7f)), Color::rgb(0xffffff, 14));
+        }
+        const Rect list{body.x, body.y + headH, body.w, std::max(0.0f, body.h - headH - inH)};
+        const float total = static_cast<float>(dbgCon_.size()) * lineH + 8 * s;
         const float maxS = std::max(0.0f, total - list.h);
         auto& sc = panelScroll_[4];
         sc = std::clamp(panelFollow_[4] ? maxS : sc, 0.0f, maxS);
         const float sy = std::round(sc);
-        const int first = std::max(0, static_cast<int>(std::floor(sy / lineH)));
+        const int first = std::max(0, static_cast<int>(std::floor((sy - 4 * s) / lineH)));
         const int last = std::min(static_cast<int>(dbgCon_.size()) - 1, static_cast<int>(std::floor((sy + list.h) / lineH)));
+        const int ip = std::max(10, static_cast<int>(std::round(lineH * 0.6f)));
         for (int i = first; i <= last; ++i) {
             const auto& l = dbgCon_[static_cast<std::size_t>(i)];
-            const float y = list.y + static_cast<float>(i) * lineH - sy;
-            Color c = theme::text;
-            if (l.kind == 1) c = Color::rgb(0xf2777a); else if (l.kind == 2) c = theme::accent.mix(Color::rgb(0xffffff), 0.35f);
-            else if (l.kind == 3) c = Color::rgb(0xe5c07b); else if (l.kind == 4) c = theme::dim;
-            label(list.x + pad, y, cleanTerm(l.text), c, list.right() - pad);
+            const float y = list.y + 4 * s + static_cast<float>(i) * lineH - sy;
+            if (y < list.y || y + lineH > list.bottom() + 1) continue;
+            Color c = Color::rgb(0xc9ccd3);
+            char32_t g = 0;
+            switch (l.kind) {
+                case 1: c = Color::rgb(0xf2777a); g = 0xF05D6; break;                       // error
+                case 2: c = Color::rgb(0xffffff); g = 0xF0142; break;                       // what you typed
+                case 3: c = Color::rgb(0xe5c07b); g = 0xF0B8A; break;                       // logpoint
+                case 5: c = Color::rgb(0x9fe0b4); g = 0xF0141; break;                       // evaluation result
+                default: break;
+            }
+            if (l.kind == 4) {   // session / info markers: a centred rule
+                const float tw = uiW(l.text);
+                const float cx = list.x + list.w / 2, ly = y + lineH / 2;
+                fill(list.x + pad, ly, std::max(0.0f, cx - tw / 2 - 14 * s - list.x - pad), std::max(1.0f, std::round(s * 0.7f)), Color::rgb(0xffffff, 22));
+                fill(cx + tw / 2 + 14 * s, ly, std::max(0.0f, list.right() - pad - (cx + tw / 2 + 14 * s)), std::max(1.0f, std::round(s * 0.7f)), Color::rgb(0xffffff, 22));
+                uiLabelC(cx, y, lineH, l.text, theme::dim);
+                continue;
+            }
+            if (l.kind == 2) fill(list.x + 6 * s, y, list.w - 12 * s, lineH, Color::rgb(0xffffff, 10), 5 * s);
+            if (g) Icons::glyph(dl_, font_, list.x + pad, y + (lineH - static_cast<float>(ip)) / 2, ip, g, c.alpha(200));
+            label(list.x + pad + static_cast<float>(ip) + 8 * s, y + (lineH - lh()) / 2, cleanTerm(l.text), c, list.right() - pad);
         }
-        if (dbgCon_.empty()) uiLabel(list.x + pad, list.y + 4 * s, uiH() + 8 * s, "Debug console: evaluate expressions or run gdb commands while paused (e.g. x + 1, bt, info registers)", theme::lineNum, list.right() - pad);
+        if (dbgCon_.empty()) {
+            const float cy = list.y + list.h / 2;
+            uiLabelC(list.x + list.w / 2, cy - uiH(), uiH() + 8 * s, "Debug console", theme::dim);
+            uiLabelC(list.x + list.w / 2, cy + 2 * s, uiH() + 8 * s, "Evaluate expressions (x + 1) or run gdb commands (bt, info locals) while paused", theme::lineNum);
+        }
         // input row
-        const Rect in{body.x + 6 * s, body.bottom() - inH + 3 * s, body.w - 12 * s, inH - 6 * s};
-        fill(in, dbgConFocus_ ? theme::accent : Color::rgb(0xffffff, 30), 7 * s);
-        fill(in.x + 1, in.y + 1, in.w - 2, in.h - 2, Color::rgb(0x07080a), 6 * s);
-        const float x0 = in.x + 10 * s;
-        uiLabel(x0, in.y, in.h, ">", theme::accent);
-        const float tx = x0 + uiW(">") + 8 * s;
+        const Rect in{body.x + 8 * s, body.bottom() - inH + 5 * s, body.w - 16 * s, inH - 10 * s};
+        fill(in, dbgConFocus_ ? theme::accent : Color::rgb(0xffffff, 30), in.h / 2);
+        fill(in.x + 1, in.y + 1, in.w - 2, in.h - 2, Color::rgb(0x07080a), in.h / 2 - 1);
+        const float x0 = in.x + 14 * s;
+        const int cp = std::max(10, static_cast<int>(std::round(in.h * 0.5f)));
+        Icons::glyph(dl_, font_, x0, in.y + (in.h - static_cast<float>(cp)) / 2, cp, 0xF0142, dbgConFocus_ ? theme::accent.mix(Color::rgb(0xffffff), 0.3f) : theme::dim);
+        const float tx = x0 + static_cast<float>(cp) + 8 * s;
         std::size_t start = 0;
         const std::size_t cur = std::min(dbgIn_.cur, dbgIn_.text.size());
-        while (start < cur && uiW(std::string_view(dbgIn_.text).substr(start, cur - start)) > in.right() - 10 * s - tx) start = utf8Next(dbgIn_.text, start);
-        if (dbgIn_.text.empty()) uiLabel(tx, in.y, in.h, dbg_ ? "Evaluate expression or gdb command" : "Not debugging", theme::lineNum, in.right() - 10 * s);
-        else uiLabel(tx, in.y, in.h, std::string_view(dbgIn_.text).substr(start), theme::text, in.right() - 10 * s);
+        while (start < cur && uiW(std::string_view(dbgIn_.text).substr(start, cur - start)) > in.right() - 14 * s - tx) start = utf8Next(dbgIn_.text, start);
+        if (dbgIn_.text.empty()) uiLabel(tx, in.y, in.h, dbg_ ? "Evaluate an expression or run a gdb command" : "Start debugging to use the console", theme::lineNum, in.right() - 14 * s);
+        else uiLabel(tx, in.y, in.h, std::string_view(dbgIn_.text).substr(start), theme::text, in.right() - 14 * s);
         if (dbgConFocus_ && caretOn_ && focused_) {
             const float cx = tx + uiW(std::string_view(dbgIn_.text).substr(start, cur - start));
-            fill(std::round(cx), in.y + 6 * s, std::max(2.0f, std::round(1.4f * s)), in.h - 12 * s, theme::caret, s);
+            fill(std::round(cx), in.y + 7 * s, std::max(2.0f, std::round(1.4f * s)), in.h - 14 * s, theme::caret, s);
         }
         dbgConIn_ = in;
         if (maxS > 0) {
@@ -6633,31 +6673,57 @@ private:
         }
     }
 
+    std::vector<float> dbgY_;   // top of every row (relative to the list), filled by dbgLayoutRows
+
+    float dbgRowH(const DRow& r) const {
+        const float rh = L_.sideRow, s = S();
+        switch (r.kind) {
+            case 7: return std::round(rh + 30 * s);                        // status / start card
+            case 1: return std::round(rh + (r.idx == 0 ? 4 : 12) * s);     // section header with breathing room above
+            default: return rh;
+        }
+    }
+    void dbgLayoutRows() {
+        dbgY_.clear();
+        float y = 0;
+        for (const auto& r : dbgRows_) { dbgY_.push_back(y); y += dbgRowH(r); }
+        dbgY_.push_back(y + 12 * S());   // total height incl. bottom padding
+    }
+    int dbgRowAt(float yRel) const {
+        for (std::size_t i = 0; i + 1 < dbgY_.size(); ++i) if (yRel >= dbgY_[i] && yRel < dbgY_[i + 1] - (i + 2 == dbgY_.size() ? 12 * S() : 0)) return static_cast<int>(i);
+        return -1;
+    }
+
     void drawDebugBody() {
         const Rect& sd = L_.side;
-        const float s = S(), rh = L_.sideRow;
+        const float s = S(), rh = L_.sideRow, hair = std::max(1.0f, std::round(0.8f * s));
         dbgBuildRows();
+        dbgLayoutRows();
         dbgTop_ = L_.sideList.y + 4 * s;
         const float viewH = std::max(0.0f, L_.sideList.bottom() - dbgTop_);
-        const float contentH = static_cast<float>(dbgRows_.size()) * rh;
+        const float contentH = dbgY_.back();
         dbgMax_ = std::max(0.0f, contentH - viewH);
         dbgScroll_ = std::clamp(dbgScroll_, 0.0f, dbgMax_);
         const float sy = std::round(dbgScroll_);
         const float indent = std::round(14 * s);
-        static const char* secNames[4] = {"VARIABLES", "WATCH", "CALL STACK", "BREAKPOINTS"};
+        static const char* secNames[4] = {"Variables", "Watch", "Call stack", "Breakpoints"};
+        const int nStack = static_cast<int>(dbgFrames_.size());
+        const int counts[4] = {static_cast<int>(dbgLocals_.size()), static_cast<int>(watches_.size()), nStack, static_cast<int>(bps_.size())};
         for (std::size_t i = 0; i < dbgRows_.size(); ++i) {
             const DRow& r = dbgRows_[i];
-            const float y = dbgTop_ + static_cast<float>(i) * rh - sy;
-            if (y + rh < L_.sideList.y || y > L_.sideList.bottom()) continue;
-            const Rect rr{sd.x + 6 * s, y + 1, sd.w - 12 * s, rh - 2};
-            const bool hot = L_.sideList.contains(mx_, my_) && rr.contains(mx_, my_);
-            if (hot && r.kind != 3 && r.kind != 7) fill(rr, r.kind == 1 ? Color::rgb(0xffffff, 10) : theme::sideHover, 6 * s);
-            const float bs = std::round(rh - 8 * s);
+            const float h = dbgRowH(r), y = dbgTop_ + dbgY_[i] - sy;
+            if (y + h < L_.sideList.y || y > L_.sideList.bottom()) continue;
+            const float top = r.kind == 1 && r.idx != 0 ? std::round(12 * s) : 0.0f;   // header rows keep their padding on top
+            const float ry = y + top, rowH = h - top;
+            const Rect rr{sd.x + 6 * s, ry + 1, sd.w - 12 * s, rowH - 2};
+            const bool hot = L_.sideList.contains(mx_, my_) && my_ >= ry && my_ < ry + rowH && mx_ >= sd.x && mx_ < sd.right();
+            if (hot && r.kind != 3 && r.kind != 7) fill(rr, r.kind == 1 ? Color::rgb(0xffffff, 12) : theme::sideHover, 6 * s);
+            const float bs = std::round(rowH - 8 * s);
             float rightEdge = sd.right() - 14 * s;
             if (hot) {
                 float bx = sd.right() - 10 * s - bs;
                 for (const auto& [id, glyph] : dbgRowActions(r)) {
-                    const Rect b{bx, y + 4 * s, bs, bs};
+                    const Rect b{bx, ry + 4 * s, bs, bs};
                     if (b.contains(mx_, my_)) fill(b, Color::rgb(0xffffff, 36), 5 * s);
                     const int ip = std::max(10, static_cast<int>(std::round(bs * 0.62f)));
                     Icons::glyph(dl_, font_, std::round(b.x + (b.w - static_cast<float>(ip)) / 2), std::round(b.y + (b.h - static_cast<float>(ip)) / 2), ip, glyph, Color::rgb(0xffffff));
@@ -6666,79 +6732,116 @@ private:
                 rightEdge = bx + bs;
             }
             switch (r.kind) {
-                case 7: {   // status / start
-                    const Rect b{sd.x + 12 * s, y + 3 * s, sd.w - 24 * s, rh + 6 * s};
+                case 7: {   // status / start card
+                    const Rect card{sd.x + 10 * s, y + 4 * s, sd.w - 20 * s, h - 8 * s};
                     if (!dbg_) {
+                        const Rect b{card.x, card.y, card.w, std::round(rh + 8 * s)};
                         const bool h2 = b.contains(mx_, my_);
-                        fill(b, theme::accent.alpha(h2 ? 230 : 170), b.h / 2);
-                        fill(b.x + 1, b.y + 1, b.w - 2, b.h - 2, h2 ? Color::rgb(0x15171b) : Color::rgb(0x0a0b0d), b.h / 2 - 1);
+                        fill(b, theme::accent.alpha(h2 ? 235 : 175), b.h / 2);
+                        fill(b.x + hair, b.y + hair, b.w - 2 * hair, b.h - 2 * hair, h2 ? Color::rgb(0x15171b) : Color::rgb(0x0a0b0d), b.h / 2 - hair);
                         const int ip = std::max(14, static_cast<int>(std::round(b.h * 0.5f)));
                         Icons::glyph(dl_, font_, b.x + 16 * s, b.y + (b.h - static_cast<float>(ip)) / 2, ip, 0xF040A, theme::accent.mix(Color::rgb(0xffffff), 0.14f));
                         uiLabel(b.x + 16 * s + static_cast<float>(ip) + 10 * s, b.y, b.h, "Start Debugging", theme::text);
                         uiLabelR(b.right() - 16 * s, b.y, b.h, "F5", theme::lineNum);
+                        uiLabel(card.x + 6 * s, b.bottom() + 4 * s, uiH() + 6 * s, "Builds the active target and runs it under gdb", theme::lineNum, card.right());
                     } else {
-                        std::string t = dbgState_ == DbgState::Running ? "Running..." : dbgState_ == DbgState::Starting ? "Starting gdb..." : dbgStopText_;
-                        uiLabel(sd.x + 16 * s, y + 3 * s, rh + 6 * s, t, dbgState_ == DbgState::Stopped ? Color::rgb(0xe5c07b) : theme::dim, sd.right() - 12 * s);
+                        const bool stopped = dbgState_ == DbgState::Stopped;
+                        fill(card, Color::rgb(0xffffff, 12), 9 * s);
+                        fill(card.x + hair, card.y + hair, card.w - 2 * hair, card.h - 2 * hair, Color::rgb(0x0a0b0d), 9 * s - hair);
+                        const Color dot = stopped ? Color::rgb(0xe5c07b) : Color::rgb(0x73c990);
+                        const float d = std::round(9 * s);
+                        fill(card.x + 14 * s, card.y + (rh - d) / 2 + 4 * s, d, d, dot, d / 2);
+                        const std::string t = dbgState_ == DbgState::Running ? "Running" : dbgState_ == DbgState::Starting ? "Starting gdb" : dbgStopText_;
+                        uiLabel(card.x + 14 * s + d + 10 * s, card.y + 4 * s, rh, t, stopped ? theme::text : theme::dim, card.right() - 10 * s);
+                        std::string sub = dbgLast_.name;
+                        if (stopped && dbgLine_.line > 0) sub += "  -  " + fs::path(dbgLine_.file).filename().string() + ":" + std::to_string(dbgLine_.line);
+                        uiLabel(card.x + 14 * s + d + 10 * s, card.y + 4 * s + rh - 4 * s, rh, sub, theme::lineNum, card.right() - 10 * s);
                     }
                     break;
                 }
                 case 1: {
+                    if (r.idx != 0) fill(sd.x + 12 * s, y + 4 * s, sd.w - 24 * s, hair, Color::rgb(0xffffff, 14));
                     const int cs = std::max(8, static_cast<int>(std::round(iconSize() * 0.55f)));
-                    Icons::chevron(dl_, font_, sd.x + 10 * s, y + (rh - static_cast<float>(cs)) / 2, cs, dbgSec_[r.idx], theme::dim);
-                    uiLabel(sd.x + 10 * s + static_cast<float>(cs) + 8 * s, y, rh, secNames[r.idx], theme::text, rightEdge);
+                    Icons::chevron(dl_, font_, sd.x + 12 * s, ry + (rowH - static_cast<float>(cs)) / 2, cs, dbgSec_[r.idx], theme::dim);
+                    std::string title = secNames[r.idx];
+                    for (auto& ch : title) ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+                    uiLabel(sd.x + 12 * s + static_cast<float>(cs) + 8 * s, ry, rowH, title, Color::rgb(0xd4d7dd), rightEdge);
+                    if (!hot && counts[r.idx] > 0) {
+                        const std::string cnt = std::to_string(counts[r.idx]);
+                        const float bw = std::max(uiW(cnt) + 12 * s, 20 * s), bh = std::round(uiH() + 2 * s);
+                        const Rect badge{sd.right() - 14 * s - bw, ry + (rowH - bh) / 2, bw, bh};
+                        fill(badge, Color::rgb(0xffffff, 22), bh / 2);
+                        uiLabelC(badge.x + badge.w / 2, badge.y, badge.h, cnt, theme::dim);
+                    }
                     break;
                 }
                 case 3: {
-                    static const char* hints[4] = {"Not paused", "Add an expression with +", "Not paused", "No breakpoints - click the gutter or press F9"};
-                    std::string t = r.idx >= 10 ? watches_[static_cast<std::size_t>(r.idx - 10)] : hints[r.idx];
-                    uiLabel(sd.x + 28 * s, y, rh, t, theme::lineNum, sd.right() - 12 * s);
+                    static const char* hints[4] = {"Not paused", "Add an expression with +", "Not paused", "Click the editor gutter or press F9"};
+                    const std::string t = r.idx >= 10 ? watches_[static_cast<std::size_t>(r.idx - 10)] : hints[r.idx];
+                    uiLabel(sd.x + 32 * s, ry, rowH, t, theme::lineNum, sd.right() - 12 * s);
                     break;
                 }
                 case 2: {
                     const VarP& v = r.var;
-                    float x = sd.x + 12 * s + static_cast<float>(r.depth) * indent;
+                    float x = sd.x + 14 * s + static_cast<float>(r.depth) * indent;
                     if (v->numchild > 0) {
                         const int cs = std::max(8, static_cast<int>(std::round(iconSize() * 0.55f)));
-                        Icons::chevron(dl_, font_, x + (indent - static_cast<float>(cs)) / 2, y + (rh - static_cast<float>(cs)) / 2, cs, v->expanded, theme::dim);
+                        Icons::chevron(dl_, font_, x + (indent - static_cast<float>(cs)) / 2, ry + (rowH - static_cast<float>(cs)) / 2, cs, v->expanded, theme::dim);
                     }
                     x += indent;
                     const bool isW = v->path.starts_with("watch/") && v->path.find('/', 6) == std::string::npos;
-                    x = uiLabel(x, y, rh, v->exp, isW ? Color::rgb(0xe5c07b) : Color::rgb(0x8cc4ff), rightEdge - 20 * s);
-                    x = uiLabel(x, y, rh, " = ", theme::dim, rightEdge);
+                    if (v->changed) fill(rr.x, rr.y, std::round(2.5f * s), rr.h, Color::rgb(0xe5c07b), 1.5f * s);
+                    x = uiLabel(x, ry, rowH, v->exp, isW ? Color::rgb(0xe5c07b) : Color::rgb(0x8cc4ff), rightEdge - 20 * s);
+                    x = uiLabel(x, ry, rowH, "  ", theme::dim, rightEdge);
                     std::string val = v->value;
                     if (val.empty() && v->numchild > 0) val = "{...}";
-                    x = uiLabel(x, y, rh, val, v->changed ? Color::rgb(0xe5c07b) : Color::rgb(0xd4d7dd), rightEdge);
-                    if (!v->type.empty() && !hot && rightEdge - x > 60 * s) uiLabel(x + 10 * s, y, rh, v->type, theme::lineNum, rightEdge);
+                    const bool err = val.starts_with("<");
+                    const bool str = !val.empty() && (val.front() == '"' || val.front() == '\'');
+                    Color vc = err ? Color::rgb(0xf2777a) : v->changed ? Color::rgb(0xe5c07b) : str ? Color::rgb(0xce9178) : (!val.empty() && (std::isdigit(static_cast<unsigned char>(val[0])) || val[0] == '-')) ? Color::rgb(0xb5cea8) : Color::rgb(0xd4d7dd);
+                    x = uiLabel(x, ry, rowH, val, vc, rightEdge);
+                    if (!v->type.empty() && !hot && rightEdge - x > 70 * s) uiLabel(x + 12 * s, ry, rowH, v->type, theme::lineNum, rightEdge);
                     break;
                 }
                 case 4: {
                     const DbgThread& t = dbgThreads_[static_cast<std::size_t>(r.idx)];
                     const bool cur = t.id == dbgThread_;
                     if (cur) fill(rr, theme::sideSel, 6 * s);
-                    uiLabel(sd.x + 14 * s, y, rh, std::format("Thread {}{}  {}", t.id, t.name.empty() ? "" : " " + t.name, t.func), cur ? theme::text : theme::dim, rightEdge);
+                    const int ip = std::max(10, static_cast<int>(std::round(rowH * 0.55f)));
+                    Icons::glyph(dl_, font_, sd.x + 14 * s, ry + (rowH - static_cast<float>(ip)) / 2, ip, 0xF0A2E, cur ? Color::rgb(0xe5c07b) : theme::dim);   // chart-timeline-variant: thread
+                    uiLabel(sd.x + 14 * s + static_cast<float>(ip) + 8 * s, ry, rowH, std::format("Thread {}{}  {}", t.id, t.name.empty() ? "" : " " + t.name, t.func), cur ? theme::text : theme::dim, rightEdge);
                     break;
                 }
                 case 5: {
                     const DbgFrame& f = dbgFrames_[static_cast<std::size_t>(r.idx)];
                     const bool cur = f.level == dbgSel_;
-                    if (cur) fill(rr, theme::accent.alpha(46), 6 * s);
-                    const float x = sd.x + 14 * s;
-                    float xe = uiLabel(x, y, rh, f.func.empty() ? f.addr : f.func, cur ? Color::rgb(0xffffff) : theme::text, rightEdge - 40 * s);
-                    if (f.line > 0) uiLabel(xe + 8 * s, y, rh, fs::path(!f.full.empty() ? f.full : f.file).filename().string() + ":" + std::to_string(f.line), theme::lineNum, rightEdge);
+                    if (cur) { fill(rr, theme::accent.alpha(40), 6 * s); fill(rr.x, rr.y + 4 * s, std::round(2.5f * s), rr.h - 8 * s, theme::accent, 1.5f * s); }
+                    const bool hasSrc = f.line > 0 && !(f.full.empty() && f.file.empty());
+                    const float x = sd.x + 16 * s;
+                    float xe = uiLabel(x, ry, rowH, f.func.empty() ? f.addr : f.func, cur ? Color::rgb(0xffffff) : hasSrc ? theme::text : theme::dim, rightEdge - 40 * s);
+                    if (hasSrc) uiLabel(xe + 10 * s, ry, rowH, fs::path(!f.full.empty() ? f.full : f.file).filename().string() + ":" + std::to_string(f.line), theme::lineNum, rightEdge);
                     break;
                 }
                 case 6: {
                     const Breakpoint& b = bps_[static_cast<std::size_t>(r.idx)];
-                    const float d = std::round(11 * s), cx = sd.x + 14 * s;
+                    const float d = std::round(11 * s), cx = sd.x + 16 * s;
                     const bool pending = dbg_ && !b.verified && b.id < 0 && dbgState_ != DbgState::Off;
-                    const Color bc = b.enabled ? Color::rgb(0xe5484d) : theme::lineNum;
-                    if (b.enabled && !pending) fill(cx, y + (rh - d) / 2, d, d, bc, d / 2);
-                    else { fill(cx, y + (rh - d) / 2, d, d, bc, d / 2); fill(cx + 2, y + (rh - d) / 2 + 2, d - 4, d - 4, theme::sideBg, d / 2 - 2); }
-                    float x = uiLabel(cx + d + 8 * s, y, rh, dbgBpTitle(b), b.enabled ? theme::text : theme::dim, rightEdge - 20 * s);
-                    std::string extra;
-                    if (!b.log.empty()) extra = "log: " + b.log; else if (!b.cond.empty()) extra = "if " + b.cond; else if (b.ignore > 0) extra = "skip " + std::to_string(b.ignore);
-                    if (b.hits > 0) extra += (extra.empty() ? "" : "  ") + std::string("hits ") + std::to_string(b.hits);
-                    if (!extra.empty()) uiLabel(x + 8 * s, y, rh, extra, theme::lineNum, rightEdge);
+                    const Color bc = b.enabled ? Color::rgb(0xe5484d) : Color::rgb(0x6b6f78);
+                    if (!b.log.empty()) Icons::glyph(dl_, font_, cx - 1, ry + (rowH - d * 1.3f) / 2, static_cast<int>(std::round(d * 1.3f)), 0xF0B8A, bc);
+                    else if (b.enabled && !pending) fill(cx, ry + (rowH - d) / 2, d, d, bc, d / 2);
+                    else { fill(cx, ry + (rowH - d) / 2, d, d, bc, d / 2); fill(cx + 2 * s, ry + (rowH - d) / 2 + 2 * s, d - 4 * s, d - 4 * s, theme::sideBg, (d - 4 * s) / 2); }
+                    float x = uiLabel(cx + d + 10 * s, ry, rowH, dbgBpTitle(b), b.enabled ? theme::text : theme::dim, rightEdge - 20 * s);
+                    auto chip = [&](const std::string& txt, Color c) {
+                        const float cw2 = uiW(txt) + 12 * s, ch = std::round(uiH() + 2 * s);
+                        if (x + 8 * s + cw2 > rightEdge) return;
+                        const Rect cr{x + 8 * s, ry + (rowH - ch) / 2, cw2, ch};
+                        fill(cr, c.alpha(40), ch / 2);
+                        uiLabelC(cr.x + cr.w / 2, cr.y, cr.h, txt, c);
+                        x = cr.right();
+                    };
+                    if (!b.log.empty()) chip("log", Color::rgb(0xe5c07b));
+                    else if (!b.cond.empty()) chip("if " + b.cond, Color::rgb(0x8cc4ff));
+                    else if (b.ignore > 0) chip("skip " + std::to_string(b.ignore), Color::rgb(0x8cc4ff));
+                    if (b.hits > 0) chip(std::to_string(b.hits) + "x", theme::dim);
                     break;
                 }
                 default: break;
@@ -6749,6 +6852,7 @@ private:
             fill(sd.right() - 9 * s, dbgTop_ + (viewH - thumbH) * std::clamp(sy / std::max(1.0f, dbgMax_), 0.0f, 1.0f), 5 * s, thumbH, theme::scrollbar, 2.5f * s);
         }
         fill(sd.x, L_.sideList.y, sd.w, 4 * s, theme::sideBg);
+        (void)rh;
     }
 
     void dbgPromptFor(PromptKind k, const std::string& label, const std::string& text = {}) {
@@ -6758,13 +6862,15 @@ private:
     void debugClick(Button b) {
         if (b != Button::Left) return;
         dbgBuildRows();
+        dbgLayoutRows();
         const float rh = L_.sideRow, s = S();
         if (!L_.sideList.contains(mx_, my_) || my_ < dbgTop_) return;
-        const int row = static_cast<int>(std::floor((my_ - dbgTop_ + dbgScroll_) / rh));
-        if (row < 0 || row >= static_cast<int>(dbgRows_.size())) return;
+        const int row = dbgRowAt(my_ - dbgTop_ + dbgScroll_);
+        if (row < 0) return;
         const DRow r = dbgRows_[static_cast<std::size_t>(row)];
-        const float y = dbgTop_ + static_cast<float>(row) * rh - dbgScroll_, bs = std::round(rh - 8 * s);
-        // action buttons
+        const float h = dbgRowH(r), top = r.kind == 1 && r.idx != 0 ? std::round(12 * s) : 0.0f;
+        const float y = dbgTop_ + dbgY_[static_cast<std::size_t>(row)] - dbgScroll_ + top, rowH = h - top, bs = std::round(rowH - 8 * s);
+        (void)rh;
         float bx = L_.side.right() - 10 * s - bs;
         for (const auto& [id, glyph] : dbgRowActions(r)) {
             (void)glyph;
@@ -6773,13 +6879,13 @@ private:
         }
         switch (r.kind) {
             case 7: if (!dbg_) dbgContinueOrStart(); break;
-            case 1: dbgSec_[r.idx] = !dbgSec_[r.idx]; break;
+            case 1: if (my_ >= y) dbgSec_[r.idx] = !dbgSec_[r.idx]; break;
             case 2: dbgToggleVar(r.var); break;
             case 4: dbgSelectThread(dbgThreads_[static_cast<std::size_t>(r.idx)].id); break;
             case 5: dbgSelectFrame(dbgFrames_[static_cast<std::size_t>(r.idx)].level); break;
             case 6: {
                 Breakpoint& bp = bps_[static_cast<std::size_t>(r.idx)];
-                if (mx_ < L_.side.x + 14 * s + std::round(11 * s) + 6 * s) { dbgSetEnabled(bp.uid, !bp.enabled); break; }
+                if (mx_ < L_.side.x + 16 * s + std::round(11 * s) + 8 * s) { dbgSetEnabled(bp.uid, !bp.enabled); break; }
                 if (!bp.file.empty() && bp.line > 0) {
                     openFile(bp.file);
                     if (!docs_.empty() && doc().path == bp.file) { doc().setCursor({bp.line - 1, 0}); scrollToCursor_ = true; }
