@@ -37,7 +37,7 @@ struct Options {
 // "Island" theme: a dark frame with floating rounded panels. Cool neutrals and a blue accent
 // (Visual Studio) with warm keywords and soft pastel syntax colours (JetBrains).
 namespace theme {
-inline constexpr Color frame = Color::rgb(0x0a1530, 232);    // translucent chrome between islands (blurred by the compositor)
+inline constexpr Color frame = Color::rgb(0x0e1017, 192);    // translucent chrome between islands (blurred by the compositor)
 inline constexpr Color editorBg = Color::rgb(0x0a0b0d);     // code editor: near-black
 inline constexpr Color bg = Color::rgb(0x1a1b1f);           // island (side panels) surface
 inline constexpr Color lineHl = Color::rgb(0x15171b);
