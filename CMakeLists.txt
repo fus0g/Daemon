@@ -42,4 +42,7 @@ add_subdirectory(tests)
 
 # Desktop integration (cmake --install build --prefix ~/.local)
 install(FILES assets/daemon.svg DESTINATION share/icons/hicolor/scalable/apps)
+foreach(px 48 64 128 256 512)
+  install(FILES assets/icons/${px}x${px}/daemon.png DESTINATION share/icons/hicolor/${px}x${px}/apps)
+endforeach()
 install(FILES assets/daemon.desktop DESTINATION share/applications)

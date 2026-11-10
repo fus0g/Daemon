@@ -6,5 +6,5 @@ Comment=Wayland + Vulkan C++ IDE
 Exec=daemon %F
 Icon=daemon
 Terminal=false
-Categories=Development;IDE;TextEditor;
+Categories=Development;IDE;TextEditor;Utility;
 StartupWMClass=daemon
