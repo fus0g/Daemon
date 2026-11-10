@@ -104,23 +104,20 @@ inline Layer maximizeLayer() {
     return l;
 }
 inline Layer closeLayer() { return {cap(4.0f, 4.0f, 12.0f, 12.0f, 0.75f), cap(12.0f, 4.0f, 4.0f, 12.0f, 0.75f)}; }
-// The app mark: a Targaryen-style war helm seen from the front - swept dragon-wing horns, a tall crest fin,
-// angry slit eyes and a breath vent cut into a solid helmet.
+// The app mark: a dragon-winged war helm seen from the front - a smooth rounded dome with a ridge, bat-wing
+// fins with scalloped edges, narrow slit eyes and a pointed chin guard.
 inline Layer logoHelm() {
     auto mirror = [](std::vector<V> v) {
         for (auto& p : v) p.x = 16.0f - p.x;
         std::reverse(v.begin(), v.end());
         return v;
     };
-    std::vector<V> hornL = {{3.9f, 5.0f}, {0.5f, 1.2f}, {1.5f, 7.2f}};
-    std::vector<V> eyeL = {{4.3f, 6.3f}, {7.4f, 7.3f}, {7.2f, 8.6f}, {4.7f, 7.8f}};
-    return {poly({{3.2f, 6.6f}, {4.0f, 3.6f}, {6.3f, 2.1f}, {8.0f, 1.8f}, {9.7f, 2.1f}, {12.0f, 3.6f}, {12.8f, 6.6f},
-                  {12.4f, 10.6f}, {10.6f, 13.8f}, {8.0f, 15.2f}, {5.4f, 13.8f}, {3.6f, 10.6f}}),
-            poly({{7.1f, 3.4f}, {8.0f, -0.2f}, {8.9f, 3.4f}}),
-            poly(hornL), poly(mirror(hornL)),
-            poly(eyeL, true), poly(mirror(eyeL), true),
-            rr(8.0f, 11.4f, 0.6f, 2.0f, 0.3f, true),
-            cap(5.6f, 11.0f, 6.4f, 12.6f, 0.35f), cap(10.4f, 11.0f, 9.6f, 12.6f, 0.35f)};
+    std::vector<V> wing = {{4.5f, 3.4f}, {3.7f, -0.3f}, {3.3f, 2.5f}, {1.5f, 0.1f}, {2.2f, 3.2f}, {0.0f, 2.2f}, {1.5f, 4.6f}, {4.1f, 6.6f}};
+    std::vector<V> eye = {{4.6f, 6.3f}, {7.5f, 7.5f}, {7.4f, 8.5f}, {5.1f, 7.7f}};
+    return {rr(8.0f, 7.0f, 3.9f, 5.4f, 3.6f), poly({{4.1f, 9.0f}, {11.9f, 9.0f}, {10.3f, 14.4f}, {8.0f, 15.5f}, {5.7f, 14.4f}}),
+            poly(wing), poly(mirror(wing)),
+            poly(eye, true), poly(mirror(eye), true),
+            rr(8.0f, 11.3f, 0.5f, 2.3f, 0.3f, true), cap(8.0f, 1.9f, 8.0f, 5.0f, 0.2f)};
 }
 
 inline Layer chevronLayer(bool down) {
@@ -156,7 +153,7 @@ public:
 
     static void tool(DrawList& dl, FontAtlas& font, float x, float y, int size, ToolIcon icon, Color color);
 
-    // The app mark: a dragon-crested war helm in the accent colour (see logoHelm).
+    // The app mark: a dragon-winged war helm in the accent colour (see logoHelm).
     static void logo(DrawList& dl, FontAtlas& font, float x, float y, int size, Color accent) {
         using namespace icon_detail;
         layer(dl, font, 72, 0, size, x, y, accent, logoHelm);
