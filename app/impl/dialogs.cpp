@@ -438,6 +438,7 @@ void App::drawWelcome(const Rect& r) {
     dl_.titleText(font_, lx, ty, "Daemon", theme::text);
     const float sub = ty + font_.titleLineHeight() + 2 * s;
     uiLabel(lx, sub, uiH() + 6 * s, "C++ IDE for Wayland", theme::dim);
+    uiLabel(lx, r.bottom() - 40 * s, uiH() + 6 * s, "Version " + std::string(version()), theme::lineNum);
     const float rowH = std::round(44 * s);
     float by = sub + uiH() + 44 * s;
     welcomeAction({lx, by, cw0, rowH}, "New Project", "Ctrl+Shift+N", kDlgNew, 0xF0EAB, true);

@@ -7,6 +7,7 @@ target_sources(daemon_app
     theme.cppm
   PRIVATE
     cli.cpp
+    options.cpp
     impl/activity_bar.cpp
     impl/build_run.cpp
     impl/core.cpp
@@ -27,6 +28,25 @@ target_sources(daemon_app
     impl/search_view.cpp
     impl/terminal_view.cpp
     impl/ui_helpers.cpp)
+# Version: the single source of truth is project(VERSION) in the top-level CMakeLists.txt.
+# Development builds also carry the git revision ("0.1.0+3f2a1bc", "+dirty" for uncommitted changes).
+set(DAEMON_VERSION_FULL "${PROJECT_VERSION}")
+find_package(Git QUIET)
+if(GIT_FOUND AND EXISTS "${PROJECT_SOURCE_DIR}/.git")
+  execute_process(COMMAND ${GIT_EXECUTABLE} describe --tags --exact-match --match "v${PROJECT_VERSION}"
+                  WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} OUTPUT_VARIABLE _exact ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+  execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+                  WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} OUTPUT_VARIABLE _rev ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+  execute_process(COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no
+                  WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} OUTPUT_VARIABLE _dirty ERROR_QUIET OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(_rev AND NOT _exact)
+    set(DAEMON_VERSION_FULL "${PROJECT_VERSION}+${_rev}")
+  endif()
+  if(_dirty)
+    set(DAEMON_VERSION_FULL "${DAEMON_VERSION_FULL}.dirty")
+  endif()
+endif()
+set_source_files_properties(options.cpp PROPERTIES COMPILE_DEFINITIONS "DAEMON_VERSION=\"${PROJECT_VERSION}\";DAEMON_VERSION_FULL=\"${DAEMON_VERSION_FULL}\"")
 target_link_libraries(daemon_app PUBLIC daemon_base daemon_text daemon_ui daemon_services PRIVATE daemon_warnings)
 
 add_executable(daemon main.cpp)

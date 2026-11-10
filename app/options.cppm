@@ -13,4 +13,8 @@ struct Options {
     float fontSize = 14;      // code font, logical pixels (em size)
 };
 
+// Release version ("0.1.0") and the full build identifier ("0.1.0+3f2a1bc" for development builds).
+std::string_view version();
+std::string_view versionFull();
+
 }  // namespace ide
