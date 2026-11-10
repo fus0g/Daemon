@@ -81,3 +81,11 @@ missing), icons, file operations. Add a test function to the matching file and c
 - A constructor with a long member-init list inside a module interface plus certain regex code produced unreadable BMIs earlier;
   the `search::Matcher` constructor therefore lives in `search.cpp`.
 - If you see `failed to read compiled module cluster`, clean the build directory first before debugging further.
+
+## Performance notes
+- Measure: `IDE_BENCH=500 ./build/app/daemon [file]` prints average draw and render CPU per frame (≈0.05 ms / 0.5 ms).
+- GPU: the integrated GPU is preferred (power, memory, no dGPU wake-up); `IDE_GPU=<n>` forces a device.
+- Present mode is MAILBOX when available and frames are paced by `wl_surface.frame` callbacks; a hidden window stops rendering.
+- clangd runs niced, `-j=2`, PCH on disk. Background diagnostics keep a rolling window of 8 files open (`bgSettled_`) and wait for clangd.
+- The caret stops blinking after 30 s idle so an idle editor schedules no frames. Git status polls every 8 s while focused.
+- `IDE_BGINDEX=0` disables clangd background indexing.

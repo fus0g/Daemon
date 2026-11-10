@@ -253,7 +253,30 @@ void App::stepScript() {
     }
 }
 
+// IDE_BENCH=N: draw + submit N frames back to back and print the average CPU cost of each phase.
+static void benchFrames(App& app, int n, const std::function<void()>& draw, const std::function<RenderStatus()>& render) {
+    using Ms = std::chrono::duration<double, std::milli>;
+    double d = 0, r = 0;
+    for (int i = 0; i < n; ++i) {
+        auto a = Clock::now();
+        draw();
+        auto b = Clock::now();
+        render();
+        auto c = Clock::now();
+        d += Ms(b - a).count();
+        r += Ms(c - b).count();
+    }
+    std::println(std::cerr, "bench: {} frames, draw {:.3f} ms, render+present {:.3f} ms", n, d / n, r / n);
+    (void)app;
+}
+
 int App::run() {
+    if (const char* b = std::getenv("IDE_BENCH")) {
+        for (int i = 0; i < 20; ++i) { win_.pump(5); update(Clock::now(), 0.016f); dirty_ = true; draw(); ren_.render(dl_, font_, frameC()); }
+        benchFrames(*this, std::atoi(b), [&] { dirty_ = true; draw(); },
+                    [&] { return ren_.render(dl_, font_, frameC()); });
+        return 0;
+    }
     auto last = Clock::now();
     int failures = 0;
     while (running_) {
@@ -302,14 +325,18 @@ void App::setMessage(std::string m, bool error, float seconds) {
 
 void App::resetCaret() {
     caretOn_ = true;
+    caretReset_ = Clock::now();
     nextBlink_ = Clock::now() + std::chrono::milliseconds(530);
     dirty_ = true;
 }
 
+// The caret stops blinking after 30 s without input: an idle editor then sleeps completely (no wakeups, no frames).
+bool App::blinking(Clock::time_point now) const { return now - caretReset_ < std::chrono::seconds(30); }
+
 std::optional<Clock::time_point> App::nextWake() const {
     std::optional<Clock::time_point> t;
     auto consider = [&](Clock::time_point p) { if (!t || p < *t) t = p; };
-    if (focused_ && opt_.screenshot.empty()) consider(nextBlink_);
+    if (focused_ && opt_.screenshot.empty() && blinking(Clock::now())) consider(nextBlink_);
     if (!message_.empty()) consider(messageUntil_);
     if (buildEof_ || runEof_) consider(Clock::now() + std::chrono::milliseconds(30));
     if (lspFlushAt_) consider(*lspFlushAt_);
@@ -330,7 +357,8 @@ void App::update(Clock::time_point now, float dt) {
     if (fsPending_ && now >= fsEventAt_ + std::chrono::milliseconds(150)) { fsPending_ = false; handleFsChanges(); }
     if (sPending_ && now >= sRunAt_) startSearch();
     if (now >= fsSyncAt_) { fsSyncAt_ = now + std::chrono::seconds(1); syncFsWatches(); }
-    if (focused_ && opt_.screenshot.empty() && now >= nextBlink_) {
+    if (focused_ && opt_.screenshot.empty() && !blinking(now) && !caretOn_) { caretOn_ = true; dirty_ = true; }   // settle solid
+    if (focused_ && opt_.screenshot.empty() && blinking(now) && now >= nextBlink_) {
         caretOn_ = !caretOn_;
         nextBlink_ = now + std::chrono::milliseconds(530);
         dirty_ = true;

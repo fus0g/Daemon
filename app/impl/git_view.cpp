@@ -174,7 +174,7 @@ void App::gitUpdateDoc(Document& d, Clock::time_point now) {
 void App::gitTick(Clock::time_point now) {
     if (jobs_.size() > 0) pollJobs();
     if (!gitRoot_) return;
-    if (focused_ && now >= gitNextPoll_) { gitNextPoll_ = now + std::chrono::seconds(3); gitRefresh(); }
+    if (focused_ && now >= gitNextPoll_) { gitNextPoll_ = now + std::chrono::seconds(8); gitRefresh(); }
     for (Node* n : leaves()) if (n->pane->cur) gitUpdateDoc(*n->pane->cur, now);
 }
 

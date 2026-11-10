@@ -151,8 +151,10 @@ void Renderer::pickDevice() {
 
             int score = 1;
             switch (props.deviceType) {
-                case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: score = 1000; break;
-                case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: score = 500; break;
+                // A 2D UI needs no discrete GPU: the integrated one draws far less power, keeps the dGPU
+                // asleep and avoids cross-GPU copies to the compositor. IDE_GPU=<index> overrides.
+                case VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU: score = 1000; break;
+                case VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU: score = 500; break;
                 case VK_PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU: score = 100; break;
                 default: break;
             }

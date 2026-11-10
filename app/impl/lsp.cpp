@@ -61,7 +61,12 @@ void App::startLsp() {
     }
     std::vector<std::string> argv = {*exe, "--background-index", "--header-insertion=never", "--log=error",
                                      "--experimental-modules-support",
-                                     "--completion-parse=always"};  // real AST completions, never the text-based fallback
+                                     "--completion-parse=always",  // real AST completions, never the text-based fallback
+                                     // resource limits: clangd defaults to every core and GBs of RAM
+                                     "-j=2", "--background-index-priority=low", "--pch-storage=disk", "--malloc-trim"};
+    if (const char* o = std::getenv("IDE_BGINDEX"); o && *o == '0') std::erase(argv, std::string("--background-index"));
+    // run the language server at low CPU priority so typing and the UI stay smooth and the machine stays cool
+    argv.insert(argv.begin(), {"nice", "-n", "10"});
     clangdModules_ = false;
     if (cmakeOpen_ && fs::exists(compileCommands(profile()))) {
         // GCC-style module builds get a Clang-flavoured database so clangd can build BMIs (import std; import foo;).
@@ -88,6 +93,8 @@ void App::startLsp() {
     lsp_->onDiagnostics = [this](const std::string& path, std::vector<LspDiag> d) {
         // clangd's "unused include" hints are noise next to real errors (CLion greys them out instead).
         std::erase_if(d, [](const LspDiag& x) { return x.code == "unused-includes" || x.message.starts_with("Included header "); });
+        if (bgClosed_.contains(path)) return;   // clangd's empty publish after we closed a background file
+        if (bgPending_.erase(path)) bgSettled_.push_back(path);
         if (d.empty()) diags_.erase(path); else diags_[path] = std::move(d);
         dirty_ = true;
     };
@@ -239,13 +246,22 @@ void App::queueProjectDiagnostics() {
     bgQueue_.clear();
     bgOpen_.clear();
     bgSources_.clear();
+    bgPending_.clear(); bgClosed_.clear(); bgSettled_.clear();
     for (auto& p : projectSources()) { bgQueue_.push_back(p); bgSources_.insert(p); }
     bgNext_ = Clock::now();
 }
 
 void App::pumpProjectDiagnostics(Clock::time_point now) {
     if (!lsp_ || !lsp_->ready() || bgQueue_.empty() || now < bgNext_) return;
-    for (int n = 0; n < 3 && !bgQueue_.empty(); ++n) {
+    // close the oldest finished files so memory stays flat, but keep their diagnostics
+    constexpr std::size_t kWindow = 8;
+    while (bgSettled_.size() > kWindow) {
+        const std::string old = bgSettled_.front();
+        bgSettled_.pop_front();
+        if (bgOpen_.erase(old)) { bgClosed_.insert(old); lsp_->didClose(old); }
+    }
+    if (bgPending_.size() >= 2) { bgNext_ = now + std::chrono::milliseconds(300); return; }   // let clangd catch up
+    for (int n = 0; n < 1 && !bgQueue_.empty(); ++n) {   // trickle: a burst of opens pegs every core
         const std::string path = bgQueue_.front();
         bgQueue_.pop_front();
         if (openInEditor(path) || bgOpen_.contains(path)) continue;
@@ -253,12 +269,16 @@ void App::pumpProjectDiagnostics(Clock::time_point now) {
         if (!text) continue;
         lsp_->didOpen(path, path.ends_with(".c") ? "c" : "cpp", 1, *text);
         bgOpen_.insert(path);
+        bgClosed_.erase(path);
+        bgPending_.insert(path);
     }
-    bgNext_ = now + std::chrono::milliseconds(150);
+    bgNext_ = now + std::chrono::milliseconds(500);
 }
 
 void App::attachLsp(Document& d) {
     if (!lsp_ || !isCppDoc(d) || d.lspOpen) return;
+    bgPending_.erase(d.path); bgClosed_.erase(d.path);
+    std::erase(bgSettled_, d.path);
     if (bgOpen_.erase(d.path)) lsp_->didClose(d.path);   // the editor takes over from the background copy
     lsp_->didOpen(d.path, languageId(d), ++d.lspVersion, d.buf.text());
     d.lspOpen = true;

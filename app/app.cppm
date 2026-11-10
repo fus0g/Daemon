@@ -1454,6 +1454,10 @@ private:
     float panelAnim_ = 0, sideAnim_ = 0;
     std::deque<std::string> bgQueue_;
     std::unordered_set<std::string> bgOpen_, bgSources_;
+    // Background diagnostics keep a small rolling window of files open in clangd (each open file costs an AST/preamble):
+    // bgPending_ = opened, no diagnostics yet; bgSettled_ = in the window, finished; bgClosed_ = closed, diagnostics kept.
+    std::unordered_set<std::string> bgPending_, bgClosed_;
+    std::deque<std::string> bgSettled_;
     Clock::time_point bgNext_{};
     bool bgScanned_ = false;
     bool lspCrashed_ = false;
@@ -1520,6 +1524,8 @@ private:
     bool quitArmed_ = false;
     int closeArmed_ = -1;
     Clock::time_point nextBlink_ = Clock::now();
+    Clock::time_point caretReset_ = Clock::now();
+    bool blinking(Clock::time_point now) const;
     std::string message_;
     bool messageError_ = false;
     Clock::time_point messageUntil_ = Clock::now();
