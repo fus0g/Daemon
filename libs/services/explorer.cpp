@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // explorer - implementation of module daemon.services.explorer.
 module;
 #include <sys/inotify.h>

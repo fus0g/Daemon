@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // font - implementation of module daemon.ui.font.
 module;
 #include "stb_truetype.h"

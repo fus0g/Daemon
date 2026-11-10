@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Test runner: executes every group and reports the failure count.
 import std;
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // cli - command line handling and the process entry point of Daemon (implementation unit of daemon.app).
 module daemon.app;
 import std;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Minimal GLSL -> SPIR-V compiler used at build time when `glslc` is not installed.
 // It talks to libshaderc_shared through its stable C API (declared here by hand so
 // the shaderc development headers are not required).

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.app / lsp - part of the App implementation (see app.cppm for the class).
 module daemon.app;
 import std;

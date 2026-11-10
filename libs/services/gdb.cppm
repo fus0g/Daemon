@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.gdbmi — a client for GDB's machine interface (MI3): record parser and an asynchronous command session.
 export module daemon.services.gdb;
 import std;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.syntax — table-driven, line-oriented syntax highlighter.
 //
 // The highlighter tokenises one line at a time, carrying a tiny state (inside a block

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.app.options - command line options of the application.
 export module daemon.app.options;
 import std;

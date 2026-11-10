@@ -4,6 +4,8 @@
 It aims at the CLion / VS Code / Zed experience: editor, CMake projects, clangd intelligence (incl. C++20 modules), git, search,
 integrated terminal, debugger — all in a dark "island" UI with Material icons and a Targaryen-crimson accent.
 
+Licence: GPL-3.0-or-later (see `LICENSE`).
+
 Repository: `/home/fus0g/Projects/ide` (git, default branch, no remote). The owner (Fedora, GNOME Wayland, NVIDIA RTX 3050 Ti) drives
 the work by asking for features/redesigns, then reviewing screenshots; expect short, visual feedback and frequent "revert it".
 

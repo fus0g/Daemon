@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.app — the application: tabs, editor view, prompts, input routing and the frame loop.
 export module daemon.app;
 import std;

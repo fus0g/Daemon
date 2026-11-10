@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.draw — colours and the per-frame list of instanced quads handed to the renderer.
 export module daemon.ui.draw;
 import std;

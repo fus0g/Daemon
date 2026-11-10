@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // syntax - implementation of module daemon.text.syntax.
 module daemon.text.syntax;
 import std;

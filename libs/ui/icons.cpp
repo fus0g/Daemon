@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // icons - implementation of module daemon.ui.icons.
 module daemon.ui.icons;
 import std;

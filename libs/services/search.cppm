@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.search — project-wide find and replace (no UI): matcher, file enumeration, search and replace passes.
 export module daemon.services.search;
 import std;

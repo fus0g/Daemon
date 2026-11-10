@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // search - implementation of module daemon.services.search.
 module daemon.services.search;
 import std;

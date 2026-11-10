@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // json - implementation of module daemon.base.json.
 module daemon.base.json;
 import std;

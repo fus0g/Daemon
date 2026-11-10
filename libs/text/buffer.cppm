@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.text — the text buffer: lines of UTF-8, with grouped/coalescing undo & redo.
 export module daemon.text.buffer;
 import std;

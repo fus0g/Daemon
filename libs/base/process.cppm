@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.process — spawning child processes with non-blocking pipes (build tools, programs, clangd).
 module;
 #include <fcntl.h>

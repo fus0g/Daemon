@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.input — platform-independent input event types.
 export module daemon.ui.input;
 import std;

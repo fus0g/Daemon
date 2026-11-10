@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.util — UTF-8 helpers, file I/O and a tiny PNG writer (used for --screenshot).
 export module daemon.base.util;
 import std;

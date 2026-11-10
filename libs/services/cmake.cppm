@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.cmake — CMake project support in the style of CLion: build profiles, configure / build
 // command lines, target discovery through the CMake File API, and compiler diagnostics parsing.
 export module daemon.services.cmake;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // draw - implementation of module daemon.ui.draw.
 module daemon.ui.draw;
 import std;

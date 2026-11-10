@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.json — a small JSON value type, parser and serialiser (used for LSP and the CMake File API).
 export module daemon.base.json;
 import std;

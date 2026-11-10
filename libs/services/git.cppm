@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.git — thin git integration: repository status, line-level diff against HEAD, blame, staging and commits.
 // Everything shells out to the `git` binary; calls are blocking and meant to run on a worker thread.
 export module daemon.services.git;

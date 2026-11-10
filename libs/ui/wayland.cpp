@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // wayland - implementation of module daemon.ui.wayland.
 module;
 #include <wayland-client.h>

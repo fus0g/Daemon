@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // document - implementation of module daemon.text.document.
 module;
 #include <cerrno>

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // terminal - implementation of module daemon.services.terminal.
 module daemon.services.terminal;
 import std;

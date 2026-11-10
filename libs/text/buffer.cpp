@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // buffer - implementation of module daemon.text.buffer.
 module daemon.text.buffer;
 import std;

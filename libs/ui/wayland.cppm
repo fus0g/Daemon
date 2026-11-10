@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.wayland — the windowing layer: a native Wayland client (xdg-shell, xkbcommon,
 // wl_data_device clipboard, themed cursors, integer HiDPI scale).
 module;

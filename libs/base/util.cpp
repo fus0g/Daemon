@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // util - implementation of module daemon.base.util.
 module daemon.base.util;
 import std;

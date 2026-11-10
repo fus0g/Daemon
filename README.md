@@ -182,3 +182,10 @@ console where you can evaluate expressions (`x + 1`, `*ptr`) or run any gdb comm
 - **Run and Debug view** (sidebar): VARIABLES (expandable, STL containers via gdb's pretty printers, edit a value, copy, add to watch,
   watch for changes), WATCH expressions, CALL STACK with threads (click a frame to inspect it) and BREAKPOINTS. Hover an expression in
   the editor while paused to see its value; changed values are highlighted.
+
+## License
+
+Daemon is free software under the **GNU General Public License v3.0 or later** (see `LICENSE`).
+You may use, study, modify and redistribute it, but any modified version you distribute must be released under
+the same licence with its complete source, so improvements flow back to the community.
+Contributions are accepted under the same licence.

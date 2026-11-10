@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Process entry point. All the work happens in the daemon.app module (see cli.cpp).
 extern "C" int daemon_main(int argc, char** argv);
 

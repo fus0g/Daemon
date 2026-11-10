@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.ui.geometry - basic geometry used by the UI framework.
 export module daemon.ui.geometry;
 import std;

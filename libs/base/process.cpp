@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // process - implementation of module daemon.base.process.
 module;
 #include <fcntl.h>

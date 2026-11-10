@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // project - implementation of module daemon.services.project.
 module daemon.services.project;
 import std;

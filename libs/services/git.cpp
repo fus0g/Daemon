@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // git - implementation of module daemon.services.git.
 module daemon.services.git;
 import std;

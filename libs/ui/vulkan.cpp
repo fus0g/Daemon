@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // vulkan - implementation of module daemon.ui.vulkan.
 module;
 #define VK_USE_PLATFORM_WAYLAND_KHR

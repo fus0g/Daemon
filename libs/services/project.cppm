@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.project — project templates (the "New Project" flow) and the recent-projects list.
 export module daemon.services.project;
 import std;

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.editor — a document: buffer + cursor/selection + editing commands (no rendering).
 module;
 #include <cerrno>

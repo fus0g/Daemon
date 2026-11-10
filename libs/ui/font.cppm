@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.font — system font discovery, glyph rasterisation (stb_truetype) and a CPU-side
 // R8 glyph atlas that the Vulkan renderer mirrors into a GPU texture.
 //

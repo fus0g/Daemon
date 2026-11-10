@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // gdb - implementation of module daemon.services.gdb.
 module daemon.services.gdb;
 import std;

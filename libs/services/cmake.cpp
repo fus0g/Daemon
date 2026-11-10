@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // cmake - implementation of module daemon.services.cmake.
 module daemon.services.cmake;
 import std;

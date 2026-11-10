@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // lsp - implementation of module daemon.services.lsp.
 module;
 #include <unistd.h>

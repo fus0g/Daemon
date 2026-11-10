@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.lsp — a Language Server Protocol client (JSON-RPC over stdio), built for clangd.
 //
 // It is single-threaded and event-loop driven: the app watches `fd()` and calls `pump()` when it is

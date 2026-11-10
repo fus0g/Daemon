@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.icons — vector icons for the file explorer and tabs.
 //
 // Icons are described on a 16x16 design grid with a few primitives (rounded rects, circles,

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.explorer — the file-tree model behind the sidebar (no rendering, no windowing).
 module;
 #include <sys/inotify.h>

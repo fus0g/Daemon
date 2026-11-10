@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.app.theme - the IDE colour theme (colours of the islands, text and syntax).
 export module daemon.app.theme;
 import std;

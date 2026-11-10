@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.vulkan — the renderer.
 //
 // One graphics pipeline draws everything: a single instanced triangle strip per quad,
