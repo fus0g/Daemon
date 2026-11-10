@@ -52,6 +52,13 @@ public:
     int height() const { return height_; }
     int scale() const { return scale_; }
     bool configured() const { return configured_; }
+    // Frame pacing: ask the compositor for a callback with the next commit. While one is outstanding the
+    // window may be hidden/occluded, so the app should not render (see frameWait()).
+    void requestFrame();
+    void cancelFrame() { if (frameCb_) { wl_callback_destroy(frameCb_); frameCb_ = nullptr; } }
+    bool framePending() const { return frameCb_ != nullptr; }
+    // Milliseconds since the outstanding frame callback was requested (0 if none).
+    long long frameWaitMs() const;
     bool serverDecorations() const { return serverDeco_; }
     bool maximized() const { return maximized_; }
     bool fullscreen() const { return fullscreen_; }
@@ -193,6 +200,8 @@ private:
     int width_ = 1280, height_ = 800;
     int pendingW_ = 0, pendingH_ = 0;
     bool pendingMaximized_ = false, pendingFullscreen_ = false, pendingActivated_ = false;
+    wl_callback* frameCb_ = nullptr;
+    std::chrono::steady_clock::time_point frameAsked_{};
     bool maximized_ = false, fullscreen_ = false, focused_ = false, configured_ = false, closed_ = false,
          serverDeco_ = false;
 

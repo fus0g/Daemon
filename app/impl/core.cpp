@@ -260,7 +260,7 @@ int App::run() {
         auto now = Clock::now();
         int timeout = -1;
         if (dirty_ || animating_) {
-            timeout = (skipped_ || failures > 0) ? (failures > 0 ? 250 : 16) : 0;
+            timeout = (skipped_ || failures > 0) ? (failures > 0 ? 250 : 16) : (win_.framePending() ? 16 : 0);
         } else {
             auto wake = nextWake();
             if (wake) timeout = static_cast<int>(std::max<long long>(
@@ -272,12 +272,18 @@ int App::run() {
         last = now;
         update(now, std::min(dt, 0.1f));
 
-        if (dirty_ && win_.configured()) {
+        // Frame pacing: if the compositor has not answered the previous frame callback the window is probably
+        // hidden or occluded. Presenting then can stall the driver, so wait (still serving events), and only
+        // force a frame occasionally.
+        const bool throttled = win_.framePending() && opt_.screenshot.empty() && win_.frameWaitMs() < 250;
+        if (dirty_ && win_.configured() && !throttled) {
             draw();
+            if (opt_.screenshot.empty()) win_.requestFrame();
             switch (ren_.render(dl_, font_, frameC())) {
                 case RenderStatus::Presented: dirty_ = false; skipped_ = false; failures = 0; ++frames_; break;
-                case RenderStatus::Skipped: skipped_ = true; break;
+                case RenderStatus::Skipped: skipped_ = true; win_.cancelFrame(); break;
                 case RenderStatus::Failed:
+                    win_.cancelFrame();
                     if (++failures >= 60) { std::println(std::cerr, "fatal: rendering keeps failing"); return 1; }
                     break;
             }

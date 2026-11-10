@@ -65,6 +65,23 @@ std::expected<void, std::string> Window::create(std::string_view title, int widt
     return {};
 }
 
+void Window::requestFrame() {
+    if (frameCb_) return;
+    static const wl_callback_listener listener = {[](void* d, wl_callback* cb, std::uint32_t) {
+        auto* w = static_cast<Window*>(d);
+        wl_callback_destroy(cb);
+        w->frameCb_ = nullptr;
+    }};
+    frameCb_ = wl_surface_frame(surface_);
+    wl_callback_add_listener(frameCb_, &listener, this);
+    frameAsked_ = std::chrono::steady_clock::now();
+}
+
+long long Window::frameWaitMs() const {
+    if (!frameCb_) return 0;
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - frameAsked_).count();
+}
+
 bool Window::pump(int timeoutMs) {
     while (wl_display_prepare_read(display_) != 0) wl_display_dispatch_pending(display_);
     wl_display_flush(display_);

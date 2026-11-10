@@ -462,7 +462,17 @@ void Renderer::createSwapchain() {
                             : (caps.supportedCompositeAlpha & VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR)
                                 ? VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR
                                 : VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR;
-        ci.presentMode = VK_PRESENT_MODE_FIFO_KHR;  // always available; vsync
+        // MAILBOX never blocks the caller when the compositor stops releasing buffers (hidden / unfocused
+        // window); FIFO present can block the whole UI thread forever on some drivers. The app paces
+        // frames itself with wl_surface.frame callbacks.
+        ci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+        {
+            std::uint32_t pn = 0;
+            vkGetPhysicalDeviceSurfacePresentModesKHR(phys_, surface_, &pn, nullptr);
+            std::vector<VkPresentModeKHR> modes(pn);
+            vkGetPhysicalDeviceSurfacePresentModesKHR(phys_, surface_, &pn, modes.data());
+            if (std::ranges::find(modes, VK_PRESENT_MODE_MAILBOX_KHR) != modes.end()) ci.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+        }
         ci.clipped = VK_TRUE;
         ci.oldSwapchain = swapchain_;
 
