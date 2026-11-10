@@ -202,6 +202,7 @@ private:
     void revealInSidebar();
 
     void updateTitle();
+    void installDesktopEntry();
 
     void screenshotStep();
 

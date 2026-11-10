@@ -144,6 +144,10 @@ char32_t fileGlyph(std::string_view name, FileKind kind);
 
 enum class ToolIcon { Play, Stop, Build, Reload, Panel, Files, Terminal, Warning, Minimize, Maximize, Close };
 
+// The application icon as size*size premultiplied ARGB32: the crimson helm on a dark rounded tile.
+// Rendered from the same vector shapes as the in-app logo, so it needs no image files.
+std::vector<std::uint32_t> appIconPixels(int size);
+
 class Icons {
 public:
     // Draw a file icon with its top-left corner at (x, y); `size` is in pixels.

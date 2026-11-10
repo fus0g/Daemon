@@ -10,6 +10,7 @@ compatible with GPLv3 and keep their own licences:
 | `third_party/wayland/xdg-shell.xml` | xdg-shell protocol | MIT-style (text in the file header) |
 | `third_party/wayland/xdg-decoration-unstable-v1.xml` | xdg-decoration protocol | MIT-style (text in the file header) |
 | `third_party/wayland/ext-background-effect-v1.xml` | ext-background-effect protocol | MIT-style (text in the file header) |
+| `third_party/wayland/xdg-toplevel-icon-v1.xml` | xdg-toplevel-icon protocol | MIT-style (text in the file header) |
 
 Apache-2.0 material is compatible with GPLv3 (it is not compatible with GPLv2-only). Keep the licence texts and
 copyright notices above whenever you redistribute these files.

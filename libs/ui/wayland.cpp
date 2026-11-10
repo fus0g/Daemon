@@ -8,6 +8,7 @@ module;
 #include "xdg-shell-client-protocol.h"
 #include "xdg-decoration-unstable-v1-client-protocol.h"
 #include "ext-background-effect-v1-client-protocol.h"
+#include "xdg-toplevel-icon-v1-client-protocol.h"
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/mman.h>
@@ -64,6 +65,29 @@ std::expected<void, std::string> Window::create(std::string_view title, int widt
         if (wl_display_roundtrip(display_) < 0) break;
     if (!configured_) return std::unexpected("compositor never configured the window");
     return {};
+}
+
+void Window::setIcon(const std::vector<std::uint32_t>& argb, int size) {
+    if (!icon_mgr_ || !shm_ || !toplevel_ || size <= 0 || argb.size() < static_cast<std::size_t>(size) * size) return;
+    const std::size_t bytes = static_cast<std::size_t>(size) * size * 4;
+    int fd = ::memfd_create("daemon-icon", MFD_CLOEXEC);
+    if (fd < 0) return;
+    if (::ftruncate(fd, static_cast<off_t>(bytes)) < 0) { ::close(fd); return; }
+    void* map = ::mmap(nullptr, bytes, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (map == MAP_FAILED) { ::close(fd); return; }
+    std::memcpy(map, argb.data(), bytes);
+    ::munmap(map, bytes);
+    wl_shm_pool* pool = wl_shm_create_pool(shm_, fd, static_cast<int>(bytes));
+    wl_buffer* buf = wl_shm_pool_create_buffer(pool, 0, size, size, size * 4, WL_SHM_FORMAT_ARGB8888);
+    wl_shm_pool_destroy(pool);
+    ::close(fd);
+    xdg_toplevel_icon_v1* icon = xdg_toplevel_icon_manager_v1_create_icon(icon_mgr_);
+    xdg_toplevel_icon_v1_set_name(icon, "daemon");   // a themed icon wins when installed, the pixels are the fallback
+    xdg_toplevel_icon_v1_add_buffer(icon, buf, 1);
+    xdg_toplevel_icon_manager_v1_set_icon(icon_mgr_, toplevel_, icon);
+    xdg_toplevel_icon_v1_destroy(icon);
+    wl_buffer_destroy(buf);
+    wl_display_flush(display_);
 }
 
 void Window::requestFrame() {
@@ -187,6 +211,8 @@ void Window::onGlobal(wl_registry* reg, std::uint32_t name, const char* iface, s
         shm_ = static_cast<wl_shm*>(wl_registry_bind(reg, name, &wl_shm_interface, 1));
     } else if (i == ext_background_effect_manager_v1_interface.name) {
         bgfx_mgr_ = static_cast<ext_background_effect_manager_v1*>(wl_registry_bind(reg, name, &ext_background_effect_manager_v1_interface, 1));
+    } else if (i == xdg_toplevel_icon_manager_v1_interface.name) {
+        icon_mgr_ = static_cast<xdg_toplevel_icon_manager_v1*>(wl_registry_bind(reg, name, &xdg_toplevel_icon_manager_v1_interface, 1));
     } else if (i == xdg_wm_base_interface.name) {
         wm_base_ = static_cast<xdg_wm_base*>(wl_registry_bind(reg, name, &xdg_wm_base_interface, std::min(ver, 5u)));
         static const xdg_wm_base_listener l = [] {

@@ -43,6 +43,8 @@ std::expected<void, std::string> App::init() {
     win_.onFocus = [this](bool f) { focused_ = f; resetCaret(); dirty_ = true; if (f) gitNextPoll_ = {}; };
     win_.onClose = [this] { requestQuit(); };
     if (auto r = win_.create("Daemon", 1280, 800); !r) return r;
+    win_.setIcon(appIconPixels(256), 256);   // compositors that support xdg-toplevel-icon (KDE, ...)
+    installDesktopEntry();                   // the rest (GNOME) match the app id to a .desktop file
     if (opt_.screenshot.empty()) win_.setMaximized();   // start maximized (captures keep a fixed size)
 
     scale_ = win_.scale();
@@ -470,7 +472,7 @@ void App::revealInSidebar() {
 
 void App::updateTitle() {
     if (docs_.empty()) return;
-    std::string t = doc().name + (doc().modified() ? " *" : "") + " - IDE";
+    std::string t = doc().name + (doc().modified() ? " *" : "") + " - Daemon";
     if (t != lastTitle_) { lastTitle_ = t; win_.setTitle(t); }
 }
 

@@ -255,4 +255,30 @@ void Icons::tool(DrawList& dl, FontAtlas& font, float x, float y, int size, Tool
     });
 }
 
+std::vector<std::uint32_t> appIconPixels(int size) {
+    using namespace icon_detail;
+    std::vector<std::uint8_t> tile(static_cast<std::size_t>(size) * size);
+    rasterize({rr(8.0f, 8.0f, 7.5f, 7.5f, 3.4f)}, size, tile.data());
+    const int hs = size * 72 / 100, off = (size - hs) / 2;
+    std::vector<std::uint8_t> helm(static_cast<std::size_t>(hs) * hs);
+    rasterize(logoHelm(), hs, helm.data());
+    std::vector<std::uint32_t> px(static_cast<std::size_t>(size) * size, 0);
+    for (int y = 0; y < size; ++y)
+        for (int x = 0; x < size; ++x) {
+            const float t = static_cast<float>(y) / static_cast<float>(size);
+            float r = 0x1b + (0x0b - 0x1b) * t, g = 0x1d + (0x0c - 0x1d) * t, b = 0x26 + (0x10 - 0x26) * t;
+            float cov = tile[static_cast<std::size_t>(y) * size + x] / 255.0f;
+            const int hx = x - off, hy = y - off;
+            if (hx >= 0 && hy >= 0 && hx < hs && hy < hs) {
+                const float h = helm[static_cast<std::size_t>(hy) * hs + hx] / 255.0f;
+                const float ht = static_cast<float>(hy) / static_cast<float>(hs);
+                const float hr = 0xef + (0xa3 - 0xef) * ht, hg = 0x4b + (0x12 - 0x4b) * ht, hb = 0x57 + (0x1f - 0x57) * ht;
+                r += (hr - r) * h; g += (hg - g) * h; b += (hb - b) * h;
+            }
+            auto c = [&](float v) { return static_cast<std::uint32_t>(std::clamp(v * cov, 0.0f, 255.0f)); };
+            px[static_cast<std::size_t>(y) * size + x] = (static_cast<std::uint32_t>(cov * 255.0f) << 24) | (c(r) << 16) | (c(g) << 8) | c(b);
+        }
+    return px;
+}
+
 }  // namespace ide

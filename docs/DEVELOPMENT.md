@@ -89,3 +89,10 @@ missing), icons, file operations. Add a test function to the matching file and c
 - clangd runs niced, `-j=2`, PCH on disk. Background diagnostics keep a rolling window of 8 files open (`bgSettled_`) and wait for clangd.
 - The caret stops blinking after 30 s idle so an idle editor schedules no frames. Git status polls every 8 s while focused.
 - `IDE_BGINDEX=0` disables clangd background indexing.
+
+## Window title and icon
+- Title is `<file> - Daemon` (`App::updateTitle`).
+- Icon without installed files: `Window::setIcon` sends pixels via `xdg-toplevel-icon-v1` (KDE and others; GNOME's mutter does
+  not advertise it). For GNOME, `App::installDesktopEntry` (`app/impl/desktop.cpp`) writes `~/.local/share/applications/daemon.desktop`
+  and PNG icons (rendered from the vector logo) on start; the app id `daemon` matches the desktop file. Bump `kIconRev` when the logo changes.
+  `DAEMON_NO_INTEGRATION=1` disables it.

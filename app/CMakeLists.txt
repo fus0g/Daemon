@@ -10,6 +10,7 @@ target_sources(daemon_app
     impl/activity_bar.cpp
     impl/build_run.cpp
     impl/core.cpp
+    impl/desktop.cpp
     impl/debugger.cpp
     impl/dialogs.cpp
     impl/documents.cpp

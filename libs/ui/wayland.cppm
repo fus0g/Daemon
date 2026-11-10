@@ -9,6 +9,7 @@ module;
 #include "xdg-shell-client-protocol.h"
 #include "xdg-decoration-unstable-v1-client-protocol.h"
 #include "ext-background-effect-v1-client-protocol.h"
+#include "xdg-toplevel-icon-v1-client-protocol.h"
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/mman.h>
@@ -78,6 +79,9 @@ public:
         std::string s(t);
         if (toplevel_) xdg_toplevel_set_title(toplevel_, s.c_str());
     }
+    // Window icon from pixel data (xdg-toplevel-icon-v1): no installed icon files or .desktop entry needed.
+    // `argb` is size*size premultiplied ARGB32 pixels. A no-op if the compositor lacks the protocol.
+    void setIcon(const std::vector<std::uint32_t>& argb, int size);
     void startMove() { if (toplevel_ && seat_) xdg_toplevel_move(toplevel_, seat_, inputSerial_); }
     void startResize(Edge e) {
         if (toplevel_ && seat_ && e != Edge::None) xdg_toplevel_resize(toplevel_, seat_, inputSerial_, static_cast<std::uint32_t>(e));
@@ -186,6 +190,7 @@ private:
     wl_data_offer* offer_ = nullptr;
     zxdg_decoration_manager_v1* decoration_mgr_ = nullptr;
     ext_background_effect_manager_v1* bgfx_mgr_ = nullptr;
+    xdg_toplevel_icon_manager_v1* icon_mgr_ = nullptr;
     ext_background_effect_surface_v1* bgfx_ = nullptr;
     int blurW_ = 0, blurH_ = 0;
     zxdg_toplevel_decoration_v1* decoration_ = nullptr;
