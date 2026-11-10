@@ -9,6 +9,7 @@ Daemon is a Linux-only IDE: a native **Wayland** client with a **Vulkan 1.3** re
 | `docs/DEVELOPMENT.md` | build, tests, screenshot/scripting hooks, recipes, compiler quirks |
 | `docs/ARCHITECTURE.md` | libraries, modules, `App` structure, event loop, rendering, async patterns |
 | `docs/SUBSYSTEMS.md` | clangd/CMake, git, debugger, search, terminal, file watching, projects |
+| `docs/USER_GUIDE.md` | detailed user-facing reference (keys, git, debugger, search, terminal, modules) |
 | `docs/FEATURES.md` | everything the IDE does, with shortcuts and where each feature lives |
 | `docs/DESIGN.md` | visual language, theme values, what the owner accepted or rejected |
 | `docs/KNOWN_ISSUES.md` | limitations, untested paths, roadmap |

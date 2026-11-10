@@ -1,191 +1,112 @@
+<div align="center">
+
+<img src="docs/images/logo.svg" width="112" alt="Daemon logo">
+
 # Daemon
 
-A code editor for Linux: native **Wayland** client, **Vulkan 1.3** renderer, written in C++23 with
-**C++20 modules** (`import std;` throughout).
+**A fast, native C++ IDE for Linux — Wayland, Vulkan, no toolkit.**
+
+[![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-c1121f.svg)](LICENSE)
+![C++23](https://img.shields.io/badge/C%2B%2B-23%20%2B%20modules-00599C.svg)
+![Platform](https://img.shields.io/badge/platform-Linux%20%C2%B7%20Wayland-555.svg)
+![Renderer](https://img.shields.io/badge/renderer-Vulkan%201.3-a41e22.svg)
+
+<img src="docs/images/screenshot.jpg" alt="Daemon editing C++ with clangd, git blame and minimap" width="900">
+
+</div>
+
+Daemon is an IDE written from scratch in **C++23 with C++20 modules** (`import std;` throughout). It talks to Wayland directly,
+draws its whole interface with a small instanced-quad **Vulkan 1.3** renderer, and aims for the CLion / VS Code / Zed
+experience: a dark, glassy "island" UI with Material icons and a Targaryen-crimson accent.
+
+It is small, starts in well under a second, idles at zero wakeups, and prefers your integrated GPU so it stays cool.
+
+## Features
+
+- **Editor** — tabs, split panes, drag & drop, minimap, breadcrumbs, syntax highlighting, find/replace, animated caret, multi-pane layouts.
+- **C/C++ intelligence** — [clangd](https://clangd.llvm.org) completion, diagnostics, hover, go to definition, header/source switch,
+  project-wide problems, and **C++20 modules** support (`import std;`, project modules) with a derived Clang compile database.
+- **CMake** — configure, build, run and regenerate from the toolbar; profiles, targets, program arguments, clickable compiler errors.
+- **Debugger** — full **gdb** integration: breakpoints (conditional, logpoints, data, function, C++ throw), stepping, call stack and
+  threads, variables with STL pretty-printing, watches, hover values, debug console.
+- **Git** — gutter changes, inline blame, stage/commit/pull/push, history graph, branches.
+- **Search & replace** — project-wide, regex / case / whole word / globs, safe replace.
+- **Integrated terminal** — real PTY shell with a truecolor xterm emulator.
+- **Explorer** — Material icons, git status, drag to move, live refresh on external changes, trash support.
+- **Projects** — welcome screen, new-project wizard (C++, modules, library, C), recent projects, system folder chooser.
+- **Look** — translucent chrome with compositor blur (`ext-background-effect-v1`), client-side decorations, HiDPI.
+
+See the [user guide](docs/USER_GUIDE.md) and [feature inventory](docs/FEATURES.md) for details and shortcuts.
+
+## Requirements
+
+- Linux with a **Wayland** compositor (GNOME 51+/KWin recommended for background blur; works without it)
+- A **Vulkan 1.3** capable GPU and driver
+- **GCC 15+** (or Clang with libc++), **CMake 4.3+**, **Ninja**
+- Development packages: `wayland-client`, `wayland-cursor`, `xkbcommon`, Vulkan headers/loader, and `glslc` **or** `libshaderc_shared`
+- Optional at run time: `clangd` (code intelligence), `gdb` (debugger), `git`
+
+On Fedora: `sudo dnf install gcc-c++ cmake ninja-build wayland-devel libxkbcommon-devel vulkan-headers vulkan-loader-devel glslc clang-tools-extra gdb git`
 
 ## Build & run
 
-Requires GCC 15+ (or Clang + libc++), CMake 4.3+, Ninja, and the dev packages for
-`wayland-client`, `wayland-cursor`, `xkbcommon`, Vulkan headers/loader, plus `glslc` **or** `libshaderc_shared`
-(shaders are compiled at build time).
-
-    cmake -S . -B build -G Ninja
-    cmake --build build
-    ./build/app/daemon [file...]
-    ctest --test-dir build        # headless unit tests (build/tests/daemon_tests)
-
-Options: `--font-size <px>`, `--screenshot out.png` (render, save PNG, exit), `--keys "ctrl+f|t:text|enter"`
-(replay input). Environment: `IDE_FONT=<ttf/otf>` (code font), `IDE_UI_FONT=<ttf/otf>` (interface font), `IDE_GPU=<index>`, `IDE_VALIDATE=1`.
-
-## Source layout
-
-Daemon is a stack of static libraries, each a set of C++20 modules. A module is a `.cppm` **interface** (types, declarations and
-small inline functions) plus a `.cpp` **implementation unit** (the larger function bodies); dependencies only point downwards.
-
-```
-app/                 the IDE            daemon_app  (+ the `daemon` executable)
-  app.cppm             class App: state and declarations         impl/*.cpp  its implementation, one file per feature
-  options.cppm theme.cppm cli.cpp main.cpp
-libs/services/       services           daemon_services   (no UI)
-libs/ui/             window / renderer  daemon_ui         (the reusable UI framework, no IDE logic)
-libs/text/           text model         daemon_text
-libs/base/           foundations        daemon_base
-tests/               headless unit tests, one file per library
-third_party/         stb_truetype, Wayland protocol XML, Material Design Icons font      tools/  shader compiler fallback
+```sh
+git clone <repo-url> daemon && cd daemon
+cmake -S . -B build -G Ninja
+cmake --build build
+./build/app/daemon [folder-or-files...]
+ctest --test-dir build            # or ./build/tests/daemon_tests
 ```
 
-| library | modules |
+Optional desktop integration (icon + launcher entry): `cmake --install build --prefix ~/.local`
+
+| Option / variable | Effect |
 |---|---|
-| `daemon_base` | `daemon.base.util` UTF-8, file I/O, PNG writer · `json` · `process` (pipes, PTYs, process groups) |
-| `daemon_text` | `daemon.text.buffer` line buffer + undo/redo · `syntax` highlighter · `document` cursor / selection / editing commands |
-| `daemon_ui` | `daemon.ui.wayland` xdg-shell window, keyboard, clipboard · `vulkan` renderer · `draw` quad list · `font` atlas · `icons` · `input` · `geometry` |
-| `daemon_services` | `daemon.services.lsp` clangd client · `cmake` · `git` · `gdb` (MI client) · `search` · `terminal` emulator · `project` · `explorer` file tree |
-| `daemon_app` | `daemon.app` (`App`) · `daemon.app.theme` · `daemon.app.options`; `app/impl/` holds the implementation by feature (activity bar, build/run, debugger, dialogs, git view, keyboard, layout, LSP glue, pointer, prompts, render, search view, terminal view ...) |
+| `--font-size <px>` | editor font size |
+| `--screenshot out.png`, `--keys "ctrl+f\|t:text\|enter"` | render headlessly and replay input (used by the tests) |
+| `IDE_FONT`, `IDE_UI_FONT` | code / interface font files |
+| `IDE_GPU=<index>` | force a Vulkan device (integrated GPU is the default) |
+| `IDE_CLANGD=/path` | clangd binary |
+| `DAEMON_OPAQUE=1` | disable translucency |
 
-## Keys
+## Key bindings
 
-`Ctrl+O/N/S/Shift+S/W/Q` open/new/save/save as/close tab/quit - `Ctrl+Shift+O` open folder, `Ctrl+B` toggle sidebar, `Ctrl+Shift+E` focus it (arrows, Enter, `F5` refresh; drag the gap to resize) - `Ctrl+F/H/G` find/replace/go to line (`F3` next) -
-`Ctrl+Z/Y` undo/redo - `Ctrl+/` comment - `Ctrl+Shift+D/K` duplicate/delete line - `Alt+Up/Down` move line -
-`Ctrl+]/[` indent - `Ctrl+Tab`, `Ctrl+PgUp/PgDn` switch tab - `Ctrl +/-/0` or `Ctrl+wheel` zoom.
+| | |
+|---|---|
+| `Ctrl+O` / `Ctrl+Shift+O` | open file / folder |
+| `Ctrl+Shift+F` / `Ctrl+Shift+G` | project search / source control |
+| ``Ctrl+` `` | terminal |
+| `Ctrl+F9` / `Shift+F10` / `Shift+F9` | build / run / debug |
+| `F9` `F10` `F11` `F5` | breakpoint, step over, step into, continue |
+| `F12`, `Alt+Left`, `Alt+O` | go to definition, back, header/source |
 
-### File explorer
+Full list in the [user guide](docs/USER_GUIDE.md#keys).
 
-Right-click a row (or the empty area) for the context menu. With the sidebar focused:
-`Ctrl+N` / `Ctrl+Shift+N` new file / folder (nested paths like `a/b.txt` work) - `F2` rename -
-`Ctrl+C` / `Ctrl+X` / `Ctrl+V` copy / cut / paste - `Ctrl+D` duplicate - `Del` move to Trash (freedesktop
-spec, restorable from your file manager), `Shift+Del` delete permanently - `F5` refresh.
-Open tabs follow renames and moves.
+## Architecture
 
-### C/C++ and CMake
+Daemon is a stack of static libraries made of C++20 modules (`.cppm` interface + `.cpp` implementation unit); dependencies point downward.
 
-Open a folder containing a `CMakeLists.txt` and the IDE loads it like CLion does: it configures
-`cmake-build-debug/` (Ninja if available, `CMAKE_EXPORT_COMPILE_COMMANDS=ON`), reads the targets through
-the CMake File API and shows a toolbar with the **profile** (Debug / Release / RelWithDebInfo), the
-**target** (with *Program arguments...*), and Run / Build / Stop / Reload buttons. Output streams into the
-bottom panel (**Build**, **Run**, **Problems**); compiler errors and warnings are clickable.
-Saving `CMakeLists.txt` or a `.cmake` file reloads the project automatically.
+```
+app/             the IDE (class App, one implementation file per feature)
+libs/services/   clangd, CMake, git, gdb, search, terminal emulator, project, explorer   (no UI)
+libs/ui/         Wayland window, Vulkan renderer, fonts, icons                          (reusable, no IDE logic)
+libs/text/       buffer, syntax highlighting, document editing
+libs/base/       utilities, JSON, processes / PTYs
+tests/           headless unit tests
+```
 
-`Ctrl+F9` build - `Shift+F10` build and run - `Ctrl+F2` stop - `Ctrl+Shift+R` reload CMake - ``Ctrl+` `` toggle panel.
+Deeper reading: [ARCHITECTURE](docs/ARCHITECTURE.md) · [SUBSYSTEMS](docs/SUBSYSTEMS.md) · [DEVELOPMENT](docs/DEVELOPMENT.md) ·
+[DESIGN](docs/DESIGN.md) · [KNOWN_ISSUES](docs/KNOWN_ISSUES.md). AI agents and new contributors should start with [AGENTS.md](AGENTS.md).
 
-Code intelligence comes from **clangd** (found on `$PATH`, or set `IDE_CLANGD=/path/to/clangd`); it is
-pointed at the active profile's `compile_commands.json`. You get completion (as you type, or `Ctrl+Space`),
-diagnostics (squiggles, gutter marks, counts in the status bar, hover for the message), hover documentation,
-go to definition (`F12` or `Ctrl+click`, `Alt+Left` to go back) and header/source switching (`Alt+O`).
+## Contributing
 
-
-## Look: translucent chrome and blur
-
-Daemon draws the window chrome (title bar, status bar, gaps between panels) translucent and asks the compositor to blur
-what is behind it (`ext-background-effect-v1`, supported by GNOME 51+ and KWin). The panels themselves ("islands") are
-opaque, and the code editor is near-black. Without alpha support or the protocol the chrome falls back to a solid colour;
-set `DAEMON_OPAQUE=1` to force that.
-
-## C++20 modules IntelliSense
-
-Daemon starts clangd with `--experimental-modules-support` and `--completion-parse=always`. CMake + GCC projects that
-use modules (`-fmodules-ts`, `import std;`) get a derived, Clang-flavoured compile database in
-`<build>/.daemon/clangd/` (same sources, defines and includes, driven by `clang++` with libstdc++, duplicate BMI
-entries folded away, libstdc++'s `bits/std.cc` kept as the `std` module source). clangd then builds its own BMIs, so
-`import std;` and `import your.module;` resolve, and completion, diagnostics, hover and go-to-definition see through them.
-The status bar shows `clangd · modules` when this is active.
-
-On top of clangd: `import` statements complete project module names (and `std`, `std.compat`), and Go to Definition
-on a module name jumps to its interface unit. `IDE_LSP_TRACE=1` prints the LSP traffic to stderr.
-
-## Editor panes: drag and drop
-
-Drag a tab to reorder it within its strip, or drop it on another pane's strip or body to move it there. Dropping on the
-left/right/top/bottom edge of a pane splits the editor and moves the tab into the new pane; the pane borders are
-draggable. Esc cancels a drag, and a pane disappears when its last tab is closed or dragged out. Each file lives in
-one pane at a time.
-
-## Projects: create, open, recent
-
-With no arguments Daemon starts on a welcome screen (also reachable by clicking the logo or Ctrl+Shift+P):
-
-- **New Project** (Ctrl+Shift+N): pick a template (C++ executable, C++20 modules executable, static library, C executable,
-  empty CMake project), a name, a location and a language standard, optionally with `git init`. Daemon writes a
-  `CMakeLists.txt` and sources, opens the folder, configures CMake and opens the main file.
-- **Open Folder** (Ctrl+Shift+O): an in-app folder browser with places, a path field, hidden-folder toggle and a
-  "CMake" badge on folders that contain a `CMakeLists.txt`.
-- **Recent projects** are kept in `$XDG_CONFIG_HOME/daemon/state.json` (default `~/.config/daemon/state.json`).
-
-## Running programs
-
-Programs started with Run (Shift+F10) run on a pseudo-terminal, so they behave as in a terminal: prompts appear
-immediately (no output buffering), and `std::cin` / `scanf` read what you type. While a program runs, keystrokes in
-the Run panel go to it (Esc or a click elsewhere releases them; Ctrl+C interrupts, Ctrl+D ends input). Click the Run
-output to give the keyboard back to the program.
-
-## Project-wide problems
-
-clangd only reports diagnostics for files it has open, so Daemon quietly opens every source file of the project in the
-language server (no tabs; a few per tick, up to 400 files). The Problems tab therefore lists errors and warnings from
-the whole project, and the file explorer marks affected files (red / amber name and a count badge) and their folders.
-
-## Git
-
-Daemon talks to the `git` binary (no libgit2). In a repository you get:
-
-- **Blame:** the cursor line shows who last changed it, when, and the commit summary (like Zed's inline blame, and it
-  accounts for unsaved edits). Hover the annotation for the full commit card (author, date, message, hash) with a copy
-  button; text in it is selectable.
-- **Change markers** in the gutter against HEAD: green = added, blue = modified, a red wedge where lines were removed.
-- **Explorer:** status letters (M modified, A added, U untracked, D deleted, R renamed, ! conflict) and a dot on folders
-  that contain changes. The status bar shows the branch, ahead/behind counts and the number of changed files.
-- **Source Control** (Ctrl+Shift+G, or the branch icon next to the Explorer button; it replaces the file tree in the right-hand island) with three views:
-  - *Changes*: staged and unstaged files, per-file stage / unstage / discard (discard asks for a second click),
-    Stage All / Unstage All, and a commit box (Enter commits).
-  - *History*: the commit graph of all branches (lanes, merges, branch / tag chips, author, age, hash). Click a commit
-    to expand its full message and changed files; click a file to open it.
-  - *Branches*: local and remote branches with their last commit; Checkout switches branch.
-  - Fetch / Pull / Push buttons sit at the right of the header (icons only when the island is narrow).
-
-## Toolbar: run, debug, build, regenerate
-
-The CMake toolbar has outlined selectors for the build profile and target, and one pill of actions: **Run** (
-Shift+F10), **Debug** (Shift+F9), **Build** (Ctrl+F9), **Regenerate CMake** (Ctrl+Shift+R) and **Stop** (Ctrl+F2). Hovering a button shows its name and shortcut. Debug starts `gdb` on the
-Run panel's terminal (it stops at `main`; type gdb commands there). Use the Debug profile so the program has symbols.
-
-## Integrated terminal
-
-The bottom panel has a **Terminal** tab (Ctrl+` or the terminal button in the activity bar). It runs your `$SHELL` in a real PTY
-in the project folder, with an xterm-256color / truecolor emulator (scrollback, alternate screen, bracketed paste, mouse-wheel
-scrolling). Select with the mouse; copy with Ctrl+Shift+C (or Ctrl+C while text is selected), paste with Ctrl+Shift+V.
-
-## Explorer
-
-New file / new folder / rename / delete are asked for in a card at the bottom of the sidebar. Files and folders can be dragged
-onto a folder in the tree (or the empty area for the project root) to move them; open tabs follow the moved files.
-
-## Search and replace in files
-
-`Ctrl+Shift+F` (or the magnifier in the activity bar) opens project-wide search in the sidebar; `Ctrl+Shift+H` focuses the replace field.
-Toggles: match case (`Aa`, Alt+C), whole word (`ab`, Alt+W), regular expression (`.*`, Alt+R; `$1` works in the replacement), and
-**Filters** for *files to include / exclude* globs (comma separated, e.g. `*.cpp, src/**`). Files are taken from git (`.gitignore` is
-respected) or, outside a repository, from a walk that skips build and vendor folders; binary and >2 MB files are skipped. Unsaved
-editor contents are searched too. Results are grouped per file; click one to jump to it, hover for *replace* / *dismiss*, use the
-button in the replace field for *Replace All* (asks for a second click). Files with unsaved edits are never overwritten.
-
-## Debugger
-
-Debugging runs your program under **gdb** through its machine interface (MI3). Start with the bug button in the toolbar, `Shift+F9`
-or `F5` (`F10` / `F11` start and stop at `main`). The program's own input/output lives in the **Run** tab; the **Debug** tab is a
-console where you can evaluate expressions (`x + 1`, `*ptr`) or run any gdb command (`bt`, `info registers`, `disassemble`).
-
-- **Breakpoints:** click the gutter or `F9`; right-click for conditional breakpoints and logpoints (`log: x = {x}` prints and
-  continues). Edit text accepts a condition, `#N` to skip the first N hits, or `log: message`. Breakpoints can be disabled,
-  function breakpoints and *break on C++ throw* are in the BREAKPOINTS section, and *data breakpoints* (stop when a value changes) are
-  one click on a variable. Breakpoints are saved per project in `.daemon/debug.json` and can be changed while the program runs.
-- **Stepping:** `F5` continue, `F6` pause, `F10` over, `F11` into, `Shift+F11` out, `Ctrl+F10` run to cursor, `Ctrl+Shift+F10` set next
-  statement, `Shift+F5` stop, `Ctrl+Shift+F5` restart (also the floating bar over the editor).
-- **Run and Debug view** (sidebar): VARIABLES (expandable, STL containers via gdb's pretty printers, edit a value, copy, add to watch,
-  watch for changes), WATCH expressions, CALL STACK with threads (click a frame to inspect it) and BREAKPOINTS. Hover an expression in
-  the editor while paused to see its value; changed values are highlighted.
+Issues and pull requests are welcome. Please build and run the tests (`cmake --build build && ./build/tests/daemon_tests`) before
+sending a change, keep commits focused, and look at the screenshot output (`--screenshot`) for UI changes. Contributions are
+accepted under the project licence.
 
 ## License
 
-Daemon is free software under the **GNU General Public License v3.0 or later** (see `LICENSE`).
-You may use, study, modify and redistribute it, but any modified version you distribute must be released under
-the same licence with its complete source, so improvements flow back to the community.
-Contributions are accepted under the same licence. Bundled third-party files and their licences are listed in `THIRD_PARTY_NOTICES.md`.
+Daemon is free software under the **GNU General Public License v3.0 or later** — see [LICENSE](LICENSE). You may use, study,
+modify and redistribute it; a modified version you distribute must be released under the same licence with its complete source,
+so improvements flow back to the community. Bundled third-party files and their licences are listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

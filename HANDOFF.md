@@ -15,7 +15,7 @@ the work by asking for features/redesigns, then reviewing screenshots; expect sh
 3. `docs/ARCHITECTURE.md` — libraries, modules, `App` layout, frame loop.
 4. `docs/SUBSYSTEMS.md` — how clangd/CMake, git, gdb, search, terminal, file watching work.
 5. `docs/FEATURES.md`, `docs/DESIGN.md`, `docs/KNOWN_ISSUES.md`.
-User-facing description: `README.md`.
+User-facing description: `README.md` (overview) and `docs/USER_GUIDE.md` (full feature reference).
 
 ## State at handoff
 - Everything is committed; `cmake --build build` succeeds and `./build/tests/daemon_tests` prints `all tests passed`.
