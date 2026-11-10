@@ -188,4 +188,4 @@ console where you can evaluate expressions (`x + 1`, `*ptr`) or run any gdb comm
 Daemon is free software under the **GNU General Public License v3.0 or later** (see `LICENSE`).
 You may use, study, modify and redistribute it, but any modified version you distribute must be released under
 the same licence with its complete source, so improvements flow back to the community.
-Contributions are accepted under the same licence.
+Contributions are accepted under the same licence. Bundled third-party files and their licences are listed in `THIRD_PARTY_NOTICES.md`.
