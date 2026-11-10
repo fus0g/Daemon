@@ -1,3 +1,5 @@
 build/
 cmake-build-*/
 file.cpp
+build-release/
+dist/

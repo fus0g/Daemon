@@ -15,7 +15,12 @@ namespace fs = std::filesystem;
 void App::installDesktopEntry() {
     if (!opt_.screenshot.empty() || std::getenv("DAEMON_NO_INTEGRATION")) return;
     std::error_code ec;
-    const fs::path exe = fs::read_symlink("/proc/self/exe", ec);
+    // An installed package (deb / rpm) already provides the launcher entry and icons: do not shadow it.
+    for (const char* sys : {"/usr/share/applications/daemon.desktop", "/usr/local/share/applications/daemon.desktop"})
+        if (fs::exists(sys, ec)) return;
+    // Inside an AppImage /proc/self/exe is a temporary mount point; the launcher must point at the .AppImage file itself.
+    fs::path exe = fs::read_symlink("/proc/self/exe", ec);
+    if (const char* ai = std::getenv("APPIMAGE"); ai && *ai) exe = ai;
     if (ec || exe.empty()) return;
 
     fs::path data;

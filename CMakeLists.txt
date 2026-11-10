@@ -46,3 +46,15 @@ foreach(px 48 64 128 256 512)
   install(FILES assets/icons/${px}x${px}/daemon.png DESTINATION share/icons/hicolor/${px}x${px}/apps)
 endforeach()
 install(FILES assets/daemon.desktop DESTINATION share/applications)
+
+# Distribution packages -> dist/  (cmake --build build --target package-deb | package-rpm | package-appimage | packages)
+foreach(fmt deb rpm appimage)
+  add_custom_target(package-${fmt}
+    COMMAND ${PROJECT_SOURCE_DIR}/tools/package.sh ${fmt}
+    WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} USES_TERMINAL VERBATIM
+    COMMENT "Building the ${fmt} package")
+endforeach()
+add_custom_target(packages
+  COMMAND ${PROJECT_SOURCE_DIR}/tools/package.sh all
+  WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} USES_TERMINAL VERBATIM
+  COMMENT "Building deb, rpm and AppImage packages")

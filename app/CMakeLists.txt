@@ -49,6 +49,11 @@ endif()
 set_source_files_properties(options.cpp PROPERTIES COMPILE_DEFINITIONS "DAEMON_VERSION=\"${PROJECT_VERSION}\";DAEMON_VERSION_FULL=\"${DAEMON_VERSION_FULL}\"")
 target_link_libraries(daemon_app PUBLIC daemon_base daemon_text daemon_ui daemon_services PRIVATE daemon_warnings)
 
-add_executable(daemon main.cpp)
+add_executable(daemon main.cpp compat.c)
+set_source_files_properties(compat.c PROPERTIES COMPILE_OPTIONS "-fno-builtin-sqrt;-fno-builtin-acos;-O1")
 target_link_libraries(daemon PRIVATE daemon_app)
+# Portability: needs glibc >= 2.38 only (see compat.c). The GCC runtime this was built with is bundled by the packages
+# (tools/package.sh) in <prefix>/lib/daemon, which the executable finds through its RUNPATH, so it also runs on distributions
+# that ship an older libstdc++. In a plain build tree that directory does not exist and the system libraries are used.
+target_link_options(daemon PRIVATE "LINKER:-rpath,$ORIGIN/../lib/daemon" -Wl,--wrap=sqrtf -Wl,--wrap=acosf)
 install(TARGETS daemon RUNTIME DESTINATION bin)

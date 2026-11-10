@@ -18,3 +18,9 @@ copyright notices above whenever you redistribute these files.
 Not bundled, used at build/run time as system components: Wayland, xkbcommon, Vulkan loader/headers, the system
 monospace font (e.g. Source Code Pro, OFL), clangd, gdb, git and CMake. They are not redistributed with this repository.
 Generated protocol code (from the XML above) is produced at build time.
+
+## Libraries bundled inside release packages
+`tools/package.sh` ships these next to the executable (`<prefix>/lib/daemon`), unmodified, from the build machine:
+`libstdc++` and `libgcc_s` (GCC Runtime Library Exception, GPL-3.0-or-later WITH GCC-exception-3.1), `libwayland-client` and
+`libwayland-cursor` (MIT), `libxkbcommon` (MIT-style). Their licence texts are in the originating distribution packages
+(`/usr/share/licenses/...`); include them if you redistribute the packages.
