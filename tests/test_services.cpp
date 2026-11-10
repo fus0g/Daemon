@@ -574,6 +574,40 @@ void testToolchain() {
     for (auto& x : st) x.found = true;
     CHECK(installCommand(st, fedora).empty());
 
+    const std::string rel = R"({"tag_name":"v4.4.5","assets":[
+        {"name":"cmake-4.4.5-linux-aarch64.tar.gz","browser_download_url":"https://x/a.tgz","size":10,"digest":"sha256:AAAA"},
+        {"name":"cmake-4.4.5-linux-x86_64.sh","browser_download_url":"https://x/b.sh","size":11,"digest":"sha256:BBBB"},
+        {"name":"cmake-4.4.5-linux-x86_64.tar.gz","browser_download_url":"https://x/c.tgz","size":12,"digest":"sha256:CCCC"}]})";
+    auto a = pickAsset("cmake", rel, "x86_64");
+    CHECK(a && a->url == "https://x/c.tgz" && a->sha256 == "cccc" && a->size == 12 && a->tag == "v4.4.5");
+    auto b = pickAsset("cmake", rel, "aarch64");
+    CHECK(b && b->url == "https://x/a.tgz");
+    CHECK(!pickAsset("clangd", rel, "x86_64"));
+    CHECK(!pickAsset("cmake", "not json", "x86_64"));
+    const std::string nj = R"({"tag_name":"v1.13.2","assets":[{"name":"ninja-linux.zip","browser_download_url":"u","size":1,"digest":"sha256:ab"},
+        {"name":"ninja-linux-aarch64.zip","browser_download_url":"v","size":1,"digest":"sha256:cd"}]})";
+    CHECK(pickAsset("ninja", nj, "x86_64")->url == "u" && pickAsset("ninja", nj, "aarch64")->url == "v");
+    const std::string cj = R"({"tag_name":"23.1.0","assets":[{"name":"clangd_indexing_tools-linux-23.1.0.zip","browser_download_url":"i","size":1,"digest":"sha256:ee"},
+        {"name":"clangd-linux-23.1.0.zip","browser_download_url":"c","size":1,"digest":"sha256:ff"}]})";
+    CHECK(pickAsset("clangd", cj, "x86_64")->url == "c");
+    CHECK(!pickAsset("clangd", cj, "aarch64"));
+
+    if (const char* net = std::getenv("DAEMON_TEST_NET"); net && *net == '1') {   // real downloads: DAEMON_TEST_NET=1 ./daemon_tests
+        const std::string home = (std::filesystem::temp_directory_path() / "daemon_dl_test").string();
+        std::filesystem::remove_all(home);
+        ::setenv("XDG_DATA_HOME", home.c_str(), 1);
+        for (const char* id : {"ninja", "cmake", "clangd"}) {
+            Progress pr;
+            auto r = install(id, pr);
+            if (!r.ok) std::println(std::cerr, "install {}: {}", id, r.error);
+            CHECK(r.ok && !r.version.empty());
+            CHECK(std::filesystem::exists(std::filesystem::path(home) / "daemon/tools/bin" / id));
+            std::println(std::cerr, "installed {} {}", id, r.version);
+        }
+        ::unsetenv("XDG_DATA_HOME");
+        std::filesystem::remove_all(home);
+    }
+
     auto found = detect();   // runs the real tools: git is always there in this environment
     CHECK(found.size() == tools().size());
     for (const auto& s : found) if (s.tool.id == "git") CHECK(s.found && !s.version.empty());

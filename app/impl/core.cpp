@@ -101,6 +101,7 @@ void App::stepScript() {
             continue;
         }
         if (tok == "setup") { setupOpen(); pos = next; continue; }   // test hook: open the toolchain dialog
+        if (tok.starts_with("toolget:")) { toolsDownload(std::string(tok.substr(8))); pos = next; continue; }   // test hook: managed download
         if (tok == "wait") {
             if (!scriptReady()) return;  // retried from update()
             pos = next;
@@ -348,6 +349,7 @@ std::optional<Clock::time_point> App::nextWake() const {
     if (lspFlushAt_) consider(*lspFlushAt_);
     if (!bgQueue_.empty() && lsp_) consider(bgNext_);
     if (!jobs_.empty()) consider(Clock::now() + std::chrono::milliseconds(40));
+    if (toolDl_) consider(Clock::now() + std::chrono::milliseconds(100));   // progress bar
     if (scriptSleeping_) consider(scriptSleepUntil_);
     if (hoverTool_ >= 3 && !toolTipShown_) consider(toolHoverAt_ + std::chrono::milliseconds(390));
     if (gitRoot_ && focused_) consider(gitNextPoll_);
@@ -360,6 +362,7 @@ std::optional<Clock::time_point> App::nextWake() const {
 }
 
 void App::update(Clock::time_point now, float dt) {
+    if (toolDl_) dirty_ = true;   // download progress is polled while drawing
     if (fsPending_ && now >= fsEventAt_ + std::chrono::milliseconds(150)) { fsPending_ = false; handleFsChanges(); }
     if (sPending_ && now >= sRunAt_) startSearch();
     if (now >= fsSyncAt_) { fsSyncAt_ = now + std::chrono::seconds(1); syncFsWatches(); }

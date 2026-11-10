@@ -77,3 +77,11 @@ reachable from the welcome screen ("Check Tools"). Test hook: `--keys setup`.
 Shipped or managed tools take priority: `$DAEMON_TOOLS_DIR/bin`, `<exe>/../libexec/daemon/bin`, `<exe>/tools/bin`,
 `~/.local/share/daemon/tools/bin`, then `$PATH`; `toolchain::init()` prepends these to `$PATH` so child processes use them too.
 Dropping `clangd`, `cmake` and `ninja` binaries there is all a package needs to do to bundle them.
+
+### Managed downloads
+For clangd, CMake and Ninja the Setup dialog offers **Download** when the tool is missing or too old. `toolchain::install` (worker thread):
+GitHub `releases/latest` JSON -> pick the Linux asset for the CPU (`pickAsset`) -> download with `curl` (or `wget`) -> verify the
+SHA-256 digest GitHub publishes for the asset (refuses to install without one) -> extract (`tar`, or `unzip` / `bsdtar` / `python3 -m zipfile`)
+into `~/.local/share/daemon/tools/<tool>/<version>/` -> symlink the executables into `tools/bin` (first on PATH) -> run `--version`.
+Progress is the size of the growing file. gdb, git, zenity and clang have no official binaries: package manager only.
+Real-network test: `DAEMON_TEST_NET=1 ./build/tests/daemon_tests`. Test hook: `--keys 'setup|toolget:ninja'`.

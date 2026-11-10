@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 module;
 #include <stdlib.h>
+#include <sys/utsname.h>
 #include <unistd.h>
 module daemon.services.toolchain;
 import std;
 import daemon.base.util;
 import daemon.base.process;
+import daemon.base.json;
 
 namespace fs = std::filesystem;
 
@@ -46,8 +48,11 @@ void init() {
     const auto dirs = toolDirs();
     if (dirs.empty()) return;
     std::string path;
-    for (const auto& d : dirs) path += d + ":";
     const char* old = std::getenv("PATH");
+    const std::string cur = old ? old : "";
+    for (const auto& d : dirs)
+        if ((":" + cur + ":").find(":" + d + ":") == std::string::npos) path += d + ":";   // idempotent
+    if (path.empty()) return;
     path += old && *old ? old : "/usr/local/bin:/usr/bin:/bin";
     ::setenv("PATH", path.c_str(), 1);
 }
@@ -163,6 +168,178 @@ std::string installCommand(const std::vector<Status>& statuses, const Distro& d)
     if (d.manager == "pacman") return "sudo pacman -S --needed " + pkgs;
     if (d.manager == "zypper") return "sudo zypper install -y " + pkgs;
     return "sudo apk add " + pkgs;
+}
+
+// ---------------------------------------------------------------- managed downloads
+
+std::string toolsRoot() {
+    if (const char* x = std::getenv("XDG_DATA_HOME"); x && *x) return (fs::path(x) / "daemon/tools").string();
+    if (const char* h = std::getenv("HOME"); h && *h) return (fs::path(h) / ".local/share/daemon/tools").string();
+    return {};
+}
+
+static std::string machineArch() {
+    utsname u{};
+    if (::uname(&u) != 0) return "x86_64";
+    return u.machine;
+}
+
+static const char* releaseApi(std::string_view id) {
+    if (id == "clangd") return "https://api.github.com/repos/clangd/clangd/releases/latest";
+    if (id == "cmake") return "https://api.github.com/repos/Kitware/CMake/releases/latest";
+    if (id == "ninja") return "https://api.github.com/repos/ninja-build/ninja/releases/latest";
+    return nullptr;
+}
+
+bool canDownload(std::string_view id) {
+    const std::string arch = machineArch();
+    if (!releaseApi(id) || toolsRoot().empty()) return false;
+    if (id == "clangd") return arch == "x86_64";   // upstream publishes Linux x86_64 only
+    return arch == "x86_64" || arch == "aarch64";
+}
+
+std::optional<Asset> pickAsset(std::string_view id, std::string_view releaseJson, std::string_view arch) {
+    auto j = json::parse(std::string(releaseJson));
+    if (!j) return std::nullopt;
+    const auto* assets = (*j)["assets"].array();
+    if (!assets) return std::nullopt;
+    auto wanted = [&](const std::string& n) {
+        if (id == "clangd") return arch == "x86_64" && n.starts_with("clangd-linux-") && n.ends_with(".zip");
+        if (id == "cmake") return n.starts_with("cmake-") && n.ends_with(std::format("-linux-{}.tar.gz", arch));
+        if (id == "ninja") return n == (arch == "aarch64" ? "ninja-linux-aarch64.zip" : "ninja-linux.zip") && (arch == "x86_64" || arch == "aarch64");
+        return false;
+    };
+    for (const auto& a : *assets) {
+        const std::string name = a["name"].str();
+        if (!wanted(name)) continue;
+        Asset out;
+        out.name = name;
+        out.url = a["browser_download_url"].str();
+        out.size = static_cast<long long>(a["size"].num());
+        out.tag = (*j)["tag_name"].str();
+        std::string digest = a["digest"].str();
+        if (digest.starts_with("sha256:")) out.sha256 = digest.substr(7);
+        for (char& c : out.sha256) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (out.url.empty()) return std::nullopt;
+        return out;
+    }
+    return std::nullopt;
+}
+
+namespace {
+
+InstallResult fail(std::string msg) { InstallResult r; r.error = std::move(msg); return r; }
+
+// Runs a command to completion; success means exit code 0.
+bool run(std::vector<std::string> argv, std::string* out = nullptr, int timeoutMs = 120000) {
+    ProcessOptions o;
+    o.argv = std::move(argv);
+    auto r = Process::runCapture(o, timeoutMs);
+    if (out) *out = r.output;
+    return r.error.empty() && !r.timedOut && r.exitCode == 0;
+}
+
+bool fetchText(const std::string& url, std::string& out) {
+    return run({"curl", "-fsSL", "--retry", "2", "-H", "Accept: application/vnd.github+json", url}, &out, 60000) ||
+           run({"wget", "-qO-", "--header=Accept: application/vnd.github+json", url}, &out, 60000);
+}
+
+bool fetchFile(const std::string& url, const fs::path& dest, Progress& p, long long expected) {
+    std::atomic<bool> stop{false};
+    std::thread poller([&] {   // the transfer blocks in the child process; watch the growing file for progress
+        while (!stop) {
+            std::error_code ec;
+            const auto sz = fs::exists(dest, ec) ? fs::file_size(dest, ec) : 0;
+            if (!ec) p.done = static_cast<long long>(sz);
+            std::this_thread::sleep_for(std::chrono::milliseconds(120));
+        }
+    });
+    p.total = expected;
+    const bool ok = run({"curl", "-fL", "--retry", "3", "-sS", "-o", dest.string(), url}, nullptr, 3'600'000) ||
+                    run({"wget", "-q", "-O", dest.string(), url}, nullptr, 3'600'000);
+    stop = true;
+    poller.join();
+    return ok;
+}
+
+bool extractZip(const fs::path& zip, const fs::path& dir) {
+    return run({"unzip", "-q", "-o", zip.string(), "-d", dir.string()}, nullptr, 600000) ||
+           run({"bsdtar", "-xf", zip.string(), "-C", dir.string()}, nullptr, 600000) ||
+           run({"python3", "-m", "zipfile", "-e", zip.string(), dir.string()}, nullptr, 600000);
+}
+
+std::optional<fs::path> findFile(const fs::path& root, const std::string& name, bool inBin) {
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->is_regular_file(ec) || it->path().filename() != name) continue;
+        if (!inBin || it->path().parent_path().filename() == "bin") return it->path();
+    }
+    return std::nullopt;
+}
+
+}  // namespace
+
+InstallResult install(std::string_view id, Progress& p) {
+    if (!canDownload(id)) return fail("Downloads are not available for " + std::string(id) + " on this machine");
+    const std::string arch = machineArch();
+    const fs::path root = toolsRoot();
+    std::error_code ec;
+    fs::create_directories(root / "bin", ec);
+    if (ec) return fail("Cannot create " + root.string() + ": " + ec.message());
+
+    p.setPhase("Looking up the latest release");
+    std::string text;
+    if (!fetchText(releaseApi(id), text)) return fail("Could not reach github.com (is curl or wget installed and the network up?)");
+    auto asset = pickAsset(id, text, arch);
+    if (!asset) return fail("No matching download found in the latest release");
+    if (asset->sha256.size() != 64) return fail("The release publishes no SHA-256 checksum; refusing to install an unverified download");
+
+    const fs::path work = root / ".download";
+    fs::remove_all(work, ec);
+    fs::create_directories(work, ec);
+    const fs::path archive = work / asset->name;
+
+    p.setPhase("Downloading " + asset->name);
+    if (!fetchFile(asset->url, archive, p, asset->size)) { fs::remove_all(work, ec); return fail("Download failed"); }
+
+    p.setPhase("Verifying checksum");
+    std::string sum;
+    if (!run({"sha256sum", archive.string()}, &sum) || sum.size() < 64) { fs::remove_all(work, ec); return fail("sha256sum is not available"); }
+    if (sum.substr(0, 64) != asset->sha256) { fs::remove_all(work, ec); return fail("Checksum mismatch - the download was discarded"); }
+
+    p.setPhase("Extracting");
+    const std::string version = asset->tag.starts_with("v") ? asset->tag.substr(1) : asset->tag;
+    const fs::path dest = root / std::string(id) / version;
+    fs::remove_all(dest, ec);
+    fs::create_directories(dest, ec);
+    const bool tarball = asset->name.ends_with(".tar.gz");
+    if (!(tarball ? run({"tar", "-xzf", archive.string(), "-C", dest.string()}, nullptr, 600000) : extractZip(archive, dest))) {
+        fs::remove_all(dest, ec); fs::remove_all(work, ec);
+        return fail(tarball ? "Could not extract the archive (is tar installed?)" : "Could not extract the archive (install unzip)");
+    }
+    fs::remove_all(work, ec);
+
+    p.setPhase("Installing");
+    std::vector<std::string> names = id == "cmake" ? std::vector<std::string>{"cmake", "ctest", "cpack"} : std::vector<std::string>{std::string(id)};
+    for (const auto& n : names) {
+        auto bin = findFile(dest, n, id != "ninja");
+        if (!bin) { fs::remove_all(dest, ec); return fail("The archive did not contain " + n); }
+        fs::permissions(*bin, fs::perms::owner_exec | fs::perms::group_exec | fs::perms::others_exec, fs::perm_options::add, ec);
+        const fs::path link = root / "bin" / n;
+        fs::remove(link, ec);
+        fs::create_symlink(fs::absolute(*bin), link, ec);
+        if (ec) return fail("Cannot link " + n + ": " + ec.message());
+    }
+
+    std::string banner;
+    const fs::path main = root / "bin" / std::string(id);
+    if (!run({main.string(), "--version"}, &banner, 10000)) return fail("The downloaded program does not run on this system");
+    for (const auto& e : fs::directory_iterator(root / std::string(id), ec))   // keep only the newest version
+        if (e.path().filename() != version) fs::remove_all(e.path(), ec);
+    InstallResult r;
+    r.ok = true;
+    r.version = parseVersion(banner);
+    return r;
 }
 
 }  // namespace ide::toolchain

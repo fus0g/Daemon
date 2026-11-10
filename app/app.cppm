@@ -1227,7 +1227,7 @@ private:
         kDlgNew = 1, kDlgOpen = 2, kDlgRecent = 100, kDlgRecentDel = 200, kDlgTmpl = 300,
         kDlgName = 400, kDlgLoc = 401, kDlgBrowseBtn = 402, kDlgStd = 410, kDlgGit = 420, kDlgCreate = 430, kDlgCancel = 431,
         kDlgBm = 500, kDlgPath = 550, kDlgUp = 551, kDlgHidden = 552, kDlgOk = 553, kDlgBrowseCancel = 554, kDlgEntry = 600,
-        kDlgSetup = 3, kDlgSetupCopy = 700, kDlgSetupRun = 701, kDlgSetupRecheck = 702, kDlgSetupClose = 703, kDlgSetupMute = 704,
+        kDlgSetup = 3, kDlgSetupCopy = 700, kDlgSetupRun = 701, kDlgSetupRecheck = 702, kDlgSetupClose = 703, kDlgSetupMute = 704, kDlgSetupDl = 710,
     };
     enum class DlgKind { None, Welcome, NewProject, Browse, Setup };
     struct BrowseEntry { std::string name; bool cmake = false; };
@@ -1263,6 +1263,10 @@ private:
     toolchain::Distro distro_;
     std::string toolsCmd_;
     bool toolsChecking_ = false;
+    struct ToolDownload { std::string id; std::shared_ptr<toolchain::Progress> progress; };
+    std::optional<ToolDownload> toolDl_;     // one managed download at a time
+    std::string toolDlError_;
+    void toolsDownload(const std::string& id);
     void toolsCheck(bool openDialog);
     void setupOpen() { dlg_ = {}; dlg_.kind = DlgKind::Setup; dirty_ = true; toolsCheck(false); }
     void drawSetup(const Rect& r);

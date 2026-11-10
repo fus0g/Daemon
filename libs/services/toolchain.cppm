@@ -9,6 +9,7 @@ export module daemon.services.toolchain;
 import std;
 import daemon.base.util;
 import daemon.base.process;
+import daemon.base.json;
 
 export namespace ide::toolchain {
 
@@ -59,5 +60,40 @@ Distro distro();
 std::string packageName(std::string_view toolId, std::string_view manager);
 // e.g. "sudo dnf install -y clang-tools-extra cmake". Empty when nothing needs installing or the distro is unknown.
 std::string installCommand(const std::vector<Status>& statuses, const Distro& d);
+
+// ---------------------------------------------------------------- managed downloads
+//
+// clangd, CMake and Ninja publish official Linux binaries on GitHub. Daemon can download the latest release into
+// <toolsRoot>/<tool>/<version>/ (verified against the SHA-256 digest GitHub publishes for the asset), and link the
+// executables into <toolsRoot>/bin, which comes first in the tool lookup order. Nothing is installed system-wide.
+
+struct Asset {
+    std::string name, url, sha256, tag;   // sha256 is lower-case hex
+    long long size = 0;
+};
+
+// The user-writable tools directory (~/.local/share/daemon/tools).
+std::string toolsRoot();
+// True for tools Daemon can download on this machine's architecture.
+bool canDownload(std::string_view toolId);
+// Chooses the release asset for `toolId` out of a GitHub `releases/latest` JSON document ("x86_64" / "aarch64").
+std::optional<Asset> pickAsset(std::string_view toolId, std::string_view releaseJson, std::string_view arch);
+
+// Progress shared with the UI thread.
+struct Progress {
+    std::atomic<long long> done{0}, total{0};
+    std::mutex mutex;
+    std::string phase;                    // "Looking up the latest release", "Downloading", ...
+    void setPhase(std::string s) { std::lock_guard l(mutex); phase = std::move(s); }
+    std::string getPhase() { std::lock_guard l(mutex); return phase; }
+};
+
+struct InstallResult {
+    bool ok = false;
+    std::string error, version;
+};
+
+// Blocking (run it on a worker thread). Downloads, verifies, extracts and links `toolId`.
+InstallResult install(std::string_view toolId, Progress& progress);
 
 }  // namespace ide::toolchain

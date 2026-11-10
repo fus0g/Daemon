@@ -296,7 +296,7 @@ void App::dlgClick(Button b, float x, float y) {
     if (id == kDlgNew) { newProjectOpen(); return; }
     if (id == kDlgOpen) { browseOpen(false); return; }
     if (id == kDlgSetup) { setupOpen(); return; }
-    if (id >= kDlgSetupCopy && id <= kDlgSetupMute) { setupClick(id); return; }
+    if ((id >= kDlgSetupCopy && id <= kDlgSetupMute) || (id >= kDlgSetupDl && id < kDlgSetupDl + 20)) { setupClick(id); return; }
     if (id >= kDlgRecentDel && id < kDlgRecentDel + 100) {
         const auto idx = static_cast<std::size_t>(id - kDlgRecentDel);
         if (idx < dlgRecentShown_.size()) { std::erase(state_.recent, dlgRecentShown_[idx]); saveState(state_); }
