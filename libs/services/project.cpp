@@ -149,6 +149,7 @@ DaemonState loadState() {
     if (auto* a = (*j)["recent"].array())
         for (const auto& v : *a) if (v.isString()) st.recent.push_back(v.str());
     st.lastLocation = (*j)["lastLocation"].str();
+    st.setupMuted = (*j)["setupMuted"].boolean();
     return st;
 }
 
@@ -162,6 +163,7 @@ void saveState(const DaemonState& st) {
     for (const auto& r : st.recent) arr.push(r);
     j.set("recent", std::move(arr));
     j.set("lastLocation", st.lastLocation);
+    j.set("setupMuted", st.setupMuted);
     std::ofstream(f, std::ios::binary | std::ios::trunc) << json::dump(j);
 }
 

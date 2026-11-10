@@ -65,3 +65,15 @@ with hit regions registered by `dlgHit(rect, id)`. "Open folder" and "Browse..."
 ## Explorer and file operations — `services/explorer` (`fsops`), `app/impl/file_ops.cpp`
 Tree with lazy loading; create/rename/delete/duplicate/copy/cut/paste (trash follows the freedesktop spec), drag to move (`fdrag_`),
 context menu. New file/folder/rename/delete prompts appear as a card at the bottom of the sidebar (`sidePrompt()`).
+
+## Toolchain check (libs/services/toolchain, app/impl/setup.cpp)
+At start Daemon looks for clangd, cmake, ninja, gdb, git (recommended) and clang++, zenity (optional), reads their versions
+(`--version`) and flags ones that are missing or older than the minimum (clangd 16, cmake 3.20, gdb 10, git 2.20). If something is
+wrong and the user has not pressed "Don't remind me" (`state.json: setupMuted`), the Setup dialog opens: per-tool status, the
+install command for the detected distribution (`/etc/os-release` -> dnf/apt/pacman/zypper/apk package names), **Run in terminal**
+(types it into the integrated terminal so the user enters their sudo password there), **Copy command**, **Re-check**. Always
+reachable from the welcome screen ("Check Tools"). Test hook: `--keys setup`.
+
+Shipped or managed tools take priority: `$DAEMON_TOOLS_DIR/bin`, `<exe>/../libexec/daemon/bin`, `<exe>/tools/bin`,
+`~/.local/share/daemon/tools/bin`, then `$PATH`; `toolchain::init()` prepends these to `$PATH` so child processes use them too.
+Dropping `clangd`, `cmake` and `ninja` binaries there is all a package needs to do to bundle them.

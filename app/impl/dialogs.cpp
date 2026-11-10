@@ -224,6 +224,7 @@ void App::dlgKey(const KeyEvent& k) {
         if (d.kind == DlgKind::Browse && !d.forLocation) { dlgClose(); return; }
         if (d.kind == DlgKind::Browse) { d.kind = DlgKind::NewProject; return; }
         if (d.kind == DlgKind::NewProject) { welcomeOpen(); return; }
+        if (d.kind == DlgKind::Setup) { dlgClose(); return; }
         dlgClose();
         return;
     }
@@ -294,6 +295,8 @@ void App::dlgClick(Button b, float x, float y) {
     auto hitRect = [&](int want) { for (const auto& h : dlgHits_) if (h.id == want) return h.r; return Rect{}; };
     if (id == kDlgNew) { newProjectOpen(); return; }
     if (id == kDlgOpen) { browseOpen(false); return; }
+    if (id == kDlgSetup) { setupOpen(); return; }
+    if (id >= kDlgSetupCopy && id <= kDlgSetupMute) { setupClick(id); return; }
     if (id >= kDlgRecentDel && id < kDlgRecentDel + 100) {
         const auto idx = static_cast<std::size_t>(id - kDlgRecentDel);
         if (idx < dlgRecentShown_.size()) { std::erase(state_.recent, dlgRecentShown_[idx]); saveState(state_); }
@@ -400,6 +403,7 @@ void App::drawDialog() {
         case DlgKind::Welcome: drawWelcome(r); break;
         case DlgKind::NewProject: drawNewProject(r); break;
         case DlgKind::Browse: drawBrowse(r); break;
+        case DlgKind::Setup: drawSetup(r); break;
         default: break;
     }
 }
@@ -439,6 +443,11 @@ void App::drawWelcome(const Rect& r) {
     welcomeAction({lx, by, cw0, rowH}, "New Project", "Ctrl+Shift+N", kDlgNew, 0xF0EAB, true);
     by += rowH + 10 * s;
     welcomeAction({lx, by, cw0, rowH}, "Open Folder", "Ctrl+Shift+O", kDlgOpen, 0xF0770, false);
+    by += rowH + 10 * s;
+    {
+        const bool bad = std::ranges::any_of(tools_, [](const auto& t) { return !t.ok(); });
+        welcomeAction({lx, by, cw0, rowH}, "Check Tools", bad ? "missing" : "", kDlgSetup, 0xF08BB, false);
+    }
 
     // Recent projects.
     const float rx = r.x + sideW + 40 * s, rw = r.right() - rx - 30 * s;

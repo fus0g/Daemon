@@ -20,6 +20,7 @@ import daemon.base.json;
 import daemon.base.process;
 import daemon.services.cmake;
 import daemon.services.project;
+import daemon.services.toolchain;
 import daemon.services.git;
 import daemon.services.search;
 import daemon.services.gdb;
@@ -1226,8 +1227,9 @@ private:
         kDlgNew = 1, kDlgOpen = 2, kDlgRecent = 100, kDlgRecentDel = 200, kDlgTmpl = 300,
         kDlgName = 400, kDlgLoc = 401, kDlgBrowseBtn = 402, kDlgStd = 410, kDlgGit = 420, kDlgCreate = 430, kDlgCancel = 431,
         kDlgBm = 500, kDlgPath = 550, kDlgUp = 551, kDlgHidden = 552, kDlgOk = 553, kDlgBrowseCancel = 554, kDlgEntry = 600,
+        kDlgSetup = 3, kDlgSetupCopy = 700, kDlgSetupRun = 701, kDlgSetupRecheck = 702, kDlgSetupClose = 703, kDlgSetupMute = 704,
     };
-    enum class DlgKind { None, Welcome, NewProject, Browse };
+    enum class DlgKind { None, Welcome, NewProject, Browse, Setup };
     struct BrowseEntry { std::string name; bool cmake = false; };
     struct Dialog {
         DlgKind kind = DlgKind::None;
@@ -1256,6 +1258,15 @@ private:
     static std::string homeDir() { const char* h = std::getenv("HOME"); return h && *h ? h : "/"; }
 
     void dlgClose() { dlg_.kind = DlgKind::None; dlgHits_.clear(); dirty_ = true; }
+    // Toolchain check (app/impl/setup.cpp): what is missing, and how to install it on this distribution.
+    std::vector<toolchain::Status> tools_;
+    toolchain::Distro distro_;
+    std::string toolsCmd_;
+    bool toolsChecking_ = false;
+    void toolsCheck(bool openDialog);
+    void setupOpen() { dlg_ = {}; dlg_.kind = DlgKind::Setup; dirty_ = true; toolsCheck(false); }
+    void drawSetup(const Rect& r);
+    void setupClick(int id);
     void welcomeOpen() { dlg_ = {}; dlg_.kind = DlgKind::Welcome; dirty_ = true; }
 
     std::string uniqueProjectName(const std::string& parent, const std::string& base);

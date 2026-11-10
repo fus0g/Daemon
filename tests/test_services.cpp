@@ -18,6 +18,7 @@ import daemon.services.search;
 import daemon.services.gdb;
 import daemon.services.terminal;
 import daemon.services.lsp;
+import daemon.services.toolchain;
 import daemon.ui.font;
 import daemon.ui.draw;
 #include "check.hpp"
@@ -545,7 +546,41 @@ static void testGdbMi() {
     std::filesystem::remove_all(dir);
 }
 
+void testToolchain() {
+    using namespace ide::toolchain;
+    CHECK(parseVersion("clangd version 18.1.8 (https://github.com/llvm)") == "18.1.8");
+    CHECK(parseVersion("cmake version 3.28.3\n\nCMake suite") == "3.28.3");
+    CHECK(parseVersion("GNU gdb (Fedora Linux) 16.3-1.fc43") == "16.3");
+    CHECK(parseVersion("1.12.1") == "1.12.1");
+    CHECK(parseVersion("no digits here").empty());
+    CHECK(versionAtLeast("3.28.3", 3, 20));
+    CHECK(!versionAtLeast("3.16.2", 3, 20));
+    CHECK(versionAtLeast("18.1", 16, 0));
+    CHECK(versionAtLeast("0.1", 0, 0));
+
+    auto fedora = parseOsRelease("NAME=\"Fedora Linux\"\nID=fedora\nPRETTY_NAME=\"Fedora Linux 43\"\n");
+    CHECK(fedora.manager == "dnf" && fedora.id == "fedora" && fedora.name == "Fedora Linux 43");
+    CHECK(parseOsRelease("ID=linuxmint\nID_LIKE=\"ubuntu debian\"\n").manager == "apt");
+    CHECK(parseOsRelease("ID=endeavouros\nID_LIKE=arch\n").manager == "pacman");
+    CHECK(parseOsRelease("ID=opensuse-tumbleweed\nID_LIKE=\"opensuse suse\"\n").manager == "zypper");
+    CHECK(parseOsRelease("ID=plan9\n").manager.empty());
+
+    std::vector<Status> st;
+    for (const auto& t : tools()) { Status x; x.tool = t; x.found = t.id != "clangd" && t.id != "ninja"; st.push_back(x); }
+    CHECK(installCommand(st, fedora) == "sudo dnf install -y clang-tools-extra ninja-build");
+    CHECK(installCommand(st, parseOsRelease("ID=debian\n")) == "sudo apt install -y clangd ninja-build");
+    CHECK(installCommand(st, parseOsRelease("ID=arch\n")) == "sudo pacman -S --needed clang ninja");
+    CHECK(installCommand(st, parseOsRelease("ID=plan9\n")).empty());
+    for (auto& x : st) x.found = true;
+    CHECK(installCommand(st, fedora).empty());
+
+    auto found = detect();   // runs the real tools: git is always there in this environment
+    CHECK(found.size() == tools().size());
+    for (const auto& s : found) if (s.tool.id == "git") CHECK(s.found && !s.version.empty());
+}
+
 void runServicesTests() {
+    testToolchain();
     testFileOps();
     testCMake();
     testLsp();

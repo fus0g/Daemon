@@ -58,10 +58,12 @@ std::expected<void, std::string> App::init() {
     std::println("Vulkan device: {}   font: {}   scale: {}x", ren_.deviceName(), font_.fontPath(), scale_);
 
     state_ = loadState();
+    toolchain::init();   // shipped / managed tools first on PATH
     for (const auto& f : opt_.files) openFile(f);
     if (docs_.empty()) newDoc();
     if (opt_.files.empty() && opt_.screenshot.empty()) welcomeOpen();   // nothing to open: show the project chooser
     if (!explorer_.isOpen()) gitDetect();
+    toolsCheck(opt_.screenshot.empty());   // start-up check; the dialog only opens if something is missing
     resetCaret();
     feedKeys(opt_.keys);
     return {};
@@ -98,6 +100,7 @@ void App::stepScript() {
             pos = next;
             continue;
         }
+        if (tok == "setup") { setupOpen(); pos = next; continue; }   // test hook: open the toolchain dialog
         if (tok == "wait") {
             if (!scriptReady()) return;  // retried from update()
             pos = next;

@@ -11,6 +11,7 @@ target_sources(daemon_app
     impl/build_run.cpp
     impl/core.cpp
     impl/desktop.cpp
+    impl/setup.cpp
     impl/debugger.cpp
     impl/dialogs.cpp
     impl/documents.cpp

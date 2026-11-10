@@ -9,6 +9,7 @@ target_sources(daemon_services
     project.cppm
     search.cppm
     terminal.cppm
+    toolchain.cppm
   PRIVATE
     cmake.cpp
     explorer.cpp
@@ -17,6 +18,7 @@ target_sources(daemon_services
     lsp.cpp
     project.cpp
     search.cpp
-    terminal.cpp)
+    terminal.cpp
+    toolchain.cpp)
 target_link_libraries(daemon_services PUBLIC daemon_base)
 target_link_libraries(daemon_services PRIVATE daemon_warnings)

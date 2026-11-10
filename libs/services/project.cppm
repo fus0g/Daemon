@@ -61,6 +61,7 @@ std::expected<CreatedProject, std::string> createProject(const NewProjectSpec& s
 struct DaemonState {
     std::vector<std::string> recent;
     std::string lastLocation;
+    bool setupMuted = false;   // the user asked not to be reminded about missing tools
 };
 
 fs::path stateFile();
