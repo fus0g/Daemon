@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Daemon
+GenericName=C++ IDE
+Comment=Wayland + Vulkan C++ IDE
+Exec=daemon %F
+Icon=daemon
+Terminal=false
+Categories=Development;IDE;TextEditor;
+StartupWMClass=daemon

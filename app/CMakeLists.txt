@@ -29,3 +29,4 @@ target_link_libraries(daemon_app PUBLIC daemon_base daemon_text daemon_ui daemon
 
 add_executable(daemon main.cpp)
 target_link_libraries(daemon PRIVATE daemon_app)
+install(TARGETS daemon RUNTIME DESTINATION bin)

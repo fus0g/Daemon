@@ -39,3 +39,7 @@ add_subdirectory(app)       # the IDE: application library + `daemon` executable
 
 enable_testing()
 add_subdirectory(tests)
+
+# Desktop integration (cmake --install build --prefix ~/.local)
+install(FILES assets/daemon.svg DESTINATION share/icons/hicolor/scalable/apps)
+install(FILES assets/daemon.desktop DESTINATION share/applications)
