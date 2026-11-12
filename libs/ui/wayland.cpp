@@ -366,6 +366,22 @@ const wl_seat_listener& Window::seatListener() {
         wl_seat_listener l{};
         l.capabilities = [](void* d, wl_seat* seat, std::uint32_t caps) {
             auto* w = static_cast<Window*>(d);
+            logLine(std::format("seat capabilities: pointer={} keyboard={}", (caps & WL_SEAT_CAPABILITY_POINTER) != 0,
+                                (caps & WL_SEAT_CAPABILITY_KEYBOARD) != 0));
+            // The compositor may withdraw a capability (suspend/resume, device re-plug) and announce it again
+            // later: the old wl_pointer / wl_keyboard is dead then and a fresh one must be requested.
+            if (!(caps & WL_SEAT_CAPABILITY_POINTER) && w->pointer_) {
+                if (wl_pointer_get_version(w->pointer_) >= WL_POINTER_RELEASE_SINCE_VERSION) wl_pointer_release(w->pointer_);
+                else wl_pointer_destroy(w->pointer_);
+                w->pointer_ = nullptr;
+                w->pointerSerial_ = 0;
+            }
+            if (!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && w->keyboard_) {
+                w->stopRepeat();
+                if (wl_keyboard_get_version(w->keyboard_) >= WL_KEYBOARD_RELEASE_SINCE_VERSION) wl_keyboard_release(w->keyboard_);
+                else wl_keyboard_destroy(w->keyboard_);
+                w->keyboard_ = nullptr;
+            }
             if ((caps & WL_SEAT_CAPABILITY_POINTER) && !w->pointer_) {
                 w->pointer_ = wl_seat_get_pointer(seat);
                 wl_pointer_add_listener(w->pointer_, &pointerListener(), w);
