@@ -155,6 +155,8 @@ private:
     wl_surface* wlSurface_ = nullptr;
     bool needInit_ = false;
     int testFrames_ = 0;
+    bool stalled_ = false;
+    std::chrono::steady_clock::time_point stallSince_{};
     std::chrono::steady_clock::time_point nextRebuild_{};
     VkInstance instance_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;

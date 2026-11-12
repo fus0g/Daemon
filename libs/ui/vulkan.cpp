@@ -71,7 +71,20 @@ RenderStatus Renderer::render(const DrawList& dl, FontAtlas& font, Color clear) 
         static const bool testRebuild = std::getenv("DAEMON_TEST_REBUILD") != nullptr;  // debug: simulate device loss
         if (testRebuild && ++testFrames_ % 4 == 0) { rebuild(); return RenderStatus::Failed; }
         try {
-            return renderImpl(dl, font, clear);
+            stalled_ = false;
+            RenderStatus st = renderImpl(dl, font, clear);
+            // Watchdog: fence/acquire timeouts that never end (GPU or compositor connection wedged after
+            // suspend without reporting an error) -> rebuild the renderer instead of freezing the picture.
+            const auto now = std::chrono::steady_clock::now();
+            if (st == RenderStatus::Presented || !stalled_) stallSince_ = {};
+            else if (stallSince_ == std::chrono::steady_clock::time_point{}) stallSince_ = now;
+            else if (now - stallSince_ > std::chrono::seconds(3)) {
+                std::println(std::cerr, "renderer stalled for 3 s, rebuilding");
+                stallSince_ = {};
+                rebuild();
+                return RenderStatus::Failed;
+            }
+            return st;
         } catch (const VkFailure& e) {
             std::println(std::cerr, "render error: {}", e.what());
             // A lost device or surface (suspend/resume, GPU reset, driver restart) cannot be repaired by
@@ -607,7 +620,7 @@ RenderStatus Renderer::renderImpl(const DrawList& dl, FontAtlas& font, Color cle
         Frame& f = frames_[frameIdx_];
         {   // bounded: a stalled GPU (e.g. after suspend) must not freeze the UI thread
             VkResult wr = vkWaitForFences(device_, 1, &f.fence, VK_TRUE, 200'000'000);
-            if (wr == VK_TIMEOUT) return RenderStatus::Skipped;
+            if (wr == VK_TIMEOUT) { stalled_ = true; return RenderStatus::Skipped; }
             check(wr, "vkWaitForFences");
         }
 
@@ -616,7 +629,7 @@ RenderStatus Renderer::renderImpl(const DrawList& dl, FontAtlas& font, Color cle
         std::uint32_t idx = 0;
         VkResult ar = vkAcquireNextImageKHR(device_, swapchain_, 50'000'000, f.imageAvailable, VK_NULL_HANDLE, &idx);
         if (ar == VK_ERROR_OUT_OF_DATE_KHR) { swapDirty_ = true; return RenderStatus::Skipped; }
-        if (ar == VK_TIMEOUT || ar == VK_NOT_READY) return RenderStatus::Skipped;
+        if (ar == VK_TIMEOUT || ar == VK_NOT_READY) { stalled_ = true; return RenderStatus::Skipped; }
         if (ar != VK_SUCCESS && ar != VK_SUBOPTIMAL_KHR) check(ar, "vkAcquireNextImageKHR");
         if (ar == VK_SUBOPTIMAL_KHR) swapDirty_ = true;
         // --- upload instance data
