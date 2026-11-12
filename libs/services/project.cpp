@@ -138,6 +138,16 @@ fs::path stateFile() {
     return base / "daemon" / "state.json";
 }
 
+fs::path sessionFile(const std::string& root) {
+    fs::path base;
+    if (const char* x = std::getenv("XDG_STATE_HOME"); x && *x) base = x;
+    else if (const char* h = std::getenv("HOME"); h && *h) base = fs::path(h) / ".local" / "state";
+    else return {};
+    std::uint64_t h = 1469598103934665603ull;   // FNV-1a: stable across runs and library versions
+    for (unsigned char c : root) { h ^= c; h *= 1099511628211ull; }
+    return base / "daemon" / "sessions" / std::format("{:016x}.json", h);
+}
+
 DaemonState loadState() {
     DaemonState st;
     const fs::path f = stateFile();
@@ -150,6 +160,7 @@ DaemonState loadState() {
         for (const auto& v : *a) if (v.isString()) st.recent.push_back(v.str());
     st.lastLocation = (*j)["lastLocation"].str();
     st.setupMuted = (*j)["setupMuted"].boolean();
+    st.lastProject = (*j)["lastProject"].str();
     return st;
 }
 
@@ -164,6 +175,7 @@ void saveState(const DaemonState& st) {
     j.set("recent", std::move(arr));
     j.set("lastLocation", st.lastLocation);
     j.set("setupMuted", st.setupMuted);
+    j.set("lastProject", st.lastProject);
     std::ofstream(f, std::ios::binary | std::ios::trunc) << json::dump(j);
 }
 

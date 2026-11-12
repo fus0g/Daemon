@@ -70,6 +70,14 @@ With no arguments Daemon starts on a welcome screen (also reachable by clicking 
   "CMake" badge on folders that contain a `CMakeLists.txt`.
 - **Recent projects** are kept in `$XDG_CONFIG_HOME/daemon/state.json` (default `~/.config/daemon/state.json`).
 
+### Sessions
+
+Daemon remembers, per project, which files are open, how the editor is split, which tab is active and where the cursor and
+scroll position were. Opening the project again (welcome screen, recent list, `daemon <folder>`) restores it, and starting
+`daemon` without arguments reopens the last project. The session is written a few seconds after every change and on exit, to
+`~/.local/state/daemon/sessions/`. Untitled buffers are not restored and unsaved edits in open tabs are never replaced; files
+that no longer exist are skipped. `DAEMON_NO_SESSION=1` turns the feature off; `daemon file1 file2` opens exactly those files.
+
 ## Running programs
 
 Programs started with Run (Shift+F10) run on a pseudo-terminal, so they behave as in a terminal: prompts appear

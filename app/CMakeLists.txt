@@ -13,6 +13,7 @@ target_sources(daemon_app
     impl/core.cpp
     impl/desktop.cpp
     impl/setup.cpp
+    impl/session.cpp
     impl/debugger.cpp
     impl/dialogs.cpp
     impl/documents.cpp

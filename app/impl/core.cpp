@@ -61,9 +61,16 @@ std::expected<void, std::string> App::init() {
 
     state_ = loadState();
     toolchain::init();   // shipped / managed tools first on PATH
+    // Sessions: not for --screenshot runs (deterministic, must not touch the user's files); with files named on the
+    // command line those files win, a single folder argument restores that project's session.
+    sessionOn_ = (opt_.screenshot.empty() || std::getenv("DAEMON_SESSION")) && !std::getenv("DAEMON_NO_SESSION");
+    std::error_code sec;
+    if (opt_.files.size() > 1 || (opt_.files.size() == 1 && !fs::is_directory(expandPath(opt_.files[0]), sec))) sessionOn_ = false;
     for (const auto& f : opt_.files) openFile(f);
+    if (opt_.files.empty() && sessionOn_ && !state_.lastProject.empty() && fs::is_directory(state_.lastProject, sec))
+        openFolder(state_.lastProject);   // plain launch: continue where the last session ended
     if (docs_.empty()) newDoc();
-    if (opt_.files.empty() && opt_.screenshot.empty()) welcomeOpen();   // nothing to open: show the project chooser
+    if (opt_.files.empty() && opt_.screenshot.empty() && !explorer_.isOpen()) welcomeOpen();   // nothing to open: show the project chooser
     if (!explorer_.isOpen()) gitDetect();
     toolsCheck(opt_.screenshot.empty());   // start-up check; the dialog only opens if something is missing
     resetCaret();
@@ -381,6 +388,7 @@ int App::run() {
         }
         phase = 0;
     }
+    saveSession(true);
     return 0;
 }
 
@@ -424,6 +432,7 @@ std::optional<Clock::time_point> App::nextWake() const {
 
 void App::update(Clock::time_point now, float dt) {
     if (toolDl_) dirty_ = true;   // download progress is polled while drawing
+    sessionTick(now);
     if (fsPending_ && now >= fsEventAt_ + std::chrono::milliseconds(150)) { fsPending_ = false; handleFsChanges(); }
     if (sPending_ && now >= sRunAt_) startSearch();
     if (now >= fsSyncAt_) { fsSyncAt_ = now + std::chrono::seconds(1); syncFsWatches(); }

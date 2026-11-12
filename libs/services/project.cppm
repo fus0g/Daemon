@@ -62,9 +62,13 @@ struct DaemonState {
     std::vector<std::string> recent;
     std::string lastLocation;
     bool setupMuted = false;   // the user asked not to be reminded about missing tools
+    std::string lastProject;   // reopened on a plain launch together with its saved session
 };
 
 fs::path stateFile();
+
+// Where the open tabs / split layout of the project rooted at `root` are kept ($XDG_STATE_HOME/daemon/sessions/<hash>.json).
+fs::path sessionFile(const std::string& root);
 
 DaemonState loadState();
 

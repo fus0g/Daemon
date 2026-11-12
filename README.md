@@ -34,6 +34,7 @@ It is small, starts in well under a second, idles at zero wakeups, and prefers y
 - **Search & replace** — project-wide, regex / case / whole word / globs, safe replace.
 - **Integrated terminal** — real PTY shell with a truecolor xterm emulator.
 - **Explorer** — Material icons, git status, drag to move, live refresh on external changes, trash support.
+- **Sessions** — open tabs, split layout, cursors and scroll position come back when you reopen a project (a plain launch continues the last one).
 - **Projects** — welcome screen, new-project wizard (C++, modules, library, C), recent projects, system folder chooser.
 - **Look** — translucent chrome with compositor blur (`ext-background-effect-v1`), client-side decorations, HiDPI.
 

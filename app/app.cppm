@@ -179,6 +179,11 @@ private:
 
     void requestQuit();
 
+    // ---- sessions: open files, split layout, cursor and scroll positions are kept per project and restored on open
+    void saveSession(bool force = false);
+    bool restoreSession();
+    void sessionTick(Clock::time_point now);
+
     // ============================================================ messages / timing
 
     void setMessage(std::string m, bool error = false, float seconds = 4);
@@ -1527,6 +1532,9 @@ private:
 
     std::vector<std::unique_ptr<Document>> docs_;
     int cur_ = 0;
+    bool sessionOn_ = false;                 // off for --screenshot runs and when files were named on the command line
+    std::string lastSession_;                // last written session text (to skip identical writes)
+    Clock::time_point nextSessionCheck_{};
     Prompt prompt_;
     std::string findText_, replaceText_;
     bool matchCase_ = false;

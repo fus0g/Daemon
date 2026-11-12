@@ -5,6 +5,11 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+### Added
+- Sessions: the open files, split layout, active tab, cursor and scroll positions of each project are saved
+  (`~/.local/state/daemon/sessions/`) and restored when the project is opened. A plain launch reopens the last project.
+  Untitled buffers are not restored; unsaved edits are never replaced.
+
 ## [0.1.1] - 2026-11-12
 
 ### Fixed

@@ -114,6 +114,7 @@ void App::checkDocsOnDisk() {
 
 void App::openFolder(const std::string& raw) {
     std::string err;
+    saveSession(true);   // the project being left keeps its tabs
     if (!explorer_.open(expandPath(raw), err)) { setMessage(err, true); return; }
     sidebar_ = true;
     sideScroll_ = sideTarget_ = 0;
@@ -125,6 +126,7 @@ void App::openFolder(const std::string& raw) {
     saveState(state_);
     gitReset();
     dbgLoad();
+    if (restoreSession()) setMessage("Restored session of " + explorer_.rootPath().filename().string());
     dirty_ = true;
 }
 
