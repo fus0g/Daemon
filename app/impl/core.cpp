@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.app / core - part of the App implementation (see app.cppm for the class).
+module;
+#include <time.h>
 module daemon.app;
 import std;
 import daemon.base.util;
@@ -286,8 +288,32 @@ int App::run() {
     }
     auto last = Clock::now();
     int failures = 0;
+    // CLOCK_MONOTONIC stops while the machine sleeps, CLOCK_BOOTTIME does not: their difference growing means a suspend.
+    auto sleptNs = [] {
+        timespec a{}, b{};
+        ::clock_gettime(CLOCK_MONOTONIC, &a);
+        ::clock_gettime(CLOCK_BOOTTIME, &b);
+        return (b.tv_sec - a.tv_sec) * 1'000'000'000LL + (b.tv_nsec - a.tv_nsec);
+    };
+    long long sleptBefore = sleptNs();
+    auto lastPresent = Clock::now(), lastStallLog = Clock::now();
+    logLine(std::format("daemon {} started on {}", versionFull(), ren_.deviceName()));
     while (running_) {
         auto now = Clock::now();
+        if (long long s = sleptNs(); s - sleptBefore > 1'000'000'000LL) {
+            logLine(std::format("resumed from suspend after ~{} s: resetting window and renderer", (s - sleptBefore) / 1'000'000'000LL));
+            sleptBefore = s;
+            win_.cancelFrame();
+            ren_.rebuild();
+            skipped_ = false; failures = 0; lastPresent = now;
+            dirty_ = true;
+        }
+        if (dirty_ && now - lastPresent > std::chrono::seconds(3) && now - lastStallLog > std::chrono::seconds(5)) {
+            lastStallLog = now;
+            logLine(std::format("no frame presented for {} s (configured={} framePending={} waitMs={} skipped={} failures={} focused={})",
+                                std::chrono::duration_cast<std::chrono::seconds>(now - lastPresent).count(), win_.configured(),
+                                win_.framePending(), win_.frameWaitMs(), skipped_, failures, win_.focused()));
+        }
         int timeout = -1;
         if (dirty_ || animating_) {
             timeout = (skipped_ || failures > 0) ? (failures > 0 ? (failures > 20 ? 1000 : 250) : 16) : (win_.framePending() ? 16 : 0);
@@ -310,7 +336,7 @@ int App::run() {
             draw();
             if (opt_.screenshot.empty()) win_.requestFrame();
             switch (ren_.render(dl_, font_, frameC())) {
-                case RenderStatus::Presented: dirty_ = false; skipped_ = false; failures = 0; ++frames_; break;
+                case RenderStatus::Presented: dirty_ = false; skipped_ = false; failures = 0; ++frames_; lastPresent = now; break;
                 case RenderStatus::Skipped: skipped_ = true; win_.cancelFrame(); break;
                 case RenderStatus::Failed:
                     win_.cancelFrame();

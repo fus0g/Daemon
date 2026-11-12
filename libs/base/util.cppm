@@ -48,6 +48,12 @@ std::optional<std::string> readFile(const std::filesystem::path& p);
 
 bool writeFile(const std::filesystem::path& p, std::string_view data);
 
+// ---------------------------------------------------------------- Log
+
+// Appends a timestamped line to $XDG_STATE_HOME/daemon/daemon.log (default ~/.local/state/daemon) and to stderr.
+// The file is truncated at start-up once it exceeds 512 KiB. Safe to call from any thread.
+void logLine(std::string_view msg);
+
 // ---------------------------------------------------------------- PNG (stored deflate)
 
 std::uint32_t crc32(std::uint32_t crc, const std::uint8_t* d, std::size_t n);

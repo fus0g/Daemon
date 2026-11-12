@@ -5,6 +5,32 @@ import std;
 
 namespace ide {
 
+void logLine(std::string_view msg) {
+    static std::mutex mu;
+    static std::ofstream file;
+    static bool opened = false;
+    std::lock_guard lock(mu);
+    if (!opened) {
+        opened = true;
+        namespace fs = std::filesystem;
+        fs::path dir;
+        if (const char* x = std::getenv("XDG_STATE_HOME"); x && *x) dir = x;
+        else if (const char* h = std::getenv("HOME"); h && *h) dir = fs::path(h) / ".local" / "state";
+        if (!dir.empty()) {
+            dir /= "daemon";
+            std::error_code ec;
+            fs::create_directories(dir, ec);
+            auto path = dir / "daemon.log";
+            auto size = fs::file_size(path, ec);
+            file.open(path, !ec && size > 512 * 1024 ? std::ios::trunc : std::ios::app);
+        }
+    }
+    auto now = std::chrono::system_clock::now();
+    std::string line = std::format("{:%F %T} {}\n", std::chrono::floor<std::chrono::milliseconds>(now), msg);
+    if (file.is_open()) { file << line; file.flush(); }
+    std::cerr << line;
+}
+
 char32_t decodeUtf8(std::string_view s, std::size_t& i) {
     auto byte = [&](std::size_t k) { return static_cast<unsigned char>(s[k]); };
     auto cont = [&](std::size_t k) { return k < s.size() && (byte(k) & 0xC0) == 0x80; };

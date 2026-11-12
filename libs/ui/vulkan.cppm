@@ -72,6 +72,9 @@ public:
 
     RenderStatus render(const DrawList& dl, FontAtlas& font, Color clear);
 
+    // Tears everything down and builds it again (device or surface lost, e.g. after suspend/resume).
+    bool rebuild();
+
 private:
     struct Frame {
         VkCommandPool pool = VK_NULL_HANDLE;
@@ -147,9 +150,6 @@ private:
     // ------------------------------------------------------------ teardown
 
     void destroy();
-
-    // Tears everything down and builds it again (device or surface lost, e.g. after suspend/resume).
-    bool rebuild();
 
     wl_display* display_ = nullptr;
     wl_surface* wlSurface_ = nullptr;

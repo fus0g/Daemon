@@ -79,14 +79,14 @@ RenderStatus Renderer::render(const DrawList& dl, FontAtlas& font, Color clear) 
             if (st == RenderStatus::Presented || !stalled_) stallSince_ = {};
             else if (stallSince_ == std::chrono::steady_clock::time_point{}) stallSince_ = now;
             else if (now - stallSince_ > std::chrono::seconds(3)) {
-                std::println(std::cerr, "renderer stalled for 3 s, rebuilding");
+                logLine("renderer stalled for 3 s, rebuilding");
                 stallSince_ = {};
                 rebuild();
                 return RenderStatus::Failed;
             }
             return st;
         } catch (const VkFailure& e) {
-            std::println(std::cerr, "render error: {}", e.what());
+            logLine(std::format("render error: {}", e.what()));
             // A lost device or surface (suspend/resume, GPU reset, driver restart) cannot be repaired by
             // recreating the swapchain: rebuild the whole Vulkan state, the atlas is re-uploaded in full.
             if (e.result == VK_ERROR_DEVICE_LOST || e.result == VK_ERROR_SURFACE_LOST_KHR ||
@@ -105,10 +105,10 @@ bool Renderer::rebuild() {
         needInit_ = true;
         nextRebuild_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
         auto r = init(display_, wlSurface_);
-        if (!r) { std::println(std::cerr, "renderer rebuild failed: {}", r.error()); destroy(); return false; }
+        if (!r) { logLine(std::format("renderer rebuild failed: {}", r.error())); destroy(); return false; }
         reqW_ = w; reqH_ = h; swapDirty_ = true;
         needInit_ = false;
-        std::println(std::cerr, "renderer rebuilt on {}", deviceName_);
+        logLine(std::format("renderer rebuilt on {}", deviceName_));
         return true;
     }
 

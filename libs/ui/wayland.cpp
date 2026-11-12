@@ -10,6 +10,7 @@ module;
 #include "ext-background-effect-v1-client-protocol.h"
 #include "xdg-toplevel-icon-v1-client-protocol.h"
 #include <fcntl.h>
+#include <cerrno>
 #include <poll.h>
 #include <sys/mman.h>
 #include <sys/timerfd.h>
@@ -109,10 +110,16 @@ long long Window::frameWaitMs() const {
 
 bool Window::pump(int timeoutMs) {
     while (wl_display_prepare_read(display_) != 0) wl_display_dispatch_pending(display_);
-    wl_display_flush(display_);
-    std::vector<pollfd> fds = {{wl_display_get_fd(display_), POLLIN, 0}, {repeatFd_, POLLIN, 0}};
+    // A full socket (EAGAIN) leaves requests unsent: also wait for POLLOUT so they go out as soon as possible.
+    const bool blocked = wl_display_flush(display_) < 0 && errno == EAGAIN;
+    std::vector<pollfd> fds = {{wl_display_get_fd(display_), static_cast<short>(blocked ? POLLIN | POLLOUT : POLLIN), 0},
+                               {repeatFd_, POLLIN, 0}};
     for (const auto& w : watches_) fds.push_back({w.fd, POLLIN, 0});
     int r = ::poll(fds.data(), static_cast<nfds_t>(fds.size()), timeoutMs);
+    if (r > 0 && (fds[0].revents & (POLLHUP | POLLERR))) {
+        logLine("wayland connection hung up");
+        closed_ = true;
+    }
     if (r > 0 && (fds[0].revents & POLLIN)) {
         if (wl_display_read_events(display_) < 0) closed_ = true;
     } else {
