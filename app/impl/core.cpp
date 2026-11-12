@@ -297,6 +297,30 @@ int App::run() {
     };
     long long sleptBefore = sleptNs();
     auto lastPresent = Clock::now(), lastStallLog = Clock::now();
+    // Diagnostics thread: records where the main loop is, so a hang can be located from daemon.log.
+    static constexpr const char* kPhase[] = {"idle", "pump", "update", "draw", "render"};
+    std::atomic<int> phase{0};
+    std::atomic<long long> loops{0}, presented{0}, skippedN{0}, failedN{0}, resumeAtMs{0};
+    std::atomic<bool> dirtyFlag{false}, pendingFlag{false};
+    std::jthread watchdog([&](std::stop_token st) {
+        long long lastLoops = -1, lastPresented = -1;
+        int stuck = 0, tick = 0;
+        while (!st.stop_requested()) {
+            for (int i = 0; i < 20 && !st.stop_requested(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            ++tick;
+            long long l = loops.load(), p = presented.load();
+            const bool afterResume = resumeAtMs.load() != 0 &&
+                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count() - resumeAtMs.load() < 180'000;
+            if (l == lastLoops && phase.load() != 1) {
+                if (++stuck == 3) logLine(std::format("main loop stuck in phase '{}' for 6 s", kPhase[phase.load()]));
+            } else stuck = 0;
+            if (afterResume && tick % 5 == 0)
+                logLine(std::format("state: loops+{} presented+{} total={} skipped={} failed={} phase={} dirty={} framePending={}",
+                                    l - std::max(lastLoops, 0LL), p - std::max(lastPresented, 0LL), p, skippedN.load(), failedN.load(),
+                                    kPhase[phase.load()], dirtyFlag.load(), pendingFlag.load()));
+            lastLoops = l; lastPresented = p;
+        }
+    });
     logLine(std::format("daemon {} started on {}", versionFull(), ren_.deviceName()));
     while (running_) {
         auto now = Clock::now();
@@ -307,7 +331,9 @@ int App::run() {
             ren_.rebuild();
             skipped_ = false; failures = 0; lastPresent = now;
             dirty_ = true;
+            resumeAtMs = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
         }
+        ++loops; dirtyFlag = dirty_; pendingFlag = win_.framePending();
         if (dirty_ && now - lastPresent > std::chrono::seconds(3) && now - lastStallLog > std::chrono::seconds(5)) {
             lastStallLog = now;
             logLine(std::format("no frame presented for {} s (configured={} framePending={} waitMs={} skipped={} failures={} focused={})",
@@ -322,7 +348,10 @@ int App::run() {
             if (wake) timeout = static_cast<int>(std::max<long long>(
                 0, std::chrono::duration_cast<std::chrono::milliseconds>(*wake - now).count() + 1));
         }
-        if (!win_.pump(timeout)) break;
+        phase = 1;
+        const bool pumped = win_.pump(timeout);
+        phase = 2;
+        if (!pumped) break;
         now = Clock::now();
         float dt = std::chrono::duration<float>(now - last).count();
         last = now;
@@ -333,12 +362,15 @@ int App::run() {
         // force a frame occasionally.
         const bool throttled = win_.framePending() && opt_.screenshot.empty() && win_.frameWaitMs() < 250;
         if (dirty_ && win_.configured() && !throttled) {
+            phase = 3;
             draw();
             if (opt_.screenshot.empty()) win_.requestFrame();
+            phase = 4;
             switch (ren_.render(dl_, font_, frameC())) {
-                case RenderStatus::Presented: dirty_ = false; skipped_ = false; failures = 0; ++frames_; lastPresent = now; break;
-                case RenderStatus::Skipped: skipped_ = true; win_.cancelFrame(); break;
+                case RenderStatus::Presented: dirty_ = false; skipped_ = false; failures = 0; ++frames_; lastPresent = now; ++presented; break;
+                case RenderStatus::Skipped: skipped_ = true; ++skippedN; win_.cancelFrame(); break;
                 case RenderStatus::Failed:
+                    ++failedN;
                     win_.cancelFrame();
                     // Never exit on render failures: the GPU may take a while to come back after suspend and the
                     // user may have unsaved work. Retry with a growing delay; the renderer rebuilds itself.
@@ -347,6 +379,7 @@ int App::run() {
             }
             if (!opt_.screenshot.empty()) screenshotStep();
         }
+        phase = 0;
     }
     return 0;
 }
