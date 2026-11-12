@@ -38,8 +38,9 @@ namespace ide {
 std::expected<void, std::string> Renderer::init(void* wlDisplay, void* wlSurface) {
         try {
             display_ = static_cast<wl_display*>(wlDisplay);
+            wlSurface_ = static_cast<wl_surface*>(wlSurface);
             createInstance();
-            createSurface(static_cast<wl_surface*>(wlSurface));
+            createSurface(wlSurface_);
             pickDevice();
             createDevice();
             createAtlas();
@@ -63,13 +64,39 @@ bool Renderer::translucent() {
     }
 
 RenderStatus Renderer::render(const DrawList& dl, FontAtlas& font, Color clear) {
+        if (needInit_) {  // an earlier rebuild failed (GPU not back yet after resume): retry at a gentle pace
+            if (std::chrono::steady_clock::now() < nextRebuild_) return RenderStatus::Failed;
+            if (!rebuild()) return RenderStatus::Failed;
+        }
+        static const bool testRebuild = std::getenv("DAEMON_TEST_REBUILD") != nullptr;  // debug: simulate device loss
+        if (testRebuild && ++testFrames_ % 4 == 0) { rebuild(); return RenderStatus::Failed; }
         try {
             return renderImpl(dl, font, clear);
         } catch (const VkFailure& e) {
             std::println(std::cerr, "render error: {}", e.what());
-            recoverFrames();
+            // A lost device or surface (suspend/resume, GPU reset, driver restart) cannot be repaired by
+            // recreating the swapchain: rebuild the whole Vulkan state, the atlas is re-uploaded in full.
+            if (e.result == VK_ERROR_DEVICE_LOST || e.result == VK_ERROR_SURFACE_LOST_KHR ||
+                e.result == VK_ERROR_INITIALIZATION_FAILED || e.result == VK_ERROR_OUT_OF_DEVICE_MEMORY) {
+                rebuild();
+            } else {
+                try { recoverFrames(); } catch (const VkFailure&) { rebuild(); }
+            }
             return RenderStatus::Failed;
         }
+    }
+
+bool Renderer::rebuild() {
+        const std::uint32_t w = reqW_, h = reqH_;
+        destroy();
+        needInit_ = true;
+        nextRebuild_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        auto r = init(display_, wlSurface_);
+        if (!r) { std::println(std::cerr, "renderer rebuild failed: {}", r.error()); destroy(); return false; }
+        reqW_ = w; reqH_ = h; swapDirty_ = true;
+        needInit_ = false;
+        std::println(std::cerr, "renderer rebuilt on {}", deviceName_);
+        return true;
     }
 
 // After a failed frame the acquire semaphore may still be signaled and the swapchain stale
@@ -828,6 +855,14 @@ void Renderer::destroy() {
         }
         device_ = VK_NULL_HANDLE;
         instance_ = VK_NULL_HANDLE;
+        surface_ = VK_NULL_HANDLE; phys_ = VK_NULL_HANDLE; queue_ = VK_NULL_HANDLE;
+        swapchain_ = VK_NULL_HANDLE; pipeline_ = erasePipeline_ = glassPipeline_ = VK_NULL_HANDLE;
+        pipeLayout_ = VK_NULL_HANDLE; descPool_ = VK_NULL_HANDLE; setLayout_ = VK_NULL_HANDLE;
+        sampler_ = linearSampler_ = VK_NULL_HANDLE;
+        atlasView_ = VK_NULL_HANDLE; atlasImage_ = VK_NULL_HANDLE; atlasMem_ = VK_NULL_HANDLE;
+        descSet_ = glassSet_ = VK_NULL_HANDLE;
+        frames_ = {}; frameIdx_ = 0; atlasReady_ = false; probed_ = false; format_ = VK_FORMAT_UNDEFINED;
+        extent_ = {}; images_.clear(); views_.clear(); renderDone_.clear(); swapDirty_ = true;
     }
 
 }  // namespace ide

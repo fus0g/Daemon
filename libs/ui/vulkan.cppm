@@ -32,13 +32,14 @@ inline constexpr int kFramesInFlight = 2;
 inline constexpr std::size_t kMaxInstances = 1u << 17;
 
 struct VkFailure : std::runtime_error {
-    using std::runtime_error::runtime_error;
+    explicit VkFailure(const std::string& m, VkResult r = VK_ERROR_UNKNOWN) : std::runtime_error(m), result(r) {}
+    VkResult result;
 };
 
 const char* resultName(VkResult r);
 
 inline void check(VkResult r, const char* what) {
-    if (r != VK_SUCCESS) throw VkFailure(std::string(what) + " failed: " + resultName(r));
+    if (r != VK_SUCCESS) throw VkFailure(std::string(what) + " failed: " + resultName(r), r);
 }
 
 }  // namespace ide
@@ -147,7 +148,14 @@ private:
 
     void destroy();
 
+    // Tears everything down and builds it again (device or surface lost, e.g. after suspend/resume).
+    bool rebuild();
+
     wl_display* display_ = nullptr;
+    wl_surface* wlSurface_ = nullptr;
+    bool needInit_ = false;
+    int testFrames_ = 0;
+    std::chrono::steady_clock::time_point nextRebuild_{};
     VkInstance instance_ = VK_NULL_HANDLE;
     VkSurfaceKHR surface_ = VK_NULL_HANDLE;
     VkPhysicalDevice phys_ = VK_NULL_HANDLE;

@@ -290,7 +290,7 @@ int App::run() {
         auto now = Clock::now();
         int timeout = -1;
         if (dirty_ || animating_) {
-            timeout = (skipped_ || failures > 0) ? (failures > 0 ? 250 : 16) : (win_.framePending() ? 16 : 0);
+            timeout = (skipped_ || failures > 0) ? (failures > 0 ? (failures > 20 ? 1000 : 250) : 16) : (win_.framePending() ? 16 : 0);
         } else {
             auto wake = nextWake();
             if (wake) timeout = static_cast<int>(std::max<long long>(
@@ -314,7 +314,9 @@ int App::run() {
                 case RenderStatus::Skipped: skipped_ = true; win_.cancelFrame(); break;
                 case RenderStatus::Failed:
                     win_.cancelFrame();
-                    if (++failures >= 60) { std::println(std::cerr, "fatal: rendering keeps failing"); return 1; }
+                    // Never exit on render failures: the GPU may take a while to come back after suspend and the
+                    // user may have unsaved work. Retry with a growing delay; the renderer rebuilds itself.
+                    if (failures < 1000) ++failures;
                     break;
             }
             if (!opt_.screenshot.empty()) screenshotStep();
