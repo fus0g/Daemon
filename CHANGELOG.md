@@ -5,6 +5,18 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-12
+
+### Fixed
+- Window stayed frozen or ignored the mouse and keyboard after suspend/resume: the pointer and keyboard are now requested
+  again when the compositor withdraws and re-announces them.
+- Renderer recovers from a lost Vulkan device or surface by rebuilding itself, restarts after a resume, and no longer exits
+  when frames fail for a while; a stall watchdog rebuilds it if frames stay stuck.
+- Bounded fence and acquire waits so a stalled GPU cannot freeze the UI thread.
+
+### Added
+- Log file at `~/.local/state/daemon/daemon.log` (start-up, suspend/resume, renderer rebuilds, seat changes, stalls).
+
 ## [0.1.0] - 2026-11-11
 
 First tagged release.
@@ -24,5 +36,6 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.1.0...HEAD
+[Unreleased]: https://example.invalid/compare/v0.1.1...HEAD
+[0.1.1]: https://example.invalid/compare/v0.1.0...v0.1.1
 [0.1.0]: https://example.invalid/releases/tag/v0.1.0

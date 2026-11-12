@@ -6,7 +6,7 @@
 
 **A fast, native C++ IDE for Linux — Wayland, Vulkan, no toolkit.**
 
-![Version](https://img.shields.io/badge/version-0.1.0-c1121f.svg)
+![Version](https://img.shields.io/badge/version-0.1.1-c1121f.svg)
 [![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-c1121f.svg)](LICENSE)
 ![C++23](https://img.shields.io/badge/C%2B%2B-23%20%2B%20modules-00599C.svg)
 ![Platform](https://img.shields.io/badge/platform-Linux%20%C2%B7%20Wayland-555.svg)
