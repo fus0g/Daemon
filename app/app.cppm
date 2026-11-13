@@ -461,6 +461,15 @@ private:
 
     void queueProjectDiagnostics();
 
+    // Errors that only meant "not generated / not built yet" (missing generated header, module cache still being built) stay
+    // in the list although clangd would now accept the file. This re-parses the files that have such errors (all files
+    // with errors when `onlyTransient` is false); run after every build and a few times after clangd starts.
+    void refreshStaleDiagnostics(bool onlyTransient);
+    static bool transientDiag(const LspDiag& d);
+    void healDiagnostics(Clock::time_point now);
+    int healTries_ = 0;
+    Clock::time_point nextHeal_{};
+
     void pumpProjectDiagnostics(Clock::time_point now);
 
     void attachLsp(Document& d);

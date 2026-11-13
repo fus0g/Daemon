@@ -222,6 +222,9 @@ void App::finishBuild(int code) {
             setMessage("CMake configuration failed - see the Build panel", true, 5);
         }
     } else if (kind == TaskKind::Build) {
+        // The build may have generated headers / module files that earlier diagnostics were missing: look at the files again.
+        // After a successful build no clangd error is believable (the compiler accepted everything), so all of them are re-checked.
+        refreshStaleDiagnostics(code != 0);
         if (code == 0) {
             buildOut_.push_back({"Build finished", 5, -1});
             buildStatus_ = "Build succeeded";

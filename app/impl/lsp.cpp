@@ -182,6 +182,7 @@ void App::stopLsp() {
     compReq_ = -1;
     diags_.clear();
     bgQueue_.clear(); bgOpen_.clear(); bgSources_.clear(); bgScanned_ = false;
+    healTries_ = 0; nextHeal_ = {};
     closeCompletion();
     for (auto& d : docs_) d->lspOpen = false;
 }
@@ -241,6 +242,50 @@ std::vector<std::string> App::projectSources() {
         }
     }
     return out;
+}
+
+bool App::transientDiag(const LspDiag& d) {
+    if (d.severity != 1) return false;
+    std::string m = d.message;
+    for (auto& c : m) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return m.find("not found") != std::string::npos || m.find("could not build module") != std::string::npos ||
+           m.find("failed to build module") != std::string::npos || m.find("unknown type name") != std::string::npos;
+}
+
+void App::refreshStaleDiagnostics(bool onlyTransient) {
+    if (!lsp_ || !lsp_->ready()) return;
+    std::vector<std::string> paths;
+    for (const auto& [path, ds] : diags_)
+        if (std::ranges::any_of(ds, [&](const LspDiag& d) { return onlyTransient ? transientDiag(d) : d.severity == 1; })) paths.push_back(path);
+    for (const std::string& path : paths) {
+        Document* open = nullptr;
+        for (auto& d : docs_) if (d->path == path && d->lspOpen) { open = d.get(); break; }
+        diags_.erase(path);
+        if (open) {   // an open file is simply parsed again
+            lsp_->didClose(path);
+            lsp_->didOpen(path, languageId(*open), ++open->lspVersion, open->buf.text());
+            open->lspSent = open->buf.version();
+        } else {      // a background file goes back to the front of the queue
+            if (bgOpen_.erase(path)) lsp_->didClose(path);
+            bgClosed_.erase(path);
+            bgPending_.erase(path);
+            std::erase(bgSettled_, path);
+            if (!std::ranges::contains(bgQueue_, path)) bgQueue_.push_front(path);
+            bgNext_ = Clock::now();
+        }
+    }
+    if (!paths.empty()) dirty_ = true;
+}
+
+// clangd builds the module cache and the project's generated headers appear while we are already collecting diagnostics:
+// look again a few times after start-up.
+void App::healDiagnostics(Clock::time_point now) {
+    if (!lsp_ || !lsp_->ready()) return;
+    if (nextHeal_ == Clock::time_point{}) { nextHeal_ = now + std::chrono::seconds(25); return; }
+    if (healTries_ >= 3 || now < nextHeal_) return;
+    ++healTries_;
+    nextHeal_ = now + std::chrono::seconds(45);
+    refreshStaleDiagnostics(true);
 }
 
 void App::queueProjectDiagnostics() {

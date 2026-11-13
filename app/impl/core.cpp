@@ -435,6 +435,7 @@ std::optional<Clock::time_point> App::nextWake() const {
     if (sPending_) consider(sRunAt_);
     if (nextBlameWake_ > Clock::now()) consider(nextBlameWake_);
     if (lsp_ && cmakeOpen_) consider(nextDbCheck_);
+    if (lsp_ && healTries_ < 3 && nextHeal_ != Clock::time_point{}) consider(nextHeal_);
     if (hover_.pending) consider(hover_.due);
     return t;
 }
@@ -504,6 +505,7 @@ void App::update(Clock::time_point now, float dt) {
     if (hoverTool_ >= 3 && !toolTipShown_ && now - toolHoverAt_ > std::chrono::milliseconds(380)) { toolTipShown_ = true; dirty_ = true; }
     if (lsp_ && lsp_->ready() && !bgScanned_) { bgScanned_ = true; queueProjectDiagnostics(); }
     pumpProjectDiagnostics(now);
+    healDiagnostics(now);
     gitTick(now);
     hoverTick(now);
     if (panelOpen_) {
