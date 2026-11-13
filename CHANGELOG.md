@@ -6,6 +6,7 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 ## [Unreleased]
 
 ### Added
+- Problems tab: **Copy all** (and **Copy errors** when warnings are mixed in) puts every problem on the clipboard as `file:line:col: error: message` lines.
 - Markdown preview: `Ctrl+Shift+V` (or the editor context menu) opens a live, read-only rendered view of a `.md` file beside it - headings, emphasis,
   code with syntax colours, tables, nested and task lists, quotes, links (web, anchors, relative files) and real images
   (PNG, JPEG, GIF, BMP, SVG incl. shields.io badges; local files and https URLs fetched with curl into `~/.cache/daemon/images`;

@@ -113,6 +113,12 @@ void App::stepScript() {
             continue;
         }
         if (tok == "setup") { setupOpen(); pos = next; continue; }   // test hook: open the toolchain dialog
+        if (tok == "copyprob" || tok == "copyerr") {   // test hook: the Problems tab's copy buttons; also prints what was copied
+            copyProblems(tok == "copyerr");
+            std::print(std::cerr, "--- copied ---\n{}--- end ---\n", problemsText(tok == "copyerr"));
+            pos = next;
+            continue;
+        }
         if (tok.starts_with("toolget:")) { toolsDownload(std::string(tok.substr(8))); pos = next; continue; }   // test hook: managed download
         if (tok == "wait") {
             if (!scriptReady()) return;  // retried from update()

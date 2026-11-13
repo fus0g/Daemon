@@ -553,6 +553,26 @@ void App::panelRowClick(int row) {
     }
 }
 
+std::string App::problemsText(bool errorsOnly) const {
+    std::string out;
+    for (const Problem& pr : shownProblems_) {
+        if (errorsOnly && pr.severity != Severity::Error) continue;
+        std::string rel = pr.file.lexically_relative(cmakeRoot_).string();
+        if (rel.empty() || rel.starts_with("..")) rel = pr.file.string();
+        const char* sev = pr.severity == Severity::Error ? "error" : pr.severity == Severity::Warning ? "warning" : "note";
+        out += std::format("{}:{}:{}: {}: {}\n", rel, pr.line, pr.col, sev, pr.message);
+    }
+    return out;
+}
+
+void App::copyProblems(bool errorsOnly) {
+    const std::string t = problemsText(errorsOnly);
+    if (t.empty()) { setMessage(errorsOnly ? "No errors to copy" : "No problems to copy", false, 2); return; }
+    win_.setClipboard(t);
+    const auto n = std::ranges::count(t, '\n');
+    setMessage(std::format("Copied {} {}", n, errorsOnly ? (n == 1 ? "error" : "errors") : (n == 1 ? "problem" : "problems")), false, 2);
+}
+
 void App::panelClick(Button b) {
     const Rect& p = L_.panel;
     if (b != Button::Left) return;
@@ -564,6 +584,8 @@ void App::panelClick(Button b) {
     for (std::size_t i = 0; i < panelTabRects_.size(); ++i)
         if (panelTabRects_[i].contains(mx_, my_)) { panelTab_ = static_cast<int>(i); psel_.active = false; runFocus_ = panelTab_ == 1 && runProc_; termFocus_ = panelTab_ == 3; dbgConFocus_ = panelTab_ == 4; if (termFocus_ && !termProc_ && !termExited_) startTerminal(); dirty_ = true; return; }
     if (panelClose_.contains(mx_, my_)) { panelOpen_ = false; dirty_ = true; return; }
+    if (panelTab_ == 2 && panelCopyAll_.contains(mx_, my_)) { copyProblems(false); dirty_ = true; return; }
+    if (panelTab_ == 2 && panelCopyErrors_.contains(mx_, my_)) { copyProblems(true); dirty_ = true; return; }
     if (panelClear_.contains(mx_, my_)) {
         if (panelTab_ == 4) dbgCon_.clear();
         else if (panelTab_ == 3) { if (!termProc_) term_.reset(); }
@@ -678,6 +700,21 @@ void App::drawPanel() {
     panelClose_ = {p.right() - 8 * s - xs, p.y + (hh - xs) / 2, xs, xs};
     panelClear_ = {panelClose_.x - 6 * s - cwid, p.y + 4 * s, cwid, hh - 8 * s};
     uiLabel(panelClear_.x + 12 * s, p.y, hh, clear, theme::dim);
+    panelCopyAll_ = panelCopyErrors_ = {};
+    if (panelTab_ == 2 && !shownProblems_.empty()) {   // copy everything listed (or just the errors) in one go
+        const std::size_t errs = static_cast<std::size_t>(std::ranges::count_if(shownProblems_, [](const Problem& pr) { return pr.severity == Severity::Error; }));
+        float bx = panelClear_.x - 4 * s;
+        auto button = [&](Rect& r, const std::string& label) {
+            const float w = uiW(label) + 24 * s;
+            bx -= w;
+            r = {bx, p.y + 4 * s, w, hh - 8 * s};
+            if (r.contains(mx_, my_)) fill(r, theme::tabHover, 6 * s);
+            uiLabel(r.x + 12 * s, p.y, hh, label, r.contains(mx_, my_) ? theme::text : theme::dim);
+            bx -= 2 * s;
+        };
+        button(panelCopyAll_, "Copy all");
+        if (errs > 0 && errs < shownProblems_.size()) button(panelCopyErrors_, "Copy errors");
+    }
     if (runProc_ && panelTab_ == 1)
         uiLabelR(panelClear_.x - 14 * s, p.y, hh, runFocus_ ? "Typing goes to the program  \xC2\xB7  Esc to release" : "Click here to type input", runFocus_ ? Color::rgb(0xe6e8ec) : theme::lineNum);
     const int ci = std::max(8, static_cast<int>(std::round(uiH() * 0.7f)));

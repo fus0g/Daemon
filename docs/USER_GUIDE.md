@@ -106,6 +106,9 @@ output to give the keyboard back to the program.
 
 ## Project-wide problems
 
+The Problems tab has a **Copy all** button (plus **Copy errors** when there are warnings too) that copies every entry as
+`file:line:col: error: message`, one per line, ready to paste into a chat or an issue.
+
 clangd only reports diagnostics for files it has open, so Daemon quietly opens every source file of the project in the
 language server (no tabs; a few per tick, up to 400 files). The Problems tab therefore lists errors and warnings from
 the whole project, and the file explorer marks affected files (red / amber name and a count badge) and their folders.

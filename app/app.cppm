@@ -1544,7 +1544,9 @@ private:
     std::array<bool, 5> panelFollow_{true, true, true, false, true};
     int hoverPanelRow_ = -1, hoverTool_ = 0;
     std::array<Rect, 5> panelTabRects_{};
-    Rect panelClear_, panelClose_;
+    Rect panelClear_, panelClose_, panelCopyAll_, panelCopyErrors_;
+    std::string problemsText(bool errorsOnly) const;   // "file:line:col: error: message" per line, ready to paste
+    void copyProblems(bool errorsOnly);
     ToolRects tool_;
     std::vector<std::function<void()>> menuActions_;
     int hoverAct_ = 0;
