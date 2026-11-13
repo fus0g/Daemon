@@ -12,6 +12,7 @@ import daemon.ui.geometry;
 import daemon.app.options;
 import daemon.app.theme;
 import daemon.app.mdview;
+import daemon.ui.image;
 import daemon.text.markdown;
 import daemon.ui.vulkan;
 import daemon.ui.wayland;
@@ -190,8 +191,29 @@ private:
         bool parsed = false;
         MdLayout lay;
         std::string hoverUrl;
+        std::unordered_map<std::string, std::string> keys;   // image source as written -> cache key (path or URL), "" = not allowed
     };
     std::unordered_map<const Document*, MdView> previews_;
+
+    // Pictures of the preview: decoded off the UI thread (local files, or https URLs through curl into ~/.cache/daemon/images),
+    // packed into the renderer's colour atlas as a mip pyramid.
+    struct Pic {
+        enum class State { Loading, Ready, Failed } state = State::Loading;
+        int natW = 0, natH = 0;
+        std::vector<ImageAtlas::Region> levels;   // largest first
+        std::uint32_t epoch = 0;                 // atlas epoch the regions belong to
+        int loads = 0;                           // times it had to be loaded again after an atlas reset (gives up after a few)
+    };
+    ImageAtlas pics_;
+    std::unordered_map<std::string, Pic> picCache_;
+    std::deque<std::string> picQueue_;
+    int picJobs_ = 0;
+    std::string pictureKey(MdView& v, const std::string& src);
+    std::pair<int, int> pictureSize(MdView& v, const std::string& src);
+    void pumpPictures();
+    void startPicture(const std::string& key);
+    void finishPicture(const std::string& key, std::optional<ImageLevels> img, const std::string& error);
+    void releasePictures();
     bool isPreview(const Document& d) const { return previews_.contains(&d); }
     static bool isMarkdownPath(std::string_view path);
     Document* makePreviewDoc(Document& src);

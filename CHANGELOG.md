@@ -7,7 +7,10 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ### Added
 - Markdown preview: `Ctrl+Shift+V` (or the editor context menu) opens a live, read-only rendered view of a `.md` file beside it - headings, emphasis,
-  code with syntax colours, tables, nested and task lists, quotes, links (web, anchors, relative files). Images show as alt-text chips.
+  code with syntax colours, tables, nested and task lists, quotes, links (web, anchors, relative files) and real images
+  (PNG, JPEG, GIF, BMP, SVG incl. shields.io badges; local files and https URLs fetched with curl into `~/.cache/daemon/images`;
+  `DAEMON_NO_REMOTE_IMAGES=1` disables downloads). Needs a new colour picture atlas in the Vulkan renderer (allocated only while
+  a preview shows pictures) and bundles stb_image and NanoSVG (see `THIRD_PARTY_NOTICES.md`).
 - Read-only buffers (`Buffer::readOnly`), a hand cursor over links.
 - Sessions: the open files, split layout, active tab, cursor and scroll positions of each project are saved
   (`~/.local/state/daemon/sessions/`) and restored when the project is opened. A plain launch reopens the last project.

@@ -82,7 +82,7 @@ void App::refreshPreview(Document& d) {
         v.parsed = true;
     }
     v.width = width; v.scale = S(); v.fontPx = fontPx;
-    v.lay = mdLayout(v.blocks, font_, width, S());
+    v.lay = mdLayout(v.blocks, font_, width, S(), [this, &v](const std::string& src) { return pictureSize(v, src); });
     d.targetY = std::clamp(d.targetY, 0.0f, std::max(0.0f, v.lay.height - L_.editor.h));
     dirty_ = true;
 }
@@ -115,6 +115,17 @@ void App::drawPreview(Document& d) {
                 dl_.titleText(font_, ox + m.x, y, m.s, c);
                 if (m.bold) dl_.titleText(font_, ox + m.x + boldOff, y, m.s, c);
                 break;
+            case MdItem::T::Image: {
+                const std::string key = pictureKey(const_cast<MdView&>(v), m.s);
+                auto pit = picCache_.find(key);
+                if (pit == picCache_.end() || pit->second.state != Pic::State::Ready || pit->second.epoch != pics_.epoch() || pit->second.levels.empty()) break;
+                const auto& lv = pit->second.levels;
+                std::size_t pick = 0;   // the smallest level that is still at least as large as the box: at most a 2x downscale
+                for (std::size_t i = 0; i < lv.size(); ++i) if (static_cast<float>(lv[i].w) >= m.w) pick = i;
+                const ImageAtlas::Region& r = lv[pick];
+                dl_.image(ox + m.x, y, m.w, m.h, r.u0, r.v0, r.u1, r.v1, 255, m.radius);
+                break;
+            }
             case MdItem::T::Check: Icons::glyph(dl_, font_, ox + m.x, y, static_cast<int>(m.w), 0xF012C, c); break;   // mdi-check
             case MdItem::T::Mono: dl_.text(font_, ox + m.x, y, m.s, c, m.w > 0 ? ox + m.w : std::numeric_limits<float>::infinity()); break;
         }
@@ -207,6 +218,149 @@ void App::openLink(MdView& v, const std::string& url) {
     std::error_code ec;
     if (fs::is_regular_file(target, ec)) openFile(target.string());
     else setMessage("Not found: " + target.string(), true, 3);
+}
+
+// ---------------------------------------------------------------------------- pictures
+
+namespace {
+
+std::string cacheFileFor(const std::string& url) {
+    std::uint64_t h = 1469598103934665603ull;   // FNV-1a
+    for (unsigned char c : url) { h ^= c; h *= 1099511628211ull; }
+    fs::path base;
+    if (const char* x = std::getenv("XDG_CACHE_HOME"); x && *x) base = x;
+    else if (const char* home = std::getenv("HOME"); home && *home) base = fs::path(home) / ".cache";
+    else return {};
+    return (base / "daemon" / "images" / std::format("{:016x}.img", h)).string();
+}
+
+}  // namespace
+
+// Maps an image source of a document to its cache key: an absolute file path, or an https URL. Anything else is refused
+// (plain http, data: URIs, other schemes): the alt text is shown instead.
+std::string App::pictureKey(MdView& v, const std::string& src) {
+    if (auto it = v.keys.find(src); it != v.keys.end()) return it->second;
+    std::string key;
+    if (src.starts_with("https://")) {
+        if (!std::getenv("DAEMON_NO_REMOTE_IMAGES")) key = src;
+    } else if (src.find("://") == std::string::npos && !src.starts_with("data:") && !src.empty() && v.src) {
+        std::string rel = src.substr(0, src.find_first_of("#?"));
+        fs::path p = rel.starts_with("/") && explorer_.isOpen() && fs::exists(explorer_.rootPath() / rel.substr(1))
+                         ? explorer_.rootPath() / rel.substr(1)
+                         : (rel.starts_with("/") ? fs::path(rel) : fs::path(v.src->path).parent_path() / rel);
+        key = p.lexically_normal().string();
+    }
+    v.keys.emplace(src, key);
+    return key;
+}
+
+std::pair<int, int> App::pictureSize(MdView& v, const std::string& src) {
+    const std::string key = pictureKey(v, src);
+    if (key.empty()) return {0, 0};
+    auto it = picCache_.find(key);
+    if (it != picCache_.end()) {
+        Pic& p = it->second;
+        if (p.state == Pic::State::Failed) return {0, 0};
+        if (p.state == Pic::State::Ready) {
+            if (p.epoch == pics_.epoch()) return {p.natW, p.natH};
+            const int loads = p.loads + 1;   // the atlas was emptied meanwhile: load it again (but never ping-pong forever)
+            p = Pic{};
+            p.loads = loads;
+            if (loads > 2) { p.state = Pic::State::Failed; return {0, 0}; }
+            picQueue_.push_back(key);
+            pumpPictures();
+        }
+        return {-1, -1};
+    }
+    picCache_[key] = Pic{};
+    picQueue_.push_back(key);
+    pumpPictures();
+    return {-1, -1};
+}
+
+void App::pumpPictures() {
+    while (picJobs_ < 4 && !picQueue_.empty()) {
+        const std::string key = picQueue_.front();
+        picQueue_.pop_front();
+        if (picCache_.contains(key)) startPicture(key);
+    }
+}
+
+void App::startPicture(const std::string& key) {
+    ++picJobs_;
+    spawn([this, key] {
+        std::optional<ImageLevels> out;
+        std::string error;
+        std::string bytes;
+        if (key.starts_with("https://")) {
+            const std::string file = cacheFileFor(key);
+            if (file.empty()) error = "no cache directory";
+            else {
+                std::error_code ec;
+                if (!fs::exists(file, ec)) {   // not cached yet: fetch (https only, size and time limited, generic client name)
+                    fs::create_directories(fs::path(file).parent_path(), ec);
+                    const auto cutoff = fs::file_time_type::clock::now() - std::chrono::hours(24 * 30);
+                    for (const auto& e : fs::directory_iterator(fs::path(file).parent_path(), ec))   // forget pictures not used for a month
+                        if (e.path().extension() == ".img" && fs::last_write_time(e.path(), ec) < cutoff) fs::remove(e.path(), ec);
+                    ProcessOptions po;
+                    po.argv = {"curl", "-fsSL", "--max-time", "20", "--max-filesize", "12000000", "--proto", "=https", "--proto-redir", "=https",
+                               "--max-redirs", "5", "-A", "Daemon-IDE", "-o", file + ".part", "--url", key};
+                    auto r = Process::runCapture(po, 30000);
+                    if (r.exitCode != 0) { error = "download failed"; fs::remove(file + ".part", ec); }
+                    else fs::rename(file + ".part", file, ec);
+                }
+                if (error.empty()) {
+                    if (auto sz = fs::file_size(file, ec); !ec && sz <= 32ull * 1024 * 1024) { if (auto d = readFile(file)) bytes = std::move(*d); }
+                    else error = "file too large";
+                }
+            }
+        } else {
+            std::error_code ec;
+            if (!fs::is_regular_file(key, ec)) error = "not found";
+            else if (auto sz = fs::file_size(key, ec); ec || sz > 32ull * 1024 * 1024) error = "file too large";
+            else if (auto d = readFile(key)) bytes = std::move(*d);
+            else error = "unreadable";
+        }
+        if (error.empty())
+            out = decodeImage({reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()}, 1400, error);
+        return [this, key, out = std::move(out), error]() mutable { finishPicture(key, std::move(out), error); };
+    });
+}
+
+void App::finishPicture(const std::string& key, std::optional<ImageLevels> img, const std::string& error) {
+    --picJobs_;
+    auto it = picCache_.find(key);
+    if (it != picCache_.end()) {
+        Pic& p = it->second;
+        if (!img) { p.state = Pic::State::Failed; if (!error.empty()) logLine(std::format("preview image {}: {}", key, error)); }
+        else {
+            auto place = [&] {
+                p.levels.clear();
+                for (const Image& lv : img->levels) {
+                    auto r = pics_.add(lv);
+                    if (!r) return false;
+                    p.levels.push_back(*r);
+                }
+                return true;
+            };
+            bool ok = place();
+            if (!ok) {   // atlas full: start over (other pictures reload when the layout asks for them again)
+                pics_.clear();
+                ok = place();
+            }
+            if (ok) { p.state = Pic::State::Ready; p.natW = img->naturalW; p.natH = img->naturalH; p.epoch = pics_.epoch(); }
+            else p.state = Pic::State::Failed;
+        }
+    }
+    for (auto& [d, v] : previews_) v.width = 0;   // lay the documents out again with the picture's real size
+    dirty_ = true;
+    pumpPictures();
+}
+
+void App::releasePictures() {
+    picCache_.clear();
+    picQueue_.clear();
+    pics_.clear();
 }
 
 }  // namespace ide

@@ -18,6 +18,7 @@ struct Span {
     std::uint8_t style = 0;
     std::string url;            // link target, empty when the span is not a link
     std::string src;            // non-empty: an image with this source
+    int imgW = 0, imgH = 0;     // size requested by <img width= height=> (0 = natural)
     bool brk = false;           // hard line break (text is empty)
 };
 

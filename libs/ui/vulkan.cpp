@@ -9,6 +9,7 @@ import std;
 import daemon.base.util;
 import daemon.ui.draw;
 import daemon.ui.font;
+import daemon.ui.image;
 
 namespace ide {
 
@@ -286,14 +287,16 @@ void Renderer::createAtlas() {
     }
 
 void Renderer::createDescriptors() {
-        VkDescriptorSetLayoutBinding b{};
-        b.binding = 0;
-        b.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        b.descriptorCount = 1;
-        b.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayoutBinding b[2]{};
+        for (std::uint32_t i = 0; i < 2; ++i) {   // 0: glyph atlas (R8), 1: picture atlas (RGBA8)
+            b[i].binding = i;
+            b[i].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            b[i].descriptorCount = 1;
+            b[i].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        }
         VkDescriptorSetLayoutCreateInfo li{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-        li.bindingCount = 1;
-        li.pBindings = &b;
+        li.bindingCount = 2;
+        li.pBindings = b;
         check(vkCreateDescriptorSetLayout(device_, &li, nullptr, &setLayout_), "vkCreateDescriptorSetLayout");
 
         VkSamplerCreateInfo lsi{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};
@@ -302,7 +305,7 @@ void Renderer::createDescriptors() {
         lsi.addressModeU = lsi.addressModeV = lsi.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         check(vkCreateSampler(device_, &lsi, nullptr, &linearSampler_), "vkCreateSampler(linear)");
 
-        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2};
+        VkDescriptorPoolSize ps{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 4};
         VkDescriptorPoolCreateInfo pi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
         pi.maxSets = 2;
         pi.poolSizeCount = 1;
@@ -332,6 +335,139 @@ void Renderer::createDescriptors() {
         pli.pushConstantRangeCount = 1;
         pli.pPushConstantRanges = &pc;
         check(vkCreatePipelineLayout(device_, &pli, nullptr, &pipeLayout_), "vkCreatePipelineLayout");
+        createPictureTexture(1);   // a transparent 1x1 stand-in until a picture is added
+    }
+
+// Runs `record` in a throw-away command buffer and waits for it (pictures are added rarely; a short stall is fine).
+void Renderer::oneShot(const std::function<void(VkCommandBuffer)>& record) {
+        VkCommandPool pool = VK_NULL_HANDLE;
+        VkCommandPoolCreateInfo pi{VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        pi.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        pi.queueFamilyIndex = queueFamily_;
+        check(vkCreateCommandPool(device_, &pi, nullptr, &pool), "vkCreateCommandPool(oneshot)");
+        try {
+            VkCommandBufferAllocateInfo ai{VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+            ai.commandPool = pool;
+            ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            ai.commandBufferCount = 1;
+            VkCommandBuffer cb = VK_NULL_HANDLE;
+            check(vkAllocateCommandBuffers(device_, &ai, &cb), "vkAllocateCommandBuffers(oneshot)");
+            VkCommandBufferBeginInfo bi{VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+            check(vkBeginCommandBuffer(cb, &bi), "vkBeginCommandBuffer(oneshot)");
+            record(cb);
+            check(vkEndCommandBuffer(cb), "vkEndCommandBuffer(oneshot)");
+            VkSubmitInfo si{VK_STRUCTURE_TYPE_SUBMIT_INFO};
+            si.commandBufferCount = 1;
+            si.pCommandBuffers = &cb;
+            check(vkQueueSubmit(queue_, 1, &si, VK_NULL_HANDLE), "vkQueueSubmit(oneshot)");
+            check(vkQueueWaitIdle(queue_), "vkQueueWaitIdle(oneshot)");
+        } catch (...) {
+            vkDestroyCommandPool(device_, pool, nullptr);
+            throw;
+        }
+        vkDestroyCommandPool(device_, pool, nullptr);
+    }
+
+void Renderer::destroyPictureTexture() {
+        if (picView_) vkDestroyImageView(device_, picView_, nullptr);
+        if (picImage_) vkDestroyImage(device_, picImage_, nullptr);
+        if (picMem_) vkFreeMemory(device_, picMem_, nullptr);
+        picView_ = VK_NULL_HANDLE; picImage_ = VK_NULL_HANDLE; picMem_ = VK_NULL_HANDLE; picSize_ = 0;
+    }
+
+// (Re)creates the RGBA picture texture (size x size, cleared to transparent) and points both descriptor sets at it.
+void Renderer::createPictureTexture(std::uint32_t size) {
+        vkDeviceWaitIdle(device_);   // nothing may still sample the old texture
+        destroyPictureTexture();
+        VkImageCreateInfo ii{VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO};
+        ii.imageType = VK_IMAGE_TYPE_2D;
+        ii.format = VK_FORMAT_R8G8B8A8_UNORM;
+        ii.extent = {size, size, 1};
+        ii.mipLevels = 1;
+        ii.arrayLayers = 1;
+        ii.samples = VK_SAMPLE_COUNT_1_BIT;
+        ii.tiling = VK_IMAGE_TILING_OPTIMAL;
+        ii.usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+        ii.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+        check(vkCreateImage(device_, &ii, nullptr, &picImage_), "vkCreateImage(pictures)");
+        VkMemoryRequirements req;
+        vkGetImageMemoryRequirements(device_, picImage_, &req);
+        VkMemoryAllocateInfo ai{VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO};
+        ai.allocationSize = req.size;
+        ai.memoryTypeIndex = findMemoryType(req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+        check(vkAllocateMemory(device_, &ai, nullptr, &picMem_), "vkAllocateMemory(pictures)");
+        check(vkBindImageMemory(device_, picImage_, picMem_, 0), "vkBindImageMemory(pictures)");
+        VkImageViewCreateInfo vi{VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO};
+        vi.image = picImage_;
+        vi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        vi.format = VK_FORMAT_R8G8B8A8_UNORM;
+        vi.subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+        check(vkCreateImageView(device_, &vi, nullptr, &picView_), "vkCreateImageView(pictures)");
+        picSize_ = size;
+
+        oneShot([&](VkCommandBuffer cb) {
+            barrier(cb, picImage_, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_PIPELINE_STAGE_2_NONE, VK_ACCESS_2_NONE,
+                    VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT);
+            VkClearColorValue zero{};
+            VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            vkCmdClearColorImage(cb, picImage_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &zero, 1, &range);
+            barrier(cb, picImage_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                    VK_PIPELINE_STAGE_2_CLEAR_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                    VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+        });
+
+        VkDescriptorImageInfo img{linearSampler_, picView_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+        for (VkDescriptorSet set : {descSet_, glassSet_}) {
+            VkWriteDescriptorSet w{VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+            w.dstSet = set;
+            w.dstBinding = 1;
+            w.descriptorCount = 1;
+            w.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            w.pImageInfo = &img;
+            vkUpdateDescriptorSets(device_, 1, &w, 0, nullptr);
+        }
+    }
+
+// Mirrors the rows of the CPU picture atlas that changed into the GPU texture.
+void Renderer::uploadPictures() {
+        if (!pics_) return;
+        int y0 = 0, y1 = 0;
+        if (!pics_->takeDirty(y0, y1)) {
+            if (pics_->empty() && picSize_ > 1) createPictureTexture(1);   // all pictures gone: give the memory back
+            return;
+        }
+        if (picSize_ != static_cast<std::uint32_t>(ImageAtlas::Size)) createPictureTexture(ImageAtlas::Size);
+        const VkDeviceSize bytes = static_cast<VkDeviceSize>(y1 - y0) * ImageAtlas::Size * 4;
+        VkBuffer staging = VK_NULL_HANDLE;
+        VkDeviceMemory stagingMem = VK_NULL_HANDLE;
+        void* map = nullptr;
+        createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                     staging, stagingMem, &map);
+        std::memcpy(map, pics_->pixels() + static_cast<std::size_t>(y0) * ImageAtlas::Size * 4, static_cast<std::size_t>(bytes));
+        try {
+            oneShot([&](VkCommandBuffer cb) {
+                barrier(cb, picImage_, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                        VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT, VK_PIPELINE_STAGE_2_COPY_BIT,
+                        VK_ACCESS_2_TRANSFER_WRITE_BIT);
+                VkBufferImageCopy region{};
+                region.bufferRowLength = ImageAtlas::Size;
+                region.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+                region.imageOffset = {0, y0, 0};
+                region.imageExtent = {ImageAtlas::Size, static_cast<std::uint32_t>(y1 - y0), 1};
+                vkCmdCopyBufferToImage(cb, staging, picImage_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+                barrier(cb, picImage_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                        VK_PIPELINE_STAGE_2_COPY_BIT, VK_ACCESS_2_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT,
+                        VK_ACCESS_2_SHADER_SAMPLED_READ_BIT);
+            });
+        } catch (...) {
+            vkDestroyBuffer(device_, staging, nullptr);
+            vkFreeMemory(device_, stagingMem, nullptr);
+            pics_->markAllDirty();
+            throw;
+        }
+        vkDestroyBuffer(device_, staging, nullptr);
+        vkFreeMemory(device_, stagingMem, nullptr);
     }
 
 void Renderer::createFrames() {
@@ -616,6 +752,7 @@ void Renderer::barrier(VkCommandBuffer cb, VkImage img, VkImageLayout from, VkIm
 RenderStatus Renderer::renderImpl(const DrawList& dl, FontAtlas& font, Color clear) {
         if (swapDirty_ || !swapchain_) createSwapchain();
         if (!swapchain_) return RenderStatus::Skipped;
+        uploadPictures();
 
         Frame& f = frames_[frameIdx_];
         {   // bounded: a stalled GPU (e.g. after suspend) must not freeze the UI thread
@@ -853,6 +990,8 @@ void Renderer::destroy() {
                 if (f.fence) vkDestroyFence(device_, f.fence, nullptr);
                 if (f.pool) vkDestroyCommandPool(device_, f.pool, nullptr);
             }
+            destroyPictureTexture();
+            if (pics_) pics_->markAllDirty();   // a rebuilt device uploads the pictures again
             if (pipeLayout_) vkDestroyPipelineLayout(device_, pipeLayout_, nullptr);
             if (descPool_) vkDestroyDescriptorPool(device_, descPool_, nullptr);
             if (setLayout_) vkDestroyDescriptorSetLayout(device_, setLayout_, nullptr);

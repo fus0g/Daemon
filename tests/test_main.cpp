@@ -11,6 +11,7 @@ void runUiTests();
 void testMarkdown();
 void testMarkdownLayout();
 void testReadOnlyBuffer();
+void testImages();
 
 int main() {
     runBaseTests();
@@ -18,6 +19,7 @@ int main() {
     testMarkdown();
     testMarkdownLayout();
     testReadOnlyBuffer();
+    testImages();
     runServicesTests();
     runUiTests();
     if (failures == 0) std::println("all tests passed");

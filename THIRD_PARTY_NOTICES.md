@@ -6,6 +6,8 @@ compatible with GPLv3 and keep their own licences:
 | Path | What | Licence |
 |---|---|---|
 | `third_party/stb/stb_truetype.h` | stb_truetype v1.26 (Sean Barrett) | Public domain / MIT (dual, text at the end of the file) |
+| `third_party/stb/stb_image.h` | stb_image v2.32 (Sean Barrett), upstream commit 9600522 | Public domain / MIT (dual, text at the end of the file) |
+| `third_party/nanosvg/nanosvg.h`, `nanosvgrast.h` | NanoSVG (Mikko Mononen), upstream commit 239e102 | zlib licence (text at the top of each file) |
 | `third_party/fonts/materialdesignicons.ttf` | Material Design Icons font (Pictogrammers) | Apache-2.0 for the font/icons (MIT for non-font files); full terms in `third_party/fonts/LICENSE-materialdesignicons.txt` |
 | `third_party/wayland/xdg-shell.xml` | xdg-shell protocol | MIT-style (text in the file header) |
 | `third_party/wayland/xdg-decoration-unstable-v1.xml` | xdg-decoration protocol | MIT-style (text in the file header) |

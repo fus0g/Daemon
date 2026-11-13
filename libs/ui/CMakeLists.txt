@@ -59,6 +59,7 @@ target_sources(daemon_ui
     font.cppm
     geometry.cppm
     icons.cppm
+    image.cppm
     input.cppm
     vulkan.cppm
     wayland.cppm
@@ -67,6 +68,8 @@ target_sources(daemon_ui
     font.cpp
     icons.cpp
     stb_impl.cpp
+    svg_impl.cpp
+    image.cpp
     vulkan.cpp
     wayland.cpp)
 target_link_libraries(daemon_ui PUBLIC daemon_base)
@@ -75,6 +78,6 @@ target_link_libraries(daemon_ui PUBLIC daemon_protocols Vulkan::Vulkan
   PkgConfig::WAYLAND_CLIENT PkgConfig::WAYLAND_CURSOR PkgConfig::XKBCOMMON)
 add_dependencies(daemon_ui daemon_shaders)
 set_source_files_properties(vulkan.cppm PROPERTIES OBJECT_DEPENDS "${SHADER_INCS}")
-target_include_directories(daemon_ui PRIVATE ${GEN_DIR} ${PROJECT_SOURCE_DIR}/third_party/stb)
+target_include_directories(daemon_ui PRIVATE ${GEN_DIR} ${PROJECT_SOURCE_DIR}/third_party/stb ${PROJECT_SOURCE_DIR}/third_party/nanosvg)
 target_compile_definitions(daemon_ui PRIVATE DAEMON_ASSET_DIR="${PROJECT_SOURCE_DIR}/third_party/fonts")
-set_source_files_properties(stb_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")
+set_source_files_properties(stb_impl.cpp svg_impl.cpp PROPERTIES COMPILE_OPTIONS "-w")

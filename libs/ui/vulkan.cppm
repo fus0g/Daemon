@@ -13,6 +13,7 @@ import std;
 import daemon.base.util;
 import daemon.ui.draw;
 import daemon.ui.font;
+import daemon.ui.image;
 
 namespace ide {
 
@@ -72,6 +73,10 @@ public:
 
     RenderStatus render(const DrawList& dl, FontAtlas& font, Color clear);
 
+    // The colour picture atlas (Markdown preview images). Its GPU texture is created on first use and released when the
+    // atlas is empty again; the renderer keeps it in sync and re-uploads it after a device rebuild.
+    void setPictures(ImageAtlas* atlas) { pics_ = atlas; }
+
     // Tears everything down and builds it again (device or surface lost, e.g. after suspend/resume).
     bool rebuild();
 
@@ -118,6 +123,11 @@ private:
     void createDescriptors();
 
     void createFrames();
+
+    void createPictureTexture(std::uint32_t size);
+    void destroyPictureTexture();
+    void uploadPictures();
+    void oneShot(const std::function<void(VkCommandBuffer)>& record);
 
     VkShaderModule makeShader(const std::uint32_t* code, std::size_t bytes);
 
@@ -175,6 +185,12 @@ private:
     std::vector<VkSemaphore> renderDone_;
     std::uint32_t reqW_ = 0, reqH_ = 0;
     bool swapDirty_ = true;
+
+    ImageAtlas* pics_ = nullptr;
+    VkImage picImage_ = VK_NULL_HANDLE;
+    VkDeviceMemory picMem_ = VK_NULL_HANDLE;
+    VkImageView picView_ = VK_NULL_HANDLE;
+    std::uint32_t picSize_ = 0;
 
     VkImage atlasImage_ = VK_NULL_HANDLE;
     VkDeviceMemory atlasMem_ = VK_NULL_HANDLE;

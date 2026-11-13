@@ -417,6 +417,14 @@ private:
             if (sp.src.empty()) sp.src = "?";
             sp.text = attr(body, "alt");
             if (sp.text.empty()) sp.text = attr(body, "title");
+            auto px = [&](std::string_view name) {   // plain pixel counts only; percentages and units are ignored
+                const std::string v = attr(body, name);
+                int n = 0;
+                const auto r = std::from_chars(v.data(), v.data() + v.size(), n);
+                return (r.ec == std::errc() && (r.ptr == v.data() + v.size() || std::string_view(r.ptr) == "px") && n > 0 && n < 20000) ? n : 0;
+            };
+            sp.imgW = px("width");
+            sp.imgH = px("height");
             pushSpan(std::move(sp));
             return used;
         }

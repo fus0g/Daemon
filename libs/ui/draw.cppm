@@ -65,6 +65,12 @@ public:
         items_.push_back({x, y, w, h, font.whiteU(), font.whiteV(), width, font.whiteV(), c.packed(), 1000.0f + radius});
     }
 
+    // A picture from the colour image atlas (uv rectangle), optionally with rounded corners and a global opacity.
+    void image(float x, float y, float w, float h, float u0, float v0, float u1, float v1, std::uint8_t alpha = 255, float radius = 0) {
+        if (w <= 0 || h <= 0 || alpha == 0) return;
+        items_.push_back({x, y, w, h, u0, v0, u1, v1, Color{255, 255, 255, alpha}.packed(), 5000.0f + std::max(0.0f, radius)});
+    }
+
     // Draws one glyph with its pen at (x, baselineY). Coordinates are snapped to whole pixels.
     void glyph(const Glyph& g, float x, float baselineY, Color c) {
         if (g.empty) return;

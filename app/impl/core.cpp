@@ -10,6 +10,7 @@ import daemon.text.buffer;
 import daemon.text.syntax;
 import daemon.ui.font;
 import daemon.ui.draw;
+import daemon.ui.image;
 import daemon.ui.geometry;
 import daemon.app.options;
 import daemon.app.theme;
@@ -56,6 +57,8 @@ std::expected<void, std::string> App::init() {
     applyFonts();
     if (auto r = ren_.init(win_.display(), win_.surface()); !r) return r;
     ren_.setExtent(static_cast<std::uint32_t>(wLog_ * scale_), static_cast<std::uint32_t>(hLog_ * scale_));
+    ren_.setPictures(&pics_);
+    setSvgTextFont(font_.uiFontPath());
     rendererReady_ = true;
     std::println("Vulkan device: {}   font: {}   scale: {}x", ren_.deviceName(), font_.fontPath(), scale_);
 
@@ -554,7 +557,7 @@ void App::updateTitle() {
 }
 
 void App::screenshotStep() {
-    const bool busy = tasksRunning() || pendingBuild_ || hover_.pending || Clock::now() < settleUntil_;
+    const bool busy = tasksRunning() || pendingBuild_ || hover_.pending || !jobs_.empty() || Clock::now() < settleUntil_;
     if (frames_ >= opt_.screenshotFrames && !shotRequested_ && ((!busy && scriptPos_ >= script_.size()) || frames_ > 2400)) {
         shotRequested_ = true;
         ren_.requestScreenshot(opt_.screenshot);

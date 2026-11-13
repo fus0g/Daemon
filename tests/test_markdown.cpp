@@ -5,6 +5,8 @@ import daemon.text.markdown;
 import daemon.text.buffer;
 import daemon.ui.font;
 import daemon.app.mdview;
+import daemon.ui.image;
+import daemon.base.util;
 #include "check.hpp"
 
 using namespace ide;
@@ -135,4 +137,64 @@ void testReadOnlyBuffer() {
     b.readOnly = false;
     b.replace({0, 0}, {0, 0}, "x", {}, false);
     CHECK(b.line(0) == "xabc");
+}
+
+void testImages() {
+    std::string err;
+    {   // PNG round trip through our own writer: 2x2 with one transparent pixel
+        std::vector<std::uint8_t> px = {255, 0, 0, 255,   0, 255, 0, 255,   0, 0, 255, 255,   10, 20, 30, 0};
+        const auto path = std::filesystem::temp_directory_path() / "daemon_test_image.png";
+        CHECK(writePng(path, 2, 2, px));
+        auto bytes = readFile(path);
+        CHECK(bytes.has_value());
+        if (bytes) {
+            auto img = decodeImage({reinterpret_cast<const std::uint8_t*>(bytes->data()), bytes->size()}, 1400, err);
+            CHECK(img.has_value());
+            if (img) {
+                CHECK(img->naturalW == 2 && img->naturalH == 2 && img->levels.size() == 1);
+                CHECK(img->levels[0].rgba[0] == 255 && img->levels[0].rgba[3] == 255);   // red, opaque
+                CHECK(img->levels[0].rgba[15] == 0);                                      // transparent
+            }
+        }
+        std::filesystem::remove(path);
+    }
+    {   // SVG shapes
+        const std::string svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"40\" height=\"20\"><rect width=\"40\" height=\"20\" fill=\"#ff0000\"/></svg>";
+        auto img = decodeImage({reinterpret_cast<const std::uint8_t*>(svg.data()), svg.size()}, 1400, err);
+        CHECK(img.has_value());
+        if (img) {
+            CHECK(img->naturalW == 40 && img->naturalH == 20);
+            CHECK(img->levels[0].w == 80 && img->levels[0].h == 40);   // drawn at twice the size for HiDPI
+            const auto& px = img->levels[0].rgba;
+            CHECK(px[(10 * 80 + 10) * 4] == 255 && px[(10 * 80 + 10) * 4 + 3] == 255);
+        }
+    }
+    {   // junk and absurd input must fail cleanly
+        const std::string junk = "this is not an image at all, just some text of reasonable length";
+        CHECK(!decodeImage({reinterpret_cast<const std::uint8_t*>(junk.data()), junk.size()}, 1400, err).has_value());
+        CHECK(!err.empty());
+        CHECK(!decodeImage({}, 1400, err).has_value());
+        std::string bomb = "\x89PNG\r\n\x1a\n\0\0\0\rIHDR\x7f\xff\xff\xff\x7f\xff\xff\xff\x08\x06\0\0\0";
+        CHECK(!decodeImage({reinterpret_cast<const std::uint8_t*>(bomb.data()), bomb.size()}, 1400, err).has_value());
+    }
+    {   // atlas packing
+        ImageAtlas atlas;
+        Image a;
+        a.w = 100; a.h = 50; a.rgba.assign(100 * 50 * 4, 255);
+        auto r1 = atlas.add(a), r2 = atlas.add(a);
+        CHECK(r1 && r2);
+        if (r1 && r2) {
+            CHECK(r1->u0 >= 0 && r1->u1 <= 1 && r1->v1 <= 1);
+            CHECK(r2->u0 > r1->u1);   // next one sits to the right on the same shelf
+        }
+        int y0 = 0, y1 = 0;
+        CHECK(atlas.takeDirty(y0, y1) && y1 > y0);
+        CHECK(!atlas.takeDirty(y0, y1));
+        Image huge;
+        huge.w = 3000; huge.h = 10; huge.rgba.assign(3000 * 10 * 4, 0);
+        CHECK(!atlas.add(huge).has_value());
+        const auto epoch = atlas.epoch();
+        atlas.clear();
+        CHECK(atlas.empty() && atlas.epoch() != epoch);
+    }
 }

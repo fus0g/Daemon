@@ -17,8 +17,15 @@ wheel, arrow keys, `PgUp/PgDn`, `Home/End` or `Space`.
 
 Rendered: headings, paragraphs, bold, italic, strikethrough, inline code, links, block quotes, bullet / numbered / task lists
 (nested), fenced code blocks with syntax colours, tables (with column alignment, wrapping to the pane width), horizontal rules and
-the common HTML in READMEs (`<br>`, `<img>`, `<a>`, `<kbd>`, centred blocks are shown left-aligned). Images are shown as a labelled
-chip with their alt text - the renderer has no picture support yet. The preview tab is part of the saved session.
+the common HTML in READMEs (`<br>`, `<img>`, `<a>`, `<kbd>`; centred blocks are shown left-aligned).
+
+**Images** are drawn for real: PNG, JPEG, GIF (first frame), BMP and SVG, from files next to the document (relative paths, or `/path`
+relative to the project) and from `https://` URLs (badges, screenshots). Remote pictures are downloaded in the background with `curl`
+and cached in `~/.cache/daemon/images` (pictures unused for 30 days are removed); set `DAEMON_NO_REMOTE_IMAGES=1` to never fetch
+anything. Plain `http://` and `data:` sources are not loaded. `<img width= height=>` sizes are honoured, wide pictures shrink to
+the pane, small ones (badges) sit inline with the text, and a picture that cannot be loaded shows its alt text as a chip. SVG
+support is NanoSVG's (shapes, paths, gradients; no CSS, filters or clip paths) plus our own `<text>` drawing, which is what shields.io
+badges need. The preview tab is part of the saved session.
 
 ### File explorer
 

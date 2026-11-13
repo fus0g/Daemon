@@ -187,6 +187,7 @@ void App::closeTab(int i, bool force) {
     cur_ = std::clamp(cur_ > i ? cur_ - 1 : cur_, 0, static_cast<int>(docs_.size()) - 1);
     if (keep) if (int k = docIndex(keep); k >= 0) cur_ = k;
     for (Document* dep : dependents) if (int k = docIndex(dep); k >= 0) closeTab(k, true);
+    if (previews_.empty()) releasePictures();
     scrollToCursor_ = true;
     dirty_ = true;
 }

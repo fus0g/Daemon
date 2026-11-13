@@ -25,6 +25,9 @@ struct Atom {
     std::string url;
     float w = 0;
     bool space = false, image = false, brk = false;
+    bool pic = false;                  // a real picture (image = false then): w x picH is its natural display size
+    float picH = 0;
+    std::string src;
     bool padL = false, padR = false;   // first / last word of an inline code span
 };
 
@@ -48,7 +51,7 @@ const Lang* langByName(std::string_view name) {
 
 class Builder {
 public:
-    Builder(FontAtlas& f, float width, float s) : f_(f), s_(s), width_(width) {
+    Builder(FontAtlas& f, float width, float s, const MdImageSize& sizer) : f_(f), s_(s), width_(width), sizer_(sizer) {
         bh_ = std::round(f_.uiLineHeight() * 1.5f);
         boldOff_ = std::max(1.0f, std::round(0.5f * s_));
         items_ = &out_.items;
@@ -69,6 +72,7 @@ public:
 private:
     FontAtlas& f_;
     float s_, width_, bh_ = 20, boldOff_ = 1;
+    const MdImageSize& sizer_;
     MdLayout out_;
     std::vector<MdItem>* items_;
     std::vector<MdLink>* links_;
@@ -107,9 +111,25 @@ private:
             if (sp.brk) { Atom a; a.brk = true; out.push_back(std::move(a)); continue; }
             const bool bold = forceBold || (sp.style & md::Bold) != 0;
             if (!sp.src.empty()) {
+                const auto [nw, nh] = sizer_ ? sizer_(sp.src) : std::pair<int, int>{0, 0};
+                if (nw > 0 && nh > 0) {   // the picture itself
+                    float dw = static_cast<float>(nw) * s_, dh = static_cast<float>(nh) * s_;
+                    if (sp.imgW > 0 && sp.imgH > 0) { dw = static_cast<float>(sp.imgW) * s_; dh = static_cast<float>(sp.imgH) * s_; }
+                    else if (sp.imgW > 0) { dw = static_cast<float>(sp.imgW) * s_; dh = dw * static_cast<float>(nh) / static_cast<float>(nw); }
+                    else if (sp.imgH > 0) { dh = static_cast<float>(sp.imgH) * s_; dw = dh * static_cast<float>(nw) / static_cast<float>(nh); }
+                    Atom a;
+                    a.pic = true;
+                    a.w = std::round(dw);
+                    a.picH = std::round(dh);
+                    a.src = sp.src;
+                    a.url = sp.url;
+                    a.text = sp.text;
+                    out.push_back(std::move(a));
+                    continue;
+                }
                 Atom a;
                 a.image = true;
-                a.text = sp.text.empty() ? "image" : sp.text;
+                a.text = sp.text.empty() ? "image" : (nw < 0 ? sp.text + " ..." : sp.text);
                 a.url = sp.url;
                 a.style = sp.style;
                 a.w = f_.uiWidth(a.text) + std::round(16 * s_);
@@ -159,14 +179,40 @@ private:
         const float fontH = mode == 1 ? f_.titleLineHeight() : f_.uiLineHeight();
         const float baseline = mode == 1 ? f_.titleBaseline() : f_.uiBaseline();
         float x = left + firstIndent;
-        float pendingSpace = 0;
-        bool lineHasText = false;
+        float pendingSpace = 0, lineCur = lineH;
+        bool lineHasText = false, afterTall = false;
         lastPill_ = -1;
         const Atom* prev = nullptr;
-        auto newline = [&] { y += lineH; x = left; pendingSpace = 0; lineHasText = false; lastPill_ = -1; };
+        auto newline = [&] { y += lineCur; lineCur = lineH; x = left; pendingSpace = 0; lineHasText = false; afterTall = false; lastPill_ = -1; };
         for (const Atom& a : list) {
             if (a.brk) { newline(); prev = &a; continue; }
             if (a.space) { if (lineHasText) pendingSpace = a.w; prev = &a; continue; }
+            if (a.pic) {
+                float dw = a.w, dh = a.picH;
+                const float avail = std::max(20.0f, right - left);
+                if (dw > avail) { dh = std::round(dh * avail / dw); dw = avail; }
+                const bool tall = dh > lineH * 1.4f;
+                if (lineHasText && (tall || x + pendingSpace + dw > right + 0.5f)) newline();
+                if (lineHasText) x += pendingSpace;
+                pendingSpace = 0;
+                const float iy = y + (tall ? 0.0f : std::round((lineH - dh) / 2));
+                MdItem it;
+                it.t = MdItem::T::Image; it.x = x; it.y = iy; it.w = dw; it.h = dh; it.s = a.src; it.radius = tall ? std::round(5 * s_) : std::round(2 * s_);
+                it.c = Color::rgb(0xffffff);
+                if (!a.url.empty()) {
+                    links_->push_back({{x, iy, dw, dh}, a.url});
+                    it.link = static_cast<int>(links_->size()) - 1;
+                }
+                items_->push_back(std::move(it));
+                lineCur = std::max(lineCur, tall ? dh + std::round(4 * s_) : lineH);
+                x += dw;
+                lineHasText = true;
+                afterTall = tall;
+                lastPill_ = -1;
+                prev = &a;
+                continue;
+            }
+            if (afterTall) newline();
             const bool code = (a.style & md::Code) != 0;
             const bool bold = forceBold || mode == 2 || (a.style & md::Bold) != 0;
             if (lineHasText && x + pendingSpace + a.w > right + 0.5f) newline();
@@ -222,7 +268,7 @@ private:
             lineHasText = true;
             prev = &a;
         }
-        return y + lineH;
+        return y + lineCur;
     }
 
     // ---------------------------------------------------------------- blocks
@@ -431,8 +477,8 @@ private:
 
 }  // namespace
 
-MdLayout mdLayout(const std::vector<md::Block>& blocks, FontAtlas& font, float width, float scale) {
-    return Builder(font, width, scale).run(blocks);
+MdLayout mdLayout(const std::vector<md::Block>& blocks, FontAtlas& font, float width, float scale, const MdImageSize& imageSize) {
+    return Builder(font, width, scale, imageSize).run(blocks);
 }
 
 }  // namespace ide
