@@ -2,6 +2,7 @@ add_executable(daemon_tests
   test_main.cpp
   test_base.cpp
   test_text.cpp
+  test_markdown.cpp
   test_ui.cpp
   test_services.cpp)
 target_link_libraries(daemon_tests PRIVATE daemon_app)

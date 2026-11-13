@@ -455,6 +455,7 @@ void App::update(Clock::time_point now, float dt) {
     layout();
     if (!docs_.empty()) {
         Document& d = doc();
+        if (isPreview(d)) refreshPreview(d);
         if (scrollToCursor_) { ensureCursorVisible(d); scrollToCursor_ = false; }
         if (dragging_ || scrollbarDrag_) dragStep(d);
         clampScroll(d);

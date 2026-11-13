@@ -1167,6 +1167,10 @@ void App::openEditorMenu(Pos p) {
         items.emplace_back("Add to Watch", "", false, [this, t] { dbgAddWatch(t); sidebar_ = true; sideDebug_ = true; sideGit_ = false; sideSearch_ = false; });
         if (stopped) items.emplace_back("Evaluate in Debug Console", "", false, [this, t] { panelOpen_ = true; panelTab_ = 4; dbgEval(t); });
     }
+    if (isMarkdownPath(d.path)) {
+        const bool open = previewOf(d) != nullptr;
+        items.emplace_back(open ? "Close Markdown Preview" : "Open Markdown Preview", "Ctrl+Shift+V", false, [this] { togglePreview(); });
+    }
     items.emplace_back("Cut", "Ctrl+X", false, [this] { if (!docs_.empty()) copy(true); });
     items.emplace_back("Copy", "Ctrl+C", false, [this] { if (!docs_.empty()) copy(false); });
     items.emplace_back("Paste", "Ctrl+V", false, [this] { if (!docs_.empty()) paste(); });

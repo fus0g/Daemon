@@ -176,12 +176,17 @@ void App::closeTab(int i, bool force) {
             keep = at + 1 < pp->tabs.size() ? pp->tabs[at + 1] : pp->tabs[at - 1];
         }
     }
+    Document* closingDoc = docs_[static_cast<std::size_t>(i)].get();
+    std::vector<Document*> dependents;   // previews of the document being closed go with it
+    for (const auto& [pd, v] : previews_) if (v.src == closingDoc) dependents.push_back(const_cast<Document*>(pd));
+    previews_.erase(closingDoc);
     lspDetach(*docs_[static_cast<std::size_t>(i)]);
     closeCompletion();
     docs_.erase(docs_.begin() + i);
     if (docs_.empty()) newDoc();
     cur_ = std::clamp(cur_ > i ? cur_ - 1 : cur_, 0, static_cast<int>(docs_.size()) - 1);
     if (keep) if (int k = docIndex(keep); k >= 0) cur_ = k;
+    for (Document* dep : dependents) if (int k = docIndex(dep); k >= 0) closeTab(k, true);
     scrollToCursor_ = true;
     dirty_ = true;
 }

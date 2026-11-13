@@ -6,7 +6,19 @@ Detailed reference for every feature. For a short overview see the [README](../R
 
 `Ctrl+O/N/S/Shift+S/W/Q` open/new/save/save as/close tab/quit - `Ctrl+Shift+O` open folder, `Ctrl+B` toggle sidebar, `Ctrl+Shift+E` focus it (arrows, Enter, `F5` refresh; drag the gap to resize) - `Ctrl+F/H/G` find/replace/go to line (`F3` next) -
 `Ctrl+Z/Y` undo/redo - `Ctrl+/` comment - `Ctrl+Shift+D/K` duplicate/delete line - `Alt+Up/Down` move line -
-`Ctrl+]/[` indent - `Ctrl+Tab`, `Ctrl+PgUp/PgDn` switch tab - `Ctrl +/-/0` or `Ctrl+wheel` zoom.
+`Ctrl+Shift+V` Markdown preview - `Ctrl+]/[` indent - `Ctrl+Tab`, `Ctrl+PgUp/PgDn` switch tab - `Ctrl +/-/0` or `Ctrl+wheel` zoom.
+
+### Markdown preview
+
+Open a `.md` file and press `Ctrl+Shift+V` (or right-click > *Open Markdown Preview*): a read-only **Preview** tab opens to the
+right and follows the source live as you type. Press the shortcut again (or close the tab) to remove it. Click a link to open it:
+web links go to your browser, `#section` links scroll to the heading, relative links open the file in the editor. Scroll with the
+wheel, arrow keys, `PgUp/PgDn`, `Home/End` or `Space`.
+
+Rendered: headings, paragraphs, bold, italic, strikethrough, inline code, links, block quotes, bullet / numbered / task lists
+(nested), fenced code blocks with syntax colours, tables (with column alignment, wrapping to the pane width), horizontal rules and
+the common HTML in READMEs (`<br>`, `<img>`, `<a>`, `<kbd>`, centred blocks are shown left-aligned). Images are shown as a labelled
+chip with their alt text - the renderer has no picture support yet. The preview tab is part of the saved session.
 
 ### File explorer
 

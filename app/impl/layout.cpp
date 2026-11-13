@@ -266,7 +266,7 @@ void App::layoutPane(Pane& p, bool active, float promptH) {
     float bottom = r.bottom();
     if (active) bottom -= promptH;
     p.editor = {r.x, p.crumbs.bottom(), r.w, std::max(0.0f, bottom - p.crumbs.bottom())};
-    const float mapW = r.w > 640 * s ? std::round(92 * s) : 0;
+    const float mapW = r.w > 640 * s && !(p.cur && isPreview(*p.cur)) ? std::round(92 * s) : 0;
     p.minimap = {p.editor.right() - mapW, p.editor.y, mapW, p.editor.h};
     const int lines = p.cur ? p.cur->buf.lineCount() : 1;
     const int digits = std::max(3, static_cast<int>(std::to_string(lines).size()));
@@ -318,6 +318,7 @@ void App::clampScroll(Document& d) {
 }
 
 void App::ensureCursorVisible(Document& d) {
+    if (isPreview(d)) return;
     const Rect& e = L_.editor;
     if (e.h <= 0) return;
     float margin = std::min(2 * lh(), e.h / 4);

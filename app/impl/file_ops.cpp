@@ -437,6 +437,7 @@ void App::activateRow(FileNode& node) {
 void App::editorKey(const KeyEvent& k) {
     if (comp_.open && completionKey(k)) { scrollToCursor_ = true; return; }
     hideHover();
+    if (isPreview(doc()) && previewKey(k)) return;
     const Document* dp = &doc();
     const std::uint64_t verBefore = doc().buf.version();
     editorKeyImpl(k);
@@ -479,7 +480,7 @@ void App::editorKeyImpl(const KeyEvent& k) {
             case 'a': d.selectAll(); break;
             case 'c': copy(false); scrollToCursor_ = false; break;
             case 'x': copy(true); break;
-            case 'v': paste(); break;
+            case 'v': if (shift) { togglePreview(); scrollToCursor_ = false; } else paste(); break;
             case 'l': d.selectLine(d.cursor.line); break;
             case '/': d.toggleComment(); break;
             case 'd': if (shift) d.duplicateLines(); break;

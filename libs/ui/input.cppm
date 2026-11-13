@@ -22,7 +22,7 @@ struct KeyEvent {
 enum class Button : std::uint8_t { Left, Middle, Right };
 
 enum class Cursor : std::uint8_t {
-    Default, Text, ResizeN, ResizeS, ResizeW, ResizeE, ResizeNW, ResizeNE, ResizeSW, ResizeSE,
+    Default, Text, Hand, ResizeN, ResizeS, ResizeW, ResizeE, ResizeNW, ResizeNE, ResizeSW, ResizeSE,
 };
 
 // Values match xdg_toplevel.resize_edge.

@@ -341,6 +341,7 @@ void App::drawCrumbs() {
 void App::drawEditor(Document& d) {
     const Rect& e = L_.editor;
     if (e.h <= 0) return;
+    if (isPreview(d)) { drawPreview(d); return; }
     const float line = lh(), cell = cw(), s = S();
     const float sy = std::round(d.scrollY), sx = std::round(d.scrollX);
     const float baseX = L_.textX - sx;
@@ -590,6 +591,13 @@ void App::drawStatus() {
     carve(r);
     if (docs_.empty()) return;
     Document& d = doc();
+    if (isPreview(d)) {   // nothing editable: just say what is shown
+        uiLabelR(r.w - std::round(16 * s), r.y, r.h, "Markdown preview", theme::dim);
+        const auto& v = previews_.at(&d);
+        const std::string hint = !message_.empty() ? message_ : !v.hoverUrl.empty() ? v.hoverUrl : (v.src ? v.src->path : std::string());
+        uiLabel(L_.island.x + 8 * s, r.y, r.h, hint, !message_.empty() && messageError_ ? Color::rgb(0xe6a23c) : theme::dim, r.w - 200 * s);
+        return;
+    }
 
     float x = r.w - std::round(16 * s);
     const float gap = std::round(18 * s);

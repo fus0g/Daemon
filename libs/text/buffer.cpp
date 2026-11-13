@@ -50,6 +50,7 @@ std::string Buffer::slice(Pos a, Pos b) const {
 Pos Buffer::replace(Pos a, Pos b, std::string_view text, Selection before, bool coalesce) {
     a = clamp(a);
     b = clamp(b);
+    if (readOnly) return a;
     if (b < a) std::swap(a, b);
     std::string removed = slice(a, b);
     if (removed.empty() && text.empty()) return a;
@@ -98,6 +99,7 @@ Pos Buffer::replace(Pos a, Pos b, std::string_view text, Selection before, bool 
 }
 
 std::optional<Selection> Buffer::undo() {
+    if (readOnly) return std::nullopt;
     if (undo_.empty()) return std::nullopt;
     const auto g = undo_.back().group;
     Selection result;
@@ -114,6 +116,7 @@ std::optional<Selection> Buffer::undo() {
 }
 
 std::optional<Selection> Buffer::redo() {
+    if (readOnly) return std::nullopt;
     if (redo_.empty()) return std::nullopt;
     const auto g = redo_.back().group;
     Pos result;

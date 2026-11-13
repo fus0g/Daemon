@@ -25,6 +25,14 @@ void App::saveSession(bool force) {
             auto tabs = json::array();
             int cur = -1;
             for (Document* d : n.pane->tabs) {
+                if (auto pv = previews_.find(d); pv != previews_.end()) {   // a Markdown preview is remembered by its source file
+                    if (!pv->second.src || pv->second.src->path.empty()) continue;
+                    if (d == n.pane->cur) cur = static_cast<int>(tabs.array()->size());
+                    auto t = json::object();
+                    t.set("preview", pv->second.src->path);
+                    tabs.push(std::move(t));
+                    continue;
+                }
                 if (d->path.empty()) continue;   // untitled buffers are not restored
                 if (d == n.pane->cur) cur = static_cast<int>(tabs.array()->size());
                 auto t = json::object();
@@ -86,6 +94,8 @@ bool App::restoreSession() {
     if (!j || (*j)["root"].str() != rootPath || (*j)["version"].integer() != kSessionVersion) return false;
 
     std::vector<std::unique_ptr<Document>> loaded;
+    struct PendingPreview { Pane* pane; std::size_t at; std::string path; bool cur; };
+    std::vector<PendingPreview> pendingPreviews;   // resolved once every source document is loaded
     std::function<std::unique_ptr<Node>(const json::Value&)> build = [&](const json::Value& v) -> std::unique_ptr<Node> {
         auto node = std::make_unique<Node>();
         if (auto* tabs = v["tabs"].array()) {
@@ -93,6 +103,11 @@ bool App::restoreSession() {
             const int curIdx = v["cur"].integer(-1);
             int i = 0;
             for (const auto& t : *tabs) {
+                if (const std::string pv = t["preview"].str(); !pv.empty()) {
+                    pendingPreviews.push_back({pane.get(), pane->tabs.size(), pv, i == curIdx});
+                    ++i;
+                    continue;
+                }
                 const std::string path = t["path"].str();
                 std::error_code ec;
                 auto d = std::make_unique<Document>();
@@ -105,7 +120,7 @@ bool App::restoreSession() {
                 loaded.push_back(std::move(d));
                 ++i;
             }
-            if (pane->tabs.empty()) return nullptr;
+            if (pane->tabs.empty() && std::ranges::none_of(pendingPreviews, [&](const auto& p) { return p.pane == pane.get(); })) return nullptr;
             node->pane = std::move(pane);
             return node;
         }
@@ -122,8 +137,16 @@ bool App::restoreSession() {
 
     for (auto& d : docs_) lspDetach(*d);
     closeCompletion();
+    previews_.clear();
     docs_ = std::move(loaded);
     root_ = std::move(tree);
+    for (const auto& pp : pendingPreviews) {
+        auto src = std::ranges::find(docs_, pp.path, [](const auto& d) { return d->path; });
+        if (src == docs_.end()) continue;
+        Document* pd = makePreviewDoc(**src);
+        pp.pane->tabs.insert(pp.pane->tabs.begin() + static_cast<std::ptrdiff_t>(std::min(pp.at, pp.pane->tabs.size())), pd);
+        if (pp.cur) pp.pane->cur = pd;
+    }
     cur_ = 0;
     activePane_ = nullptr;
     const std::string active = (*j)["active"].str();

@@ -3,17 +3,20 @@ add_library(daemon_app STATIC)
 target_sources(daemon_app
   PUBLIC FILE_SET CXX_MODULES BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR} FILES
     app.cppm
+    mdview.cppm
     options.cppm
     theme.cppm
   PRIVATE
     cli.cpp
     options.cpp
+    mdview.cpp
     impl/activity_bar.cpp
     impl/build_run.cpp
     impl/core.cpp
     impl/desktop.cpp
     impl/setup.cpp
     impl/session.cpp
+    impl/md_view.cpp
     impl/debugger.cpp
     impl/dialogs.cpp
     impl/documents.cpp

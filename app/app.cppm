@@ -11,6 +11,8 @@ import daemon.ui.draw;
 import daemon.ui.geometry;
 import daemon.app.options;
 import daemon.app.theme;
+import daemon.app.mdview;
+import daemon.text.markdown;
 import daemon.ui.vulkan;
 import daemon.ui.wayland;
 import daemon.text.document;
@@ -179,6 +181,30 @@ private:
 
     void requestQuit();
 
+    // ---- Markdown preview: a read-only tab that renders the Markdown of another document (live, scrollable, links work)
+    struct MdView {
+        Document* src = nullptr;
+        std::vector<md::Block> blocks;
+        std::uint64_t ver = 0;
+        float width = 0, scale = 0, fontPx = 0;
+        bool parsed = false;
+        MdLayout lay;
+        std::string hoverUrl;
+    };
+    std::unordered_map<const Document*, MdView> previews_;
+    bool isPreview(const Document& d) const { return previews_.contains(&d); }
+    static bool isMarkdownPath(std::string_view path);
+    Document* makePreviewDoc(Document& src);
+    Document* previewOf(const Document& src);
+    void openPreview(Document& src);
+    void togglePreview();
+    void refreshPreview(Document& d);
+    void drawPreview(Document& d);
+    bool previewKey(const KeyEvent& k);
+    bool previewHoverAt(Pane& p);
+    void previewClick();
+    void openLink(MdView& v, const std::string& url);
+
     // ---- sessions: open files, split layout, cursor and scroll positions are kept per project and restored on open
     void saveSession(bool force = false);
     bool restoreSession();
@@ -335,6 +361,7 @@ private:
     void leavePane(Pane& p, const PaneCtx& sv);
 
     float maxScroll(const Document& d) const {
+        if (auto it = previews_.find(&d); it != previews_.end()) return std::max(0.0f, it->second.lay.height - L_.editor.h);
         return std::max(0.0f, (static_cast<float>(d.buf.lineCount()) - 1.0f) * lh());
     }
 

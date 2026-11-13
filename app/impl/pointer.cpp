@@ -84,6 +84,11 @@ void App::onPointerMove(float lx, float ly) {
         win_.setCursor(Cursor::Default);
         return;
     }
+    {   // a link highlight must not outlive the pointer leaving its preview
+        Pane* hp0 = paneAt(mx_, my_);
+        for (auto& [pd, v] : previews_)
+            if (!v.hoverUrl.empty() && !(hp0 && hp0->cur == pd)) { v.hoverUrl.clear(); dirty_ = true; }
+    }
     Edge edge = edgeAt(mx_, my_);
     Cursor c = Cursor::Default;
     if (edge != Edge::None) c = cursorForEdge(edge);
@@ -91,6 +96,7 @@ void App::onPointerMove(float lx, float ly) {
     else if (Node* g = gapAt(mx_, my_); g && !tabDrag_.active) c = g->sideBySide ? Cursor::ResizeW : Cursor::ResizeN;
     else if (splitDrag_ || (sidebar_ && L_.split.contains(mx_, my_))) c = Cursor::ResizeW;
     else if (panelDrag_ || (panelOpen_ && L_.panel.contains(mx_, my_) && my_ < L_.panel.y + 6 * S())) c = Cursor::ResizeN;
+    else if (Pane* hp = paneAt(mx_, my_); hp && hp->cur && isPreview(*hp->cur) && hp->editor.contains(mx_, my_)) c = previewHoverAt(*hp) ? Cursor::Hand : Cursor::Default;
     else if (!docs_.empty() && L_.editor.contains(mx_, my_) && mx_ >= L_.textX && !inScrollbar(doc(), mx_, my_) && !inMinimap(mx_, my_)) c = Cursor::Text;
     win_.setCursor(c);
 
@@ -175,7 +181,7 @@ void App::onPointerMove(float lx, float ly) {
         if (!(blameHover_ && hover_.show)) { blameHover_ = true; showBlameCard(blameHash_, blameUncommitted_); dirty_ = true; }
     }
     else if (hsel_.dragging || onPopup) {}
-    else if (!docs_.empty() && !menu_.open && !dragging_ && L_.editor.contains(mx_, my_) && mx_ >= L_.textX && mx_ < L_.minimap.x) { blameHover_ = false; hoverMoved(); }
+    else if (!docs_.empty() && !menu_.open && !dragging_ && !isPreview(doc()) && L_.editor.contains(mx_, my_) && mx_ >= L_.textX && mx_ < L_.minimap.x) { blameHover_ = false; hoverMoved(); }
     else { blameHover_ = false; hideHover(); }
     if (panelDrag_) {
         panelH_ = std::clamp((L_.panel.bottom() - my_) / S(), 90.0f, std::max(90.0f, (L_.side.h > 0 ? L_.side.h : L_.island.h + L_.panel.h) / S() * 0.6f));
@@ -463,6 +469,11 @@ void App::onPointerButton(Button b, bool pressed, float lx, float ly) {
 
     if (docs_.empty() || !L_.editor.contains(mx_, my_)) return;
     Document& d = doc();
+    if (isPreview(d)) {   // read-only rendered view: scrollbar and links only
+        if (b == Button::Left && inScrollbar(d, mx_, my_)) { scrollbarDrag_ = true; dragStep(d); }
+        else if (b == Button::Left) previewClick();
+        return;
+    }
     if (b == Button::Right && mx_ < L_.textX + 0 && L_.editor.contains(mx_, my_)) { openEditorMenu(posAt(d, mx_, my_)); return; }
     if (b == Button::Right) {
         const Pos pp = posAt(d, mx_, my_);

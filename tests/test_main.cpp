@@ -8,10 +8,16 @@ void runBaseTests();
 void runTextTests();
 void runServicesTests();
 void runUiTests();
+void testMarkdown();
+void testMarkdownLayout();
+void testReadOnlyBuffer();
 
 int main() {
     runBaseTests();
     runTextTests();
+    testMarkdown();
+    testMarkdownLayout();
+    testReadOnlyBuffer();
     runServicesTests();
     runUiTests();
     if (failures == 0) std::println("all tests passed");

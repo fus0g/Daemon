@@ -589,6 +589,7 @@ void Window::applyCursor() {
     std::array<const char*, 3> names{};
     switch (cursor_) {
         case Cursor::Text: names = {"text", "xterm", "ibeam"}; break;
+        case Cursor::Hand: names = {"pointer", "hand2", "hand1"}; break;
         case Cursor::ResizeN: names = {"n-resize", "top_side", "ns-resize"}; break;
         case Cursor::ResizeS: names = {"s-resize", "bottom_side", "ns-resize"}; break;
         case Cursor::ResizeW: names = {"w-resize", "left_side", "ew-resize"}; break;

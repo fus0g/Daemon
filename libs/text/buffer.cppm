@@ -57,6 +57,9 @@ public:
     // backspacing is merged into the previous undo step.
     Pos replace(Pos a, Pos b, std::string_view text, Selection before, bool coalesce = false);
 
+    // A read-only buffer ignores every edit (used by the Markdown preview tab).
+    bool readOnly = false;
+
     // Everything between begin/end is undone as one step.
     void beginGroup() { groupOpen_ = true; group_ = ++groupCounter_; noMerge_ = true; }
     void endGroup() { groupOpen_ = false; noMerge_ = true; }
