@@ -33,7 +33,7 @@ namespace ide {
 Rect App::activityPill(int group) const {
     const Rect& a = L_.activity;
     const float bs = activityCell(), pad = std::round(3.5f * S()), gap = std::round(2 * S()), between = std::round(10 * S());
-    const float w = bs + 2 * pad, x = a.x + (a.w - w) / 2, y0 = a.y + std::round(6 * S());
+    const float w = bs + 2 * pad, x = a.x + (a.w - w) / 2, y0 = a.y + std::round(6 * S()) + (L_.csd ? bs + 7 * S() + between : 0.0f);   // the logo pill sits above the first group
     auto height = [&](int n) { return static_cast<float>(n) * bs + static_cast<float>(n - 1) * gap + 2 * pad + 2 * activityPadV(); };   // extra room above the first and below the last icon
     return {x, y0 + static_cast<float>(group) * (height(3) + between), w, group == 2 ? w : height(3)};   // the lone Debug button gets a circle
 }
@@ -109,6 +109,13 @@ void App::drawActivityBar() {
     const int ip = std::max(15, static_cast<int>(std::round(activityCell() * 0.64f)));
     const bool hasErrors = !problems_.empty() ||
                            std::ranges::any_of(shownProblems_, [](const Problem& p) { return p.severity == Severity::Error; });
+    if (L_.csd) {   // logo: a circular pill above the activity pills, opens the project list
+        const Rect lg = logoPill();
+        fill(lg, Color::rgb(0xffffff, 34), lg.w / 2);
+        fill(lg.x + hair, lg.y + hair, lg.w - 2 * hair, lg.h - 2 * hair, hoverBtn_ == 4 ? Color::rgb(0x23252b) : Color::rgb(0x0d0e11), lg.w / 2 - hair);
+        const int ls = std::max(12, static_cast<int>(std::round(lg.w * 0.6f)));
+        Icons::logo(dl_, font_, std::round(lg.x + (lg.w - static_cast<float>(ls)) / 2), std::round(lg.y + (lg.h - static_cast<float>(ls)) / 2), ls, theme::accent);
+    }
     for (int g = 0; g < 3; ++g) {   // white outline, dark fill (same as the toolbar pill)
         const Rect pill = activityPill(g);
         fill(pill, Color::rgb(0xffffff, 34), pill.w / 2);

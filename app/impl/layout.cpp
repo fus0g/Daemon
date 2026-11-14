@@ -86,7 +86,7 @@ void App::layout() {
     const float W = static_cast<float>(wLog_ * scale_), H = static_cast<float>(hLog_ * scale_);
     const float s = S(), uh = uiH();
     L_.csd = !win_.serverDecorations() && !win_.fullscreen();
-    const float titleH = L_.csd ? std::max(std::round(uh + 18 * s), std::round(activityCell() + 7 * s + 8 * s)) : 0;   // tall enough for the logo pill, which is as wide as the activity pills
+    const float titleH = L_.csd ? std::round(uh + 18 * s) : 0;
     const float tabH = std::round(uh + 20 * s);
     const float crumbH = (!docs_.empty() && !doc().path.empty()) ? std::round(uh + 8 * s) : 0;
     const float statusH = std::round(uh + 10 * s);

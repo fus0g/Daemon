@@ -60,9 +60,10 @@ Cursor App::cursorForEdge(Edge e) {
 }
 
 int App::titleButtonAt(float x, float y) const {
-    if (!L_.csd || !L_.title.contains(x, y)) return 0;
-    if (closePill().contains(x, y)) return 3;
+    if (!L_.csd) return 0;
     if (logoPill().contains(x, y)) return 4;
+    if (!L_.title.contains(x, y)) return 0;
+    if (closePill().contains(x, y)) return 3;
     return 0;
 }
 
@@ -428,7 +429,6 @@ void App::onPointerButton(Button b, bool pressed, float lx, float ly) {
         if (b != Button::Left) return;
         switch (titleButtonAt(mx_, my_)) {
             case 3: requestQuit(); return;
-            case 4: welcomeOpen(); return;   // logo: projects
             default: break;
         }
         auto now = Clock::now();
@@ -437,6 +437,10 @@ void App::onPointerButton(Button b, bool pressed, float lx, float ly) {
         return;
     }
 
+    if (titleButtonAt(mx_, my_) == 4) {   // logo above the activity bar: projects
+        if (b == Button::Left) welcomeOpen();
+        return;
+    }
     if (int act = activityAt(mx_, my_); act > 0) {
         if (b == Button::Left) activityClick(act - 1);
         return;
