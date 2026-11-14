@@ -17,19 +17,18 @@ Daemon follows [Semantic Versioning](https://semver.org): `MAJOR.MINOR.PATCH`.
 5. Re-run CMake (`cmake -S . -B build`) and check `./build/app/daemon --version` prints `Daemon x.y.z` without a `+hash`.
 6. Push the commit and the tag (`git push && git push --tags`) once a remote exists.
 
-## Packages (.deb, .rpm, .AppImage)
+## Packages (.deb, .rpm)
 ```
-tools/package.sh [deb|rpm|appimage|all]        # or: cmake --build build --target package-deb|package-rpm|package-appimage|packages
+tools/package.sh [deb|rpm|all]        # or: cmake --build build --target package-deb|package-rpm|packages
 ```
-Output goes to `dist/` (git-ignored): `daemon-ide_<ver>-1_amd64.deb`, `daemon-ide-<ver>-1.<arch>.rpm`, `Daemon-<ver>-<arch>.AppImage`.
+Output goes to `dist/` (git-ignored): `daemon-ide_<ver>-1_amd64.deb`, `daemon-ide-<ver>-1.<arch>.rpm`.
 Untagged commits get a pre-release suffix (`0.1.0~git<hash>`, rpm release `0.1.git<hash>`), tagged ones are clean.
 
 How it works: a Release build in `build-release/`, installed into `build-release/stage/usr`, stripped (about 6.5 MB), plus the GCC
 runtime and Wayland/xkbcommon libraries copied to `usr/lib/daemon` (the executable's RUNPATH is `$ORIGIN/../lib/daemon`). `compat.c`
 redirects `sqrtf`/`acosf` to the double versions so the binary only needs **glibc >= 2.38** (Ubuntu 24.04+, Debian 13+, Fedora 39+,
-Arch, openSUSE Tumbleweed). The .deb is assembled with `ar`/`tar` (no dpkg needed); the .rpm with `rpmbuild`; the AppImage with
-`appimagetool`, downloaded once to `~/.cache/daemon-packaging` and verified against the SHA-256 GitHub publishes (needs FUSE 2 on the
-user's machine to run, or `--appimage-extract-and-run`).
-Installed packages provide `/usr/share/applications/daemon.desktop`, so the first-start self-registration (`installDesktopEntry`) is skipped;
-inside an AppImage it points the launcher at the `.AppImage` file (`$APPIMAGE`).
+Arch, openSUSE Tumbleweed). The .deb is assembled with `ar`/`tar` (no dpkg needed); the .rpm with `rpmbuild`.
+An AppImage build existed briefly and was dropped (too slow); the staged tree in `build-release/stage` is what it wrapped, so it can be
+brought back as one more `make_*` function in `tools/package.sh`.
+Installed packages provide `/usr/share/applications/daemon.desktop`, so the first-start self-registration (`installDesktopEntry`) is skipped.
 Vulkan itself and a GPU driver always come from the system (`libvulkan1` / `vulkan-loader` dependency).

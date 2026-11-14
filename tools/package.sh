@@ -1,31 +1,31 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: GPL-3.0-or-later
-# Builds distributable packages of Daemon: .deb, .rpm and .AppImage  ->  dist/
+# Builds distributable packages of Daemon: .deb and .rpm  ->  dist/
 #
-#   tools/package.sh [deb|rpm|appimage|all]      (default: all)
+#   tools/package.sh [deb|rpm|all]      (default: all)
 #
 # One Release build is made in build-release/, installed into a staging tree together with the GCC runtime it was built with
 # (the executable finds it through its RUNPATH), and then wrapped by each packager. Needs: cmake, ninja, strip, tar, xz, ar.
-# rpm needs `rpmbuild`; appimage downloads `appimagetool` once (SHA-256 verified) into ~/.cache/daemon-packaging.
+# rpm needs `rpmbuild`.
 # The result needs glibc >= 2.38 (Ubuntu 24.04+, Debian 13+, Fedora 39+, Arch, openSUSE Tumbleweed).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 TARGETS=("${@:-all}")
-[[ "${TARGETS[0]}" == all ]] && TARGETS=(deb rpm appimage)
+[[ "${TARGETS[0]}" == all ]] && TARGETS=(deb rpm)
 
 VERSION="$(sed -n 's/^project(daemon VERSION \([0-9.]*\).*/\1/p' CMakeLists.txt)"
 [[ -n "$VERSION" ]] || { echo "cannot read the version from CMakeLists.txt" >&2; exit 1; }
 HASH="$(git rev-parse --short HEAD 2>/dev/null || echo nogit)"
 if git describe --tags --exact-match --match "v$VERSION" >/dev/null 2>&1; then
-  DEB_VERSION="$VERSION-1"; RPM_RELEASE="1"; AI_VERSION="$VERSION"
+  DEB_VERSION="$VERSION-1"; RPM_RELEASE="1"
 else   # untagged commit: sorts before the real release
-  DEB_VERSION="$VERSION~git$HASH-1"; RPM_RELEASE="0.1.git$HASH"; AI_VERSION="$VERSION+$HASH"
+  DEB_VERSION="$VERSION~git$HASH-1"; RPM_RELEASE="0.1.git$HASH"
 fi
 case "$(uname -m)" in
-  x86_64)  DEB_ARCH=amd64; RPM_ARCH=x86_64; AI_ARCH=x86_64 ;;
-  aarch64) DEB_ARCH=arm64; RPM_ARCH=aarch64; AI_ARCH=aarch64 ;;
+  x86_64)  DEB_ARCH=amd64; RPM_ARCH=x86_64 ;;
+  aarch64) DEB_ARCH=arm64; RPM_ARCH=aarch64 ;;
   *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
 esac
 MAINTAINER="$(git config user.name 2>/dev/null || echo Daemon) <$(git config user.email 2>/dev/null || echo noreply@example.invalid)>"
@@ -120,55 +120,11 @@ EOF
   echo "   $(ls "$DIST"/daemon-ide-"$VERSION"-"$RPM_RELEASE"*.rpm)"
 }
 
-# ------------------------------------------------------------------ .AppImage
-fetch_appimagetool() {
-  local cache="${XDG_CACHE_HOME:-$HOME/.cache}/daemon-packaging" tool
-  mkdir -p "$cache"; tool="$cache/appimagetool-$AI_ARCH.AppImage"
-  if [[ ! -x "$tool" ]]; then
-    echo "   downloading appimagetool" >&2
-    local json url digest
-    json="$(curl -fsSL -H 'Accept: application/vnd.github+json' https://api.github.com/repos/AppImage/appimagetool/releases/latest)"
-    read -r url digest < <(python3 -c '
-import json, sys
-arch = sys.argv[1]
-for a in json.load(sys.stdin)["assets"]:
-    if a["name"] == "appimagetool-%s.AppImage" % arch:
-        print(a["browser_download_url"], a.get("digest", "").replace("sha256:", "")); break
-' "$AI_ARCH" <<<"$json")
-    [[ -n "${url:-}" && -n "${digest:-}" ]] || { echo "no appimagetool release with a checksum found" >&2; return 1; }
-    curl -fL -o "$tool.part" "$url"
-    [[ "$(sha256sum "$tool.part" | cut -d' ' -f1)" == "$digest" ]] || { echo "appimagetool checksum mismatch" >&2; rm -f "$tool.part"; return 1; }
-    chmod +x "$tool.part"; mv "$tool.part" "$tool"
-  fi
-  echo "$tool"
-}
-
-make_appimage() {
-  local w="$BUILD/appimage" app="$BUILD/appimage/Daemon.AppDir"
-  rm -rf "$w"; mkdir -p "$app"
-  cp -a "$STAGE/usr" "$app/usr"
-  cp "$ROOT/assets/daemon.svg" "$app/daemon.svg"
-  cp "$ROOT/assets/icons/256x256/daemon.png" "$app/daemon.png"
-  sed 's|^Exec=.*|Exec=daemon %F|' "$ROOT/assets/daemon.desktop" > "$app/daemon.desktop"
-  printf 'X-AppImage-Version=%s\n' "$AI_VERSION" >> "$app/daemon.desktop"
-  cat > "$app/AppRun" <<'EOF'
-#!/bin/sh
-HERE="$(dirname "$(readlink -f "$0")")"
-exec "$HERE/usr/bin/daemon" "$@"
-EOF
-  chmod +x "$app/AppRun"
-  local tool; tool="$(fetch_appimagetool)"
-  local out="$DIST/Daemon-$AI_VERSION-$AI_ARCH.AppImage"
-  rm -f "$out"
-  ARCH="$AI_ARCH" "$tool" --appimage-extract-and-run --no-appstream "$app" "$out" >"$w/appimagetool.log" 2>&1 || { tail -20 "$w/appimagetool.log" >&2; return 1; }
-  echo "   $out"
-}
-
 for t in "${TARGETS[@]}"; do
   echo "== Packaging $t"
   case "$t" in
-    deb) make_deb ;; rpm) make_rpm ;; appimage) make_appimage ;;
-    *) echo "unknown target '$t' (deb|rpm|appimage|all)" >&2; exit 2 ;;
+    deb) make_deb ;; rpm) make_rpm ;;
+    *) echo "unknown target '$t' (deb|rpm|all)" >&2; exit 2 ;;
   esac
 done
 echo "== Done: $(ls -1 "$DIST" | tr '\n' ' ')"

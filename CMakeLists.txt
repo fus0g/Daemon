@@ -47,8 +47,8 @@ foreach(px 48 64 128 256 512)
 endforeach()
 install(FILES assets/daemon.desktop DESTINATION share/applications)
 
-# Distribution packages -> dist/  (cmake --build build --target package-deb | package-rpm | package-appimage | packages)
-foreach(fmt deb rpm appimage)
+# Distribution packages -> dist/  (cmake --build build --target package-deb | package-rpm | packages)
+foreach(fmt deb rpm)
   add_custom_target(package-${fmt}
     COMMAND ${PROJECT_SOURCE_DIR}/tools/package.sh ${fmt}
     WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} USES_TERMINAL VERBATIM
@@ -57,4 +57,4 @@ endforeach()
 add_custom_target(packages
   COMMAND ${PROJECT_SOURCE_DIR}/tools/package.sh all
   WORKING_DIRECTORY ${PROJECT_SOURCE_DIR} USES_TERMINAL VERBATIM
-  COMMENT "Building deb, rpm and AppImage packages")
+  COMMENT "Building deb and rpm packages")
