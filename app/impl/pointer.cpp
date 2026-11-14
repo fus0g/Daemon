@@ -61,9 +61,9 @@ Cursor App::cursorForEdge(Edge e) {
 
 int App::titleButtonAt(float x, float y) const {
     if (!L_.csd || !L_.title.contains(x, y)) return 0;
-    float bw = L_.title.h * 1.25f;
-    int idx = static_cast<int>((L_.title.right() - x) / bw);
-    return idx >= 0 && idx < 3 ? 3 - idx : 0;
+    if (closePill().contains(x, y)) return 3;
+    if (logoPill().contains(x, y)) return 4;
+    return 0;
 }
 
 void App::onPointerMove(float lx, float ly) {
@@ -427,12 +427,10 @@ void App::onPointerButton(Button b, bool pressed, float lx, float ly) {
         }
         if (b != Button::Left) return;
         switch (titleButtonAt(mx_, my_)) {
-            case 1: win_.minimize(); return;
-            case 2: win_.toggleMaximize(); return;
             case 3: requestQuit(); return;
+            case 4: welcomeOpen(); return;   // logo: projects
             default: break;
         }
-        if (mx_ < std::round(14 * S()) + std::max(14.0f, std::round(L_.title.h * 0.5f)) + 10 * S()) { welcomeOpen(); return; }   // logo: projects
         auto now = Clock::now();
         if (now - lastTitleClick_ < std::chrono::milliseconds(400)) { win_.toggleMaximize(); lastTitleClick_ = {}; }
         else { lastTitleClick_ = now; win_.startMove(); }

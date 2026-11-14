@@ -20,6 +20,9 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
   building its module cache) stayed in the editor and the Problems tab although the project built fine. Files with such errors
   are now re-checked after every build and a few times shortly after clangd starts.
 
+### Changed
+- Title bar: the minimise and maximise buttons are gone; close is a round pill at the left, and the logo is a round pill above the activity bar (click: project list).
+
 ### Added
 - Notebook IntelliSense: completion, error squiggles and hover inside cells (clangd over a virtual file made of all code cells);
   the toolbar shows whether the notebook is in edit or command mode.

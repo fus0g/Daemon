@@ -875,8 +875,10 @@ private:
 
     static Cursor cursorForEdge(Edge e);
 
-    // 1 = minimise, 2 = maximise, 3 = close
+    // 3 = close (circular pill at the left), 4 = logo (circular pill above the activity bar, opens the project list)
     int titleButtonAt(float x, float y) const;
+    Rect closePill() const;
+    Rect logoPill() const;
 
     bool inScrollbar(const Document& d, float x, float y) const {
         return L_.editor.contains(x, y) && x >= L_.editor.right() - 14 * S() && maxScroll(d) > 0;

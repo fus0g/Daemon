@@ -118,28 +118,42 @@ void App::draw() {
     }
 }
 
+Rect App::closePill() const {
+    const float s = S(), d = std::round(L_.title.h - 8 * s);
+    return {std::round(8 * s), L_.title.y + std::round((L_.title.h - d) / 2), d, d};
+}
+
+Rect App::logoPill() const {
+    const float s = S(), d = std::min(L_.activity.w - 2 * std::round(3.5f * s), std::round(L_.title.h - 4 * s));
+    return {std::round(L_.activity.x + (L_.activity.w - d) / 2), L_.title.y + std::round((L_.title.h - d) / 2), d, d};
+}
+
 void App::drawTitleBar() {
     const Rect& t = L_.title;
-    const float s = S();
+    const float s = S(), hair = std::max(1.0f, std::round(0.8f * s));
     carve(t);
-    const int ls = std::max(14, static_cast<int>(std::round(t.h * 0.5f)));
-    Icons::logo(dl_, font_, std::round(14 * s), std::round(t.y + (t.h - static_cast<float>(ls)) / 2), ls, theme::accent);
+    auto pill = [&](const Rect& r, bool hot, const Color& hotFill) {   // same look as the activity-bar pills
+        fill(r, Color::rgb(0xffffff, 34), r.w / 2);
+        fill(r.x + hair, r.y + hair, r.w - 2 * hair, r.h - 2 * hair, hot ? hotFill : Color::rgb(0x0d0e11), r.w / 2 - hair);
+    };
+    // close: a circular pill at the left
+    const Rect c = closePill();
+    const bool hotClose = hoverBtn_ == 3;
+    pill(c, hotClose, theme::danger);
+    const int ip = std::max(12, static_cast<int>(std::round(uiH() * 0.9f)));
+    Icons::tool(dl_, font_, std::round(c.x + (c.w - static_cast<float>(ip)) / 2), std::round(c.y + (c.h - static_cast<float>(ip)) / 2), ip, ToolIcon::Close,
+                hotClose ? Color::rgb(0xffffff) : theme::text);
+    // logo: a circular pill above the activity-bar pills
+    const Rect lg = logoPill();
+    pill(lg, hoverBtn_ == 4, Color::rgb(0x23252b));
+    const int ls = std::max(12, static_cast<int>(std::round(lg.w * 0.56f)));
+    Icons::logo(dl_, font_, std::round(lg.x + (lg.w - static_cast<float>(ls)) / 2), std::round(lg.y + (lg.h - static_cast<float>(ls)) / 2), ls, theme::accent);
+
     std::string title = docs_.empty() ? "Daemon" : doc().name + (doc().modified() ? " \xE2\x80\xA2" : "");
     if (explorer_.isOpen()) title += "  \xE2\x80\x94  " + explorer_.rootName();
-    const float bw = std::round(t.h * 1.25f);
-    const float maxX = t.right() - 3 * bw - 12 * s;
-    const float tw = std::min(uiW(title), maxX - 60 * s);
-    if (!cmakeOpen_) uiLabel(std::max(std::round(48 * s), (t.w - tw) / 2), t.y, t.h, title, theme::dim, maxX);
-
-    const int ip = std::max(12, static_cast<int>(std::round(uiH() * 0.95f)));
-    for (int b = 1; b <= 3; ++b) {
-        Rect r{t.right() - bw * static_cast<float>(4 - b), t.y, bw, t.h};
-        const bool hot = hoverBtn_ == b;
-        if (hot) fill(r.x + 3 * s, r.y + 4 * s, r.w - 6 * s, r.h - 8 * s, b == 3 ? theme::danger : theme::tabHover.mix(Color::rgb(0xffffff), 0.05f), 7 * s);
-        const ToolIcon ic = b == 1 ? ToolIcon::Minimize : (b == 2 ? ToolIcon::Maximize : ToolIcon::Close);
-        Icons::tool(dl_, font_, std::round(r.x + (r.w - static_cast<float>(ip)) / 2), std::round(r.y + (r.h - static_cast<float>(ip)) / 2), ip, ic,
-                    hot && b == 3 ? Color::rgb(0xffffff) : theme::text);
-    }
+    const float maxX = lg.x - 12 * s;
+    const float tw = std::min(uiW(title), maxX - c.right() - 24 * s);
+    if (!cmakeOpen_) uiLabel(std::max(c.right() + 12 * s, (t.w - tw) / 2), t.y, t.h, title, theme::dim, maxX);
 }
 
 void App::drawSidebar() {

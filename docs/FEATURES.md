@@ -24,7 +24,7 @@ expansion, hover values, Debug console, floating control bar.
 
 **Integrated terminal** (Ctrl+`): real PTY shell with xterm emulation, selection and copy/paste.
 
-**Window**: native Wayland with client-side decorations, merged title/toolbar, maximize on launch, compositor blur behind the chrome.
+**Window**: native Wayland with client-side decorations, merged title/toolbar, a round close pill at the left (no minimise / maximise buttons; double-click the title bar to maximise) and the logo as a round pill above the activity bar (opens the project list), maximize on launch, compositor blur behind the chrome.
 
 ## Shortcuts
 | keys | action |
