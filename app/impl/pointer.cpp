@@ -542,6 +542,11 @@ void App::onScroll(float dxPx, float dyPx, int stepsX, int stepsY) {
     if (dlg_.kind != DlgKind::None) { dlgScroll(stepsY != 0 ? static_cast<float>(stepsY) * 3 * 34 * S() : dyPx * S()); dirty_ = true; return; }
     if (menu_.open) closeMenu();
     hideHover();
+    if (Pane* tp = paneAt(mx_, my_); tp && tp->tabsR.contains(mx_, my_)) {   // wheel over the tab strip: move along the tabs
+        const float d = stepsY != 0 ? static_cast<float>(stepsY) : (std::abs(dxPx) > std::abs(dyPx) ? dxPx : dyPx);
+        if (d != 0) { tp->tabFirst = std::max(0, tp->tabFirst + (d > 0 ? 1 : -1)); tp->tabWheeled = true; dirty_ = true; }
+        return;
+    }
     if (panelOpen_ && panelTab_ == 4 && L_.panel.contains(mx_, my_)) {
         panelScroll_[4] = std::max(0.0f, panelScroll_[4] + (stepsY != 0 ? static_cast<float>(stepsY) * 3 * lh() : dyPx * S()));
         panelFollow_[4] = false;

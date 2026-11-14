@@ -128,7 +128,20 @@ void App::openFolder(const std::string& raw) {
     gitReset();
     dbgLoad();
     if (restoreSession()) setMessage("Restored session of " + explorer_.rootPath().filename().string());
+    else closeForeignTabs();   // no session for this project: the previous project's saved tabs must not carry over
     dirty_ = true;
+}
+
+// Closes the unmodified tabs whose file is not inside the open folder (edits are never discarded).
+void App::closeForeignTabs() {
+    const fs::path root = explorer_.rootPath().lexically_normal();
+    for (int i = static_cast<int>(docs_.size()) - 1; i >= 0; --i) {
+        if (i >= static_cast<int>(docs_.size())) continue;
+        const Document& d = *docs_[static_cast<std::size_t>(i)];
+        if (d.path.empty() || d.modified()) continue;
+        const fs::path rel = fs::path(d.path).lexically_normal().lexically_relative(root);
+        if (rel.empty() || *rel.begin() == "..") closeTab(i, true);
+    }
 }
 
 void App::toggleSidebar() {

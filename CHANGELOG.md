@@ -5,6 +5,12 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-14
+
+### Fixed
+- Many open tabs no longer run out of the tab strip over the sidebar: tabs shrink to a minimum width, then the strip shows a window of tabs that follows the current one (mouse wheel over the strip scrolls it).
+- Sessions only remember and restore files inside their own project. Switching projects no longer carries the previous project's tabs over (unsaved tabs are kept), and old sessions that contain other projects' files are cleaned up when restored.
+
 ## [0.2.0] - 2026-11-14
 
 ### Fixed
@@ -72,7 +78,8 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.3.0...HEAD
+[Unreleased]: https://example.invalid/compare/v0.3.1...HEAD
+[0.3.1]: https://example.invalid/compare/v0.3.0...v0.3.1
 [0.3.0]: https://example.invalid/compare/v0.2.0...v0.3.0
 [0.2.0]: https://example.invalid/compare/v0.1.1...v0.2.0
 [0.1.1]: https://example.invalid/compare/v0.1.0...v0.1.1

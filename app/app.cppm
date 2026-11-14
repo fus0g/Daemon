@@ -317,6 +317,7 @@ private:
 
     // ---- sessions: open files, split layout, cursor and scroll positions are kept per project and restored on open
     void saveSession(bool force = false);
+    void closeForeignTabs();
     bool restoreSession();
     void sessionTick(Clock::time_point now);
 
@@ -1622,6 +1623,9 @@ private:
         std::vector<TabAnim> anim;
         std::vector<TabDraw> draw;
         std::vector<TabHit> hits;
+        int tabFirst = 0;                    // first visible tab when there are more tabs than fit in the strip
+        const Document* tabLastCur = nullptr;
+        bool tabWheeled = false;             // the user scrolled the strip: stop forcing the current tab into view
         MiniCache mini;
         Rect rect, tabsR, crumbs, editor, minimap;
         float gutterW = 0, textX = 0, textW = 0;

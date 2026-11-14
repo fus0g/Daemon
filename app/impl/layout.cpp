@@ -283,7 +283,54 @@ void App::layoutPane(Pane& p, bool active, float promptH) {
     float x = 8 * s;   // offsets are relative to the strip, so tabs move rigidly with their pane
     const float gap = 2 * s;
     int idx = 0;
+    // Too many tabs: first shrink them (down to a minimum), then show a window of them that follows the current tab
+    // (the mouse wheel over the strip moves it). Tabs outside the window are not drawn.
+    std::vector<TabAnim*> liveTabs;
+    for (auto& e : p.anim) if (!e.ghost) liveTabs.push_back(&e);
+    std::unordered_set<const TabAnim*> hidden;
+    {
+        const int n = static_cast<int>(liveTabs.size());
+        const float avail = std::max(0.0f, p.tabsR.w - 16 * s);
+        float sum = 0;
+        for (auto* e : liveTabs) sum += e->target;
+        const float gaps = gap * static_cast<float>(std::max(0, n - 1));
+        if (n > 0 && sum + gaps > avail) {
+            const float minW = 110 * s, f = std::max(0.0f, (avail - gaps) / sum);
+            for (auto* e : liveTabs) e->target = std::min(e->target, std::max(minW, e->target * f));
+            float total = gaps;
+            for (auto* e : liveTabs) total += e->target;
+            if (total > avail) {   // still too wide: a window of tabs
+                int curIdx = 0;
+                for (int i = 0; i < n; ++i) if (liveTabs[static_cast<std::size_t>(i)]->doc == p.cur) curIdx = i;
+                auto fits = [&](int first, int upto) {
+                    float w = 0;
+                    for (int i = first; i <= upto; ++i) w += liveTabs[static_cast<std::size_t>(i)]->target + (i > first ? gap : 0);
+                    return w <= avail;
+                };
+                if (p.tabLastCur != p.cur) p.tabWheeled = false;
+                if (!p.tabWheeled) {   // keep the current tab in view (until the user scrolls the strip by hand)
+                    p.tabFirst = std::min(p.tabFirst, curIdx);
+                    while (p.tabFirst < curIdx && !fits(p.tabFirst, curIdx)) ++p.tabFirst;
+                }
+                p.tabFirst = std::clamp(p.tabFirst, 0, n - 1);
+                while (p.tabFirst > 0 && fits(p.tabFirst - 1, n - 1)) --p.tabFirst;   // do not scroll past the end
+                int last = p.tabFirst;
+                while (last + 1 < n && fits(p.tabFirst, last + 1)) ++last;
+                for (int i = 0; i < n; ++i)
+                    if (i < p.tabFirst || i > last) hidden.insert(liveTabs[static_cast<std::size_t>(i)]);
+            } else p.tabFirst = 0;
+        } else p.tabFirst = 0;
+        p.tabLastCur = p.cur;
+    }
+    if (frames_ < 2 || (!opt_.screenshot.empty() && !std::getenv("DAEMON_ANIMATE")))
+        for (auto* e : liveTabs) e->w = e->target;   // no animation: use the fitted widths right away
     for (auto& e : p.anim) {
+        if (hidden.contains(&e)) {   // out of the window: no room, no drawing, no hit
+            e.w = e.target;
+            p.hits.push_back({Rect{-100000, 0, 0, 0}, Rect{-100000, 0, 0, 0}});
+            ++idx;
+            continue;
+        }
         e.tx = x;
         if (e.x < -0.5f) e.x = x;
         const float w = std::max(0.0f, e.w);

@@ -11,6 +11,13 @@ namespace ide {
 
 namespace {
 constexpr int kSessionVersion = 1;
+
+// A session belongs to one project: only files inside its folder are remembered or restored.
+bool inside(const std::string& path, const std::string& root) {
+    if (path.empty() || root.empty()) return false;
+    const fs::path rel = fs::path(path).lexically_normal().lexically_relative(fs::path(root).lexically_normal());
+    return !rel.empty() && *rel.begin() != "..";
+}
 }
 
 void App::saveSession(bool force) {
@@ -26,14 +33,14 @@ void App::saveSession(bool force) {
             int cur = -1;
             for (Document* d : n.pane->tabs) {
                 if (auto pv = previews_.find(d); pv != previews_.end()) {   // a Markdown preview is remembered by its source file
-                    if (!pv->second.src || pv->second.src->path.empty()) continue;
+                    if (!pv->second.src || !inside(pv->second.src->path, rootPath)) continue;
                     if (d == n.pane->cur) cur = static_cast<int>(tabs.array()->size());
                     auto t = json::object();
                     t.set("preview", pv->second.src->path);
                     tabs.push(std::move(t));
                     continue;
                 }
-                if (d->path.empty()) continue;   // untitled buffers are not restored
+                if (!inside(d->path, rootPath)) continue;   // untitled buffers and files of other projects are not remembered
                 if (d == n.pane->cur) cur = static_cast<int>(tabs.array()->size());
                 auto t = json::object();
                 t.set("path", d->path);
@@ -58,7 +65,7 @@ void App::saveSession(bool force) {
     auto j = json::object();
     j.set("version", kSessionVersion);
     j.set("root", rootPath);
-    if (!docs_.empty() && cur_ >= 0 && cur_ < static_cast<int>(docs_.size())) j.set("active", docs_[static_cast<std::size_t>(cur_)]->path);
+    if (!docs_.empty() && cur_ >= 0 && cur_ < static_cast<int>(docs_.size()) && inside(docs_[static_cast<std::size_t>(cur_)]->path, rootPath)) j.set("active", docs_[static_cast<std::size_t>(cur_)]->path);
     j.set("tree", dump(*root_));
     const std::string text = json::dump(j);
     if (text == lastSession_ && !force) return;
@@ -104,11 +111,13 @@ bool App::restoreSession() {
             int i = 0;
             for (const auto& t : *tabs) {
                 if (const std::string pv = t["preview"].str(); !pv.empty()) {
+                    if (!inside(pv, rootPath)) { ++i; continue; }
                     pendingPreviews.push_back({pane.get(), pane->tabs.size(), pv, i == curIdx});
                     ++i;
                     continue;
                 }
                 const std::string path = t["path"].str();
+                if (!inside(path, rootPath)) { ++i; continue; }   // sessions written before this rule may hold other projects' files
                 std::error_code ec;
                 std::unique_ptr<Document> d;
                 if (nb::isNotebookPath(path)) { std::string err; if (fs::is_regular_file(path, ec)) d = createNotebookDoc(path, err); if (!d) { ++i; continue; } }
