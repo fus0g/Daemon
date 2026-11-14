@@ -459,6 +459,7 @@ void App::drawNotebook(Document& d) {
 // ---------------------------------------------------------------------------- input
 
 bool App::notebookKey(const KeyEvent& k) {
+    nbDragging_ = false;   // typing means the mouse button is no longer being dragged
     Document& d = doc();
     auto nit = notebooks_.find(&d);
     if (nit == notebooks_.end()) return false;

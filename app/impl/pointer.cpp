@@ -375,7 +375,7 @@ void App::onPointerButton(Button b, bool pressed, float lx, float ly) {
         if (tabDrag_.doc && tabDrag_.active) performDrop();
         tabDrag_ = {};
         splitDragNode_ = nullptr;
-        dragging_ = scrollbarDrag_ = splitDrag_ = panelDrag_ = miniDrag_ = false;
+        dragging_ = scrollbarDrag_ = splitDrag_ = panelDrag_ = miniDrag_ = nbDragging_ = false;   // (the button is up: no drag of any kind goes on)
         return;
     }
     resetCaret();
@@ -505,7 +505,6 @@ void App::onPointerButton(Button b, bool pressed, float lx, float ly) {
         if (mx_ < L_.editor.x + 1.9f * cw()) { dbgToggleBpAt(d.path, line + 1); return; }
         d.selectLine(line);
         dragging_ = false;
-        nbDragging_ = false;
         return;
     }
 

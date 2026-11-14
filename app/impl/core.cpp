@@ -113,6 +113,15 @@ void App::stepScript() {
             continue;
         }
         if (tok == "setup") { setupOpen(); pos = next; continue; }   // test hook: open the toolchain dialog
+        if (tok.starts_with("mdown:") || tok.starts_with("mup:")) {   // test hook: a left-button press / release at logical x,y (mdown:300,160)
+            float x = 0, y = 0;
+            const std::string rest(tok.substr(tok.find(':') + 1));
+            std::sscanf(rest.c_str(), "%f,%f", &x, &y);
+            onPointerMove(x, y);
+            onPointerButton(Button::Left, tok.starts_with("mdown:"), x, y);
+            pos = next;
+            continue;
+        }
         if (tok == "copyprob" || tok == "copyerr") {   // test hook: the Problems tab's copy buttons; also prints what was copied
             copyProblems(tok == "copyerr");
             std::print(std::cerr, "--- copied ---\n{}--- end ---\n", problemsText(tok == "copyerr"));
