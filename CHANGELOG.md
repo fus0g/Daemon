@@ -5,7 +5,10 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-14
+
 ### Fixed
+- Closing the window no longer waits for background jobs (a slow `git fetch`, a picture download) or a running notebook compile.
 - Notebook completion could stay silent when you typed right after opening: clangd answered an empty list while it was still parsing
   and nothing asked again. It now starts when the notebook is shown, retries an empty answer while it warms up, and the toolbar says
   "IntelliSense: warming up" (or that it is off when clangd is missing). The toolbar also no longer overlaps its buttons in narrow panes.
@@ -66,6 +69,7 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.1.1...HEAD
+[Unreleased]: https://example.invalid/compare/v0.2.0...HEAD
+[0.2.0]: https://example.invalid/compare/v0.1.1...v0.2.0
 [0.1.1]: https://example.invalid/compare/v0.1.0...v0.1.1
 [0.1.0]: https://example.invalid/releases/tag/v0.1.0
