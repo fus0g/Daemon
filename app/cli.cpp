@@ -2,8 +2,24 @@
 // cli - command line handling and the process entry point of Daemon (implementation unit of daemon.app).
 module daemon.app;
 import std;
+import daemon.base.util;
+import daemon.services.notebook;
 
 namespace {
+
+// daemon --nb-run notebook.ipynb [out.ipynb]: executes the C++ cells headlessly (also used by the tests).
+int runNotebook(const std::string& in, const std::string& out) {
+    auto text = ide::readFile(in);
+    if (!text) { std::println(std::cerr, "daemon: cannot read {}", in); return 2; }
+    auto nb = ide::nb::parseNotebook(*text);
+    if (!nb) { std::println(std::cerr, "daemon: {}", nb.error()); return 2; }
+    if (!nb->isCpp()) { std::println(std::cerr, "daemon: only C++ notebooks can be run"); return 2; }
+    const int failed = ide::nb::runAll(*nb, std::filesystem::absolute(in).string(), &std::cout);
+    const std::string target = out.empty() ? in : out;
+    if (!ide::writeFile(target, ide::nb::serializeNotebook(*nb))) { std::println(std::cerr, "daemon: cannot write {}", target); return 2; }
+    std::println(std::cerr, "{} cell(s) failed; written to {}", failed, target);
+    return failed == 0 ? 0 : 1;
+}
 
 void usage() {
     std::println("daemon - a Wayland + Vulkan code editor\n\n"
@@ -11,6 +27,8 @@ void usage() {
                  "  --font-size <px>        font size in logical pixels (default 15)\n"
                  "  --screenshot <out.png>  render a few frames, save a PNG and exit\n"
                  "  --keys <script>         replay keys, e.g. \"ctrl+f|t:main|enter\" (for testing)\n"
+                 "  --nb-run <file.ipynb> [out.ipynb]\n"
+                 "                          run every cell of a C++ notebook (no window), print the output, write the results\n"
                  "  -v, --version           print the version and exit\n"
                  "  -h, --help              show this help\n\n"
                  "environment: IDE_FONT=<ttf/otf>  IDE_UI_FONT=<ttf/otf>  IDE_GPU=<index>  IDE_VALIDATE=1");
@@ -25,6 +43,10 @@ extern "C" int daemon_main(int argc, char** argv) {
         std::string_view a = argv[i];
         if (a == "-h" || a == "--help") { usage(); return 0; }
         if (a == "-v" || a == "--version") { std::println("Daemon {}", ide::versionFull()); return 0; }
+        if (a == "--nb-run" && i + 1 < argc) {
+            const std::string in = argv[++i];
+            return runNotebook(in, i + 1 < argc && argv[i + 1][0] != '-' ? std::string(argv[++i]) : std::string());
+        }
         if (a == "--screenshot" && i + 1 < argc) { opts.screenshot = argv[++i]; continue; }
         if (a == "--keys" && i + 1 < argc) { opts.keys = argv[++i]; continue; }
         if (a == "--font-size" && i + 1 < argc) { opts.fontSize = std::stof(argv[++i]); continue; }

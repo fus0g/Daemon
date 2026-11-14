@@ -7,6 +7,7 @@ import daemon.ui.font;
 import daemon.app.mdview;
 import daemon.ui.image;
 import daemon.base.util;
+import daemon.services.notebook;
 #include "check.hpp"
 
 using namespace ide;
@@ -196,5 +197,98 @@ void testImages() {
         const auto epoch = atlas.epoch();
         atlas.clear();
         CHECK(atlas.empty() && atlas.epoch() != epoch);
+    }
+}
+
+// ---------------------------------------------------------------------------- notebooks
+
+void testNotebook() {
+    using K = ide::nb::Chunk::Kind;
+    auto kinds = [](std::string_view src) {
+        std::vector<K> k;
+        for (const auto& c : ide::nb::splitChunks(src)) k.push_back(c.kind);
+        return k;
+    };
+    {   // declarations vs statements
+        auto k = kinds("int x = 5;\nx += 2;\nstd::cout << x;\nvoid f(int a) { a++; }\nstruct P { int a; } p;\nfor (int i = 0; i < 3; ++i) { x += i; }\nx + 1");
+        CHECK(k.size() == 7);
+        if (k.size() == 7) {
+            CHECK(k[0] == K::Decl && k[1] == K::Stmt && k[2] == K::Stmt && k[3] == K::Decl && k[4] == K::Decl && k[5] == K::Stmt && k[6] == K::Expr);
+        }
+    }
+    {   // declaration shapes
+        auto k = kinds("std::vector<int> v = {1, 2};\nconst auto& r = v;\nauto f = [](int a) { return a; };\nunsigned long long n = 3;\nFoo* p = nullptr;\n"
+                       "std::map<std::string, std::vector<int>> m;\ntemplate <class T> T id(T t) { return t; }\nnamespace n { int z; }\nusing namespace std;\n#include <vector>\nimport std;");
+        CHECK(k.size() == 11);
+        if (k.size() == 11) {
+            CHECK(k[0] == K::Decl && k[1] == K::Decl && k[2] == K::Decl && k[3] == K::Decl && k[4] == K::Decl && k[5] == K::Decl && k[6] == K::Decl && k[7] == K::Decl);
+            CHECK(k[8] == K::Using && k[9] == K::Include && k[10] == K::Import);
+        }
+    }
+    {   // things that only look like declarations
+        auto k = kinds("foo(3);\nx = y;\na.b();\nstd::cout << \"hi\" << std::endl;\nreturn 0;\nauto [a, b] = pair;\nASSERT(x > 1);\ni++;");
+        for (auto kind : k) CHECK(kind == K::Stmt);
+        CHECK(k.size() == 8);
+    }
+    {   // an expression only counts without the closing semicolon; literals, strings and braces do not confuse the splitter
+        auto c = ide::nb::splitChunks("std::string s = \"a;b{\";\nchar q = ';';\nint big = 1'000'000;\nauto r = R\"x(;})x\";\n// comment ; }\ns.size()");
+        CHECK(c.size() == 5);
+        if (c.size() == 5) CHECK(c[4].kind == K::Expr && c[4].line == 6);
+    }
+    {   // if/else and try/catch stay together; line numbers are kept
+        auto c = ide::nb::splitChunks("if (a) { b(); } else { c(); }\ntry { f(); } catch (...) { g(); }\nint k = 1;");
+        CHECK(c.size() == 3);
+        if (c.size() == 3) CHECK(c[0].kind == K::Stmt && c[1].kind == K::Stmt && c[2].kind == K::Decl && c[2].line == 3);
+    }
+    {   // plans: alternating kinds become separate segments, modules and magics are recognised
+        auto p = ide::nb::planCell("int a = 1;\na++;\nint b = a;\n");
+        CHECK(p.segments.size() == 3);
+        auto m = ide::nb::planCell("export module geo;\nimport std;\nexport int f();\n");
+        CHECK(m.segments.size() == 1 && m.segments[0].kind == ide::nb::Segment::Kind::Module && m.segments[0].moduleName == "geo");
+        auto g = ide::nb::planCell("%flags -O2 -DFOO\n%link -lm\nint x = 1;");
+        CHECK(g.flags.size() == 2 && g.libs.size() == 1 && g.segments.size() == 1 && g.error.empty());
+        CHECK(!ide::nb::planCell("%nope\nint x;").error.empty());
+        CHECK(ide::nb::planCell("").segments.empty());
+    }
+    {   // .ipynb round trip, foreign kernels, source as string or list
+        const std::string text = R"({"cells":[{"cell_type":"markdown","metadata":{},"source":"# Title\ntext"},
+            {"cell_type":"code","execution_count":3,"metadata":{},"outputs":[{"output_type":"stream","name":"stdout","text":["a\n","b"]},
+            {"output_type":"execute_result","execution_count":3,"data":{"text/plain":["42"]},"metadata":{}},
+            {"output_type":"error","ename":"E","evalue":"bad","traceback":["\u001b[31mtb\u001b[0m"]}],"source":["int x;\n","x"]}],
+            "metadata":{"kernelspec":{"name":"xcpp17","language":"C++17","display_name":"C++17"}},"nbformat":4,"nbformat_minor":4})";
+        auto nb = ide::nb::parseNotebook(text);
+        CHECK(nb.has_value());
+        if (nb) {
+            CHECK(nb->cells.size() == 2 && nb->isCpp());
+            CHECK(nb->cells[0].type == ide::nb::Cell::Type::Markdown && nb->cells[0].source == "# Title\ntext");
+            CHECK(nb->cells[1].source == "int x;\nx" && nb->cells[1].execCount == 3 && nb->cells[1].outputs.size() == 3);
+            CHECK(nb->cells[1].outputs[0].text == "a\nb" && nb->cells[1].outputs[1].text == "42" && nb->cells[1].outputs[2].text == "tb");
+            auto again = ide::nb::parseNotebook(ide::nb::serializeNotebook(*nb));
+            CHECK(again.has_value() && again->cells.size() == 2 && again->cells[1].source == "int x;\nx" && again->cells[1].outputs.size() == 3);
+            CHECK(again && again->metadata["kernelspec"]["name"].str() == "xcpp17");
+        }
+        auto py = ide::nb::parseNotebook(R"({"cells":[],"metadata":{"kernelspec":{"name":"python3","language":"python"}},"nbformat":4,"nbformat_minor":5})");
+        CHECK(py.has_value() && !py->isCpp() && py->cells.size() == 1);
+        CHECK(!ide::nb::parseNotebook("{not json").has_value());
+        CHECK(!ide::nb::parseNotebook(R"({"cells":[],"nbformat":3})").has_value());
+        auto fresh = ide::nb::parseNotebook("   \n");
+        CHECK(fresh.has_value() && fresh->isCpp() && fresh->cells.size() == 1);
+    }
+    if (std::getenv("DAEMON_TEST_NB")) {   // needs GCC 15+ and a few seconds: DAEMON_TEST_NB=1 ./daemon_tests
+        auto nb = ide::nb::parseNotebook("");
+        CHECK(nb.has_value());
+        if (nb) {
+            nb->cells.clear();
+            for (std::string_view src : {"int n = 40;", "n += 2;\nn", "import std;\nstd::println(\"n={}\", n);", "int broken = ;"}) {
+                ide::nb::Cell c;
+                c.source = std::string(src);
+                nb->cells.push_back(std::move(c));
+            }
+            const int failed = ide::nb::runAll(*nb, (std::filesystem::temp_directory_path() / "daemon_test.ipynb").string());
+            CHECK(failed == 1);
+            CHECK(nb->cells[1].outputs.size() == 1 && nb->cells[1].outputs[0].text == "42");
+            CHECK(nb->cells[2].outputs.size() == 1 && nb->cells[2].outputs[0].text == "n=42\n");
+            CHECK(nb->cells[3].outputs.size() == 1 && nb->cells[3].outputs[0].kind == ide::nb::Output::Kind::Error);
+        }
     }
 }
