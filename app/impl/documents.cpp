@@ -48,7 +48,7 @@ void App::openFile(const std::string& raw) {
     std::error_code ec;
     if (fs::is_directory(path, ec)) { openFolder(path); return; }
     std::string abs = fs::absolute(path, ec).lexically_normal().string();
-    if (abs.ends_with(".ipynb")) { openNotebook(abs); return; }
+    if (nb::isNotebookPath(abs)) { openNotebook(abs); return; }
     for (std::size_t i = 0; i < docs_.size(); ++i)
         if (docs_[i]->path == abs) { switchTab(static_cast<int>(i)); return; }
 

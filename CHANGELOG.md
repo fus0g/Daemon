@@ -11,7 +11,7 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
   are now re-checked after every build and a few times shortly after clangd starts.
 
 ### Added
-- C++ notebooks: `.ipynb` files open as notebooks with code and markdown cells, run on a built-in kernel (no Jupyter): every cell is
+- C++ notebooks: `.dcxxnb` (Daemon's own name for the same nbformat-4 JSON) and `.ipynb` files open as notebooks with code and markdown cells, run on a built-in kernel (no Jupyter): every cell is
   compiled with GCC as a C++20 module and loaded into a persistent runner, so state carries over, `import std;` and user modules
   work. Toolbar and Jupyter-style command/edit modes, outputs and values under the cells, compile errors with cell positions, stop /
   restart, `%flags` / `%link` magics, `daemon --nb-run`. Needs GCC 15+.

@@ -111,7 +111,7 @@ bool App::restoreSession() {
                 const std::string path = t["path"].str();
                 std::error_code ec;
                 std::unique_ptr<Document> d;
-                if (path.ends_with(".ipynb")) { std::string err; if (fs::is_regular_file(path, ec)) d = createNotebookDoc(path, err); if (!d) { ++i; continue; } }
+                if (nb::isNotebookPath(path)) { std::string err; if (fs::is_regular_file(path, ec)) d = createNotebookDoc(path, err); if (!d) { ++i; continue; } }
                 else {
                     d = std::make_unique<Document>();
                     if (path.empty() || !fs::is_regular_file(path, ec) || !d->load(path)) { ++i; continue; }

@@ -88,6 +88,12 @@ bool Notebook::isCpp() const {
     return probe.find("c++") != std::string::npos || probe.find("cpp") != std::string::npos || probe.find("cling") != std::string::npos;
 }
 
+bool isNotebookPath(std::string_view path) {
+    std::string ext(path.substr(path.rfind('.') == std::string_view::npos ? path.size() : path.rfind('.')));
+    for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return ext == ".ipynb" || ext == ".dcxxnb";
+}
+
 std::string newCellId() {
     static std::mt19937_64 rng{std::random_device{}()};
     return std::format("{:08x}", static_cast<std::uint32_t>(rng()));

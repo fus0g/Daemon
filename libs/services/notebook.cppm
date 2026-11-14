@@ -43,6 +43,10 @@ struct Notebook {
     bool isCpp() const;   // the kernelspec / language says C++ (an empty notebook is C++)
 };
 
+// Notebook files: `.ipynb` (Jupyter's name) and `.dcxxnb` (Daemon's own; the same nbformat-4 JSON, so a rename is all it takes
+// to open one in Jupyter and the other way round).
+bool isNotebookPath(std::string_view path);
+
 // An empty text gives a new, empty C++ notebook.
 std::expected<Notebook, std::string> parseNotebook(std::string_view text);
 std::string serializeNotebook(const Notebook& nb);

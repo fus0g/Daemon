@@ -7,7 +7,7 @@ import daemon.services.notebook;
 
 namespace {
 
-// daemon --nb-run notebook.ipynb [out.ipynb]: executes the C++ cells headlessly (also used by the tests).
+// daemon --nb-run notebook.dcxxnb [out.dcxxnb]: executes the C++ cells headlessly (also used by the tests).
 int runNotebook(const std::string& in, const std::string& out) {
     auto text = ide::readFile(in);
     if (!text) { std::println(std::cerr, "daemon: cannot read {}", in); return 2; }
@@ -27,7 +27,7 @@ void usage() {
                  "  --font-size <px>        font size in logical pixels (default 15)\n"
                  "  --screenshot <out.png>  render a few frames, save a PNG and exit\n"
                  "  --keys <script>         replay keys, e.g. \"ctrl+f|t:main|enter\" (for testing)\n"
-                 "  --nb-run <file.ipynb> [out.ipynb]\n"
+                 "  --nb-run <file.ipynb|.dcxxnb> [out]\n"
                  "                          run every cell of a C++ notebook (no window), print the output, write the results\n"
                  "  -v, --version           print the version and exit\n"
                  "  -h, --help              show this help\n\n"

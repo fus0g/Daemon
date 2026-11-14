@@ -31,7 +31,7 @@ FileStyle fileStyle(std::string_view name) {
         {"json", {K::Config, 0xcbb956}}, {"toml", {K::Config, 0xcf8e6d}}, {"yaml", {K::Config, 0xcf8e6d}},
         {"yml", {K::Config, 0xcf8e6d}},  {"ini", {K::Config, 0xcf8e6d}},  {"xml", {K::Config, 0xe39f5a}},
         {"conf", {K::Config, 0x9aa0ab}}, {"cfg", {K::Config, 0x9aa0ab}},
-        {"md", {K::Doc, 0x8fb4ff}},  {"txt", {K::Doc, 0x9aa0ab}}, {"pdf", {K::Doc, 0xe0605a}}, {"log", {K::Doc, 0x7a8190}},
+        {"md", {K::Doc, 0x8fb4ff}}, {"ipynb", {K::Doc, 0xe5a45a}}, {"dcxxnb", {K::Doc, 0xe5a45a}},  {"txt", {K::Doc, 0x9aa0ab}}, {"pdf", {K::Doc, 0xe0605a}}, {"log", {K::Doc, 0x7a8190}},
         {"png", {K::Image, 0xb48ead}}, {"jpg", {K::Image, 0xb48ead}}, {"jpeg", {K::Image, 0xb48ead}}, {"gif", {K::Image, 0xb48ead}},
         {"svg", {K::Image, 0xe5a45a}}, {"webp", {K::Image, 0xb48ead}}, {"ico", {K::Image, 0xb48ead}},
         {"cmake", {K::Build, 0x6aab73}},
@@ -187,7 +187,7 @@ char32_t fileGlyph(std::string_view name, FileKind kind) {
     static const std::unordered_map<std::string, char32_t> byExt = {
         {"cpp", mdi::Cpp}, {"cc", mdi::Cpp}, {"cxx", mdi::Cpp}, {"cppm", mdi::Cpp}, {"ixx", mdi::Cpp}, {"hpp", mdi::Cpp},
         {"hh", mdi::Cpp}, {"inl", mdi::Cpp}, {"c", mdi::C}, {"h", mdi::C}, {"py", mdi::Python}, {"js", mdi::Js},
-        {"mjs", mdi::Js}, {"jsx", mdi::Js}, {"ts", mdi::Ts}, {"tsx", mdi::Ts}, {"md", mdi::Markdown}, {"rs", mdi::Rust},
+        {"mjs", mdi::Js}, {"jsx", mdi::Js}, {"ts", mdi::Ts}, {"tsx", mdi::Ts}, {"md", mdi::Markdown}, {"ipynb", mdi::Notebook}, {"dcxxnb", mdi::Notebook}, {"rs", mdi::Rust},
         {"go", mdi::Go}, {"java", mdi::Java}, {"html", mdi::Html}, {"css", mdi::Css}, {"lua", mdi::Lua}, {"cs", mdi::CSharp},
         {"kt", mdi::Kotlin}, {"json", mdi::Json}, {"sh", mdi::Bash}, {"bash", mdi::Bash}, {"zsh", mdi::Bash},
         {"xml", mdi::Xml}, {"cmake", mdi::Hammer}, {"svg", mdi::Image}, {"log", mdi::Script}, {"txt", mdi::Doc}};

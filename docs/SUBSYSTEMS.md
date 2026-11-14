@@ -13,7 +13,7 @@
 - CMakeLists.txt completion: `CMakeKnowledge` + `cmakeCompletions`.
 
 ## Notebooks — `services/notebook`, `app/impl/notebook_view.cpp`
-- A notebook tab is a read-only `Document` (path = the `.ipynb`) plus an `NbView` in `App::notebooks_` (like Markdown previews): one
+- A notebook tab is a read-only `Document` (path = the `.dcxxnb` / `.ipynb`, see `isNotebookPath`) plus an `NbView` in `App::notebooks_` (like Markdown previews): one
   `Document` per cell (so the normal editor key handling works: `docOverride_` redirects `doc()` while a key is routed to a cell),
   `nb::Cell` data, and a lazily created `nb::Session`.
 - `services/notebook` is UI-free: `.ipynb` read/write (`parseNotebook`, `serializeNotebook`), `splitChunks` / `planCell` (top-level

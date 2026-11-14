@@ -29,9 +29,9 @@ badges need. The preview tab is part of the saved session.
 
 ### Notebooks (C++ in `.ipynb` files)
 
-Open or create a file ending in `.ipynb` (File > Open, or a new file with that name) and it opens as a notebook: a list of
+Open or create a file ending in `.dcxxnb` (Daemon's own extension) or `.ipynb` (File > Open, or a new file with that name) and it opens as a notebook: a list of
 **code** and **markdown** cells, each with its own editor. Nothing else has to be installed: Jupyter is not used, the notebook
-runs on Daemon's own C++ kernel, and the files are ordinary Jupyter notebooks (nbformat 4) that other tools can open too.
+runs on Daemon's own C++ kernel, and both extensions hold the same ordinary Jupyter notebook JSON (nbformat 4): rename a `.dcxxnb` to `.ipynb` and other tools can open it.
 
 **Running.** `Shift+Enter` runs the cell and moves on (adding a cell after the last one), `Ctrl+Enter` runs it in place,
 `Alt+Enter` runs it and inserts a cell below. The toolbar has *Run*, *Run all* (`Ctrl+Shift+Enter`), *Stop*, *Restart*, *+ Code*,
@@ -60,7 +60,7 @@ value; structured bindings (`auto [a, b] = ...`) are local to their cell. *Stop*
 interrupted otherwise), which also forgets the variables. `std::cin` reads nothing. Plots and images are not shown yet. Notebooks
 of other languages open for reading and editing but cannot be run.
 
-`daemon --nb-run in.ipynb [out.ipynb]` runs all cells without a window and writes the outputs (handy for CI).
+`daemon --nb-run in.dcxxnb [out.dcxxnb]` runs all cells without a window and writes the outputs (handy for CI).
 
 ### File explorer
 
