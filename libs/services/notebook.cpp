@@ -725,6 +725,7 @@ struct Session::Impl {
     std::string cxx, cxxVersion;
     std::vector<std::string> flags, libs;
     std::vector<CellState> states;
+    std::unordered_map<std::string, std::string> userModules;   // module name -> source, for this kernel only
     int generation = 0, unit = 0, token = 0, execCounter = 0;
     std::unique_ptr<Process> kernel;
     std::string pending;   // output read but not parsed yet
@@ -958,6 +959,7 @@ bool Session::Impl::startKernel(std::string& error) {
     ++generation;
     unit = 0;
     states.clear();
+    userModules.clear();
     return true;
 }
 
@@ -1050,10 +1052,21 @@ void Session::Impl::runRequest(const Request& r) {
         const int n = ++unit;
         std::string diag;
         if (seg.kind == Segment::Kind::Module) {
+            // A loaded module cannot be replaced (its symbols stay in the process): the same text is a no-op, a changed one needs a restart.
+            if (!seg.moduleName.empty()) {
+                auto known = userModules.find(seg.moduleName);
+                if (known != userModules.end()) {
+                    if (known->second == seg.text) continue;
+                    fail("ModuleError", "module '" + seg.moduleName + "' was already built in this session with different code; press Restart to rebuild it, or give the new version another name");
+                    ok = false;
+                    break;
+                }
+            }
             const std::string name = std::format("nbm{}_{}", generation, n);
             if (!compile(name, seg.text, true, diag)) { fail("CompileError", diag); ok = false; break; }
             bool died = false;
-            if (!load(cell, (fs::path(dir) / (name + ".so")).string(), "", died)) { if (died) { fail("KernelError", "the kernel died"); } ok = false; if (died) break; break; }
+            if (!load(cell, (fs::path(dir) / (name + ".so")).string(), "", died)) { if (died) { fail("KernelError", "the kernel died"); } ok = false; break; }
+            if (!seg.moduleName.empty()) userModules[seg.moduleName] = seg.text;
             continue;
         }
         const std::string mod = std::format("nb{}_{}", generation, n), entry = std::format("nbrun{}_{}", generation, n);

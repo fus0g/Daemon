@@ -54,7 +54,8 @@ module, and a later cell can `import geometry;`.
 
 **Limits.** Needs **GCC 15 or newer** (`g++` on `PATH`, or set `DAEMON_NB_CXX`); the first run builds the `std` module (about
 5 s, then cached in `~/.cache/daemon/notebook`), a cell takes about a second to compile. Redefining a name that an earlier
-cell defined is an error unless you re-run that same cell. A top-level variable declared in a cell is a global, so it keeps its
+cell defined is an error unless you re-run that same cell. A module cell (`export module x;`) can be built once per kernel:
+change it and press *Restart* (or rename it). A top-level variable declared in a cell is a global, so it keeps its
 value; structured bindings (`auto [a, b] = ...`) are local to their cell. *Stop* kills the kernel (a runaway loop cannot be
 interrupted otherwise), which also forgets the variables. `std::cin` reads nothing. Plots and images are not shown yet. Notebooks
 of other languages open for reading and editing but cannot be run.

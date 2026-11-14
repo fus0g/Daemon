@@ -274,6 +274,34 @@ void testNotebook() {
         auto fresh = ide::nb::parseNotebook("   \n");
         CHECK(fresh.has_value() && fresh->isCpp() && fresh->cells.size() == 1);
     }
+    if (std::getenv("DAEMON_TEST_NB")) {   // re-running a cell replaces its definitions; user modules can be re-run too
+        ide::nb::Session session((std::filesystem::temp_directory_path() / "daemon_test2.ipynb").string());
+        auto run = [&](int id, const std::string& src) {
+            std::string out;
+            bool ok = true;
+            session.request(id, src);
+            for (bool done = false; !done;) {
+                for (auto& e : session.poll()) {
+                    if (e.cell != id) continue;
+                    if (e.type == ide::nb::Event::Type::Result || e.type == ide::nb::Event::Type::Stream || e.type == ide::nb::Event::Type::Error) out += e.text;
+                    if (e.type == ide::nb::Event::Type::Finished) { done = true; ok = e.ok; }
+                }
+                if (!done) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            return std::pair{ok, out};
+        };
+        CHECK(run(0, "int f() { return 1; }\nint g = 5;").first);
+        CHECK(run(1, "f() + g") == std::pair(true, std::string("6")));
+        CHECK(run(0, "int f() { return 10; }\nint g = 7;").first);   // the same cell again: new definitions win
+        CHECK(run(1, "f() + g") == std::pair(true, std::string("17")));
+        CHECK(!run(2, "int f() { return 3; }").first);                // a different cell may not redefine it silently
+        CHECK(run(3, "export module geo;\nexport int twice(int x) { return 2 * x; }\n").first);
+        CHECK(run(4, "import geo;\ntwice(21)") == std::pair(true, std::string("42")));
+        CHECK(run(3, "export module geo;\nexport int twice(int x) { return 2 * x; }\n").first);     // identical text: nothing to do
+        CHECK(!run(3, "export module geo;\nexport int twice(int x) { return 3 * x; }\n").first);    // changed: needs a restart
+        CHECK(run(3, "export module geo2;\nexport int twice2(int x) { return 3 * x; }\n").first);
+        CHECK(run(4, "import geo2;\ntwice2(14)") == std::pair(true, std::string("42")));
+    }
     if (std::getenv("DAEMON_TEST_NB")) {   // needs GCC 15+ and a few seconds: DAEMON_TEST_NB=1 ./daemon_tests
         auto nb = ide::nb::parseNotebook("");
         CHECK(nb.has_value());
