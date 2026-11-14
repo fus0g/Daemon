@@ -11,6 +11,10 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
   are now re-checked after every build and a few times shortly after clangd starts.
 
 ### Added
+- C++ notebooks: `.ipynb` files open as notebooks with code and markdown cells, run on a built-in kernel (no Jupyter): every cell is
+  compiled with GCC as a C++20 module and loaded into a persistent runner, so state carries over, `import std;` and user modules
+  work. Toolbar and Jupyter-style command/edit modes, outputs and values under the cells, compile errors with cell positions, stop /
+  restart, `%flags` / `%link` magics, `daemon --nb-run`. Needs GCC 15+.
 - Problems tab: **Copy all** (and **Copy errors** when warnings are mixed in) puts every problem on the clipboard as `file:line:col: error: message` lines.
 - Markdown preview: `Ctrl+Shift+V` (or the editor context menu) opens a live, read-only rendered view of a `.md` file beside it - headings, emphasis,
   code with syntax colours, tables, nested and task lists, quotes, links (web, anchors, relative files) and real images

@@ -12,6 +12,21 @@
 - Diagnostics from clangd are collected project-wide (`diags_`), merged with compiler output into the **Problems** tab and explorer badges.
 - CMakeLists.txt completion: `CMakeKnowledge` + `cmakeCompletions`.
 
+## Notebooks — `services/notebook`, `app/impl/notebook_view.cpp`
+- A notebook tab is a read-only `Document` (path = the `.ipynb`) plus an `NbView` in `App::notebooks_` (like Markdown previews): one
+  `Document` per cell (so the normal editor key handling works: `docOverride_` redirects `doc()` while a key is routed to a cell),
+  `nb::Cell` data, and a lazily created `nb::Session`.
+- `services/notebook` is UI-free: `.ipynb` read/write (`parseNotebook`, `serializeNotebook`), `splitChunks` / `planCell` (top-level
+  chunk classification: declarations are exported, statements go into an entry function, `#include` / `using` / `import` are
+  replayed in later cells), and `Session` (worker thread: builds the std module once into `~/.cache/daemon/notebook/shared`,
+  compiles each segment with `g++ -fmodules -fPIC -shared`, sends `L <token> <entry> <so>` to the runner and relays its output; the
+  runner is a small C++ program written and built at run time so it matches the user's libstdc++).
+- Module names are `nb<generation>_<n>`; a restart bumps the generation. Cell state: `CellState` per cell id lists its modules and
+  replay lines; re-running a cell replaces its entry, so redefinitions do not clash.
+- Markers in the runner's output (`ESC ] nb ; res|done ; ... BEL`) carry results and completion. A stuck cell is stopped by killing
+  the runner (state lost) - there is no cooperative interrupt.
+- Tests: `tests/test_markdown.cpp` (planner, file format; `DAEMON_TEST_NB=1` adds a real compile-and-run test), `daemon --nb-run`.
+
 ## Git — `services/git`, `app/impl/git_view.cpp`
 Shells out to `git` (`--no-optional-locks`). Status (`--porcelain -z`) polled every 3 s while focused and after file changes;
 gutter change bars come from an in-process Myers diff against `HEAD`; inline blame (`--porcelain --contents`) with a commit card on hover;

@@ -48,6 +48,7 @@ void App::openFile(const std::string& raw) {
     std::error_code ec;
     if (fs::is_directory(path, ec)) { openFolder(path); return; }
     std::string abs = fs::absolute(path, ec).lexically_normal().string();
+    if (abs.ends_with(".ipynb")) { openNotebook(abs); return; }
     for (std::size_t i = 0; i < docs_.size(); ++i)
         if (docs_[i]->path == abs) { switchTab(static_cast<int>(i)); return; }
 
@@ -88,7 +89,7 @@ void App::handleFsChanges() {
 void App::checkDocsOnDisk() {
     for (auto& dp : docs_) {
         Document& d = *dp;
-        if (d.path.empty()) continue;
+        if (d.path.empty() || isNotebook(d)) continue;
         std::error_code ec;
         if (!fs::exists(d.path, ec)) {
             if (!d.diskGone) { d.diskGone = true; setMessage(d.name + " was deleted on disk", true, 4); }
@@ -180,6 +181,7 @@ void App::closeTab(int i, bool force) {
     std::vector<Document*> dependents;   // previews of the document being closed go with it
     for (const auto& [pd, v] : previews_) if (v.src == closingDoc) dependents.push_back(const_cast<Document*>(pd));
     previews_.erase(closingDoc);
+    notebooks_.erase(closingDoc);
     lspDetach(*docs_[static_cast<std::size_t>(i)]);
     closeCompletion();
     docs_.erase(docs_.begin() + i);
@@ -194,6 +196,7 @@ void App::closeTab(int i, bool force) {
 
 void App::saveCurrent() {
     Document& d = doc();
+    if (isNotebook(d)) { saveNotebook(d); return; }
     flushDoc(d);
     if (d.path.empty()) { openPrompt(PromptKind::SaveAs); return; }
     if (auto r = d.save(); r) {

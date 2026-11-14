@@ -94,12 +94,25 @@ void App::drawPreview(Document& d) {
     const MdView& v = it->second;
     const Rect& e = L_.editor;
     const float s = S(), sy = std::round(d.scrollY);
-    const float ox = e.x, oy = e.y - sy;
+    drawMdItems(v.lay, v.hoverUrl, e.x, e.y - sy, e.y, e.bottom(), v);
+    const float maxS = maxScroll(d);
+    if (maxS > 0) {   // same scrollbar as the editor
+        const float contentH = maxS + e.h;
+        const float thumbH = std::max(24 * s, e.h * e.h / contentH);
+        const float thumbY = e.y + (e.h - thumbH) * std::clamp(sy / maxS, 0.0f, 1.0f);
+        const float w = (scrollbarDrag_ ? 10.0f : 7.0f) * s;
+        fill(e.right() - w - 4 * s, thumbY, w, thumbH, theme::scrollbar, w / 2);
+    }
+}
+
+// Draws a laid-out Markdown document with its origin at (ox, oy); items outside [clipTop, clipBottom] are skipped.
+void App::drawMdItems(const MdLayout& lay, const std::string& hoverUrl, float ox, float oy, float clipTop, float clipBottom, const MdView& ctx) {
+    const float s = S();
     const float boldOff = std::max(1.0f, std::round(0.5f * s));
-    for (const MdItem& m : v.lay.items) {
+    for (const MdItem& m : lay.items) {
         const float y = oy + m.y;
-        if (y > e.bottom() || y + std::max(m.h, 1.0f) < e.y) continue;
-        const bool hot = m.link >= 0 && !v.hoverUrl.empty() && v.lay.links[static_cast<std::size_t>(m.link)].url == v.hoverUrl;
+        if (y > clipBottom || y + std::max(m.h, 1.0f) < clipTop) continue;
+        const bool hot = m.link >= 0 && !hoverUrl.empty() && lay.links[static_cast<std::size_t>(m.link)].url == hoverUrl;
         Color c = m.c;
         if (hot) c = m.t == MdItem::T::Rect ? c.alpha(255) : c.mix(Color::rgb(0xffffff), 0.35f);
         switch (m.t) {
@@ -116,7 +129,7 @@ void App::drawPreview(Document& d) {
                 if (m.bold) dl_.titleText(font_, ox + m.x + boldOff, y, m.s, c);
                 break;
             case MdItem::T::Image: {
-                const std::string key = pictureKey(const_cast<MdView&>(v), m.s);
+                const std::string key = pictureKey(const_cast<MdView&>(ctx), m.s);
                 auto pit = picCache_.find(key);
                 if (pit == picCache_.end() || pit->second.state != Pic::State::Ready || pit->second.epoch != pics_.epoch() || pit->second.levels.empty()) break;
                 const auto& lv = pit->second.levels;
@@ -129,14 +142,6 @@ void App::drawPreview(Document& d) {
             case MdItem::T::Check: Icons::glyph(dl_, font_, ox + m.x, y, static_cast<int>(m.w), 0xF012C, c); break;   // mdi-check
             case MdItem::T::Mono: dl_.text(font_, ox + m.x, y, m.s, c, m.w > 0 ? ox + m.w : std::numeric_limits<float>::infinity()); break;
         }
-    }
-    const float maxS = maxScroll(d);
-    if (maxS > 0) {   // same scrollbar as the editor
-        const float contentH = maxS + e.h;
-        const float thumbH = std::max(24 * s, e.h * e.h / contentH);
-        const float thumbY = e.y + (e.h - thumbH) * std::clamp(sy / maxS, 0.0f, 1.0f);
-        const float w = (scrollbarDrag_ ? 10.0f : 7.0f) * s;
-        fill(e.right() - w - 4 * s, thumbY, w, thumbH, theme::scrollbar, w / 2);
     }
 }
 

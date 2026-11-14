@@ -97,6 +97,16 @@ void App::onPointerMove(float lx, float ly) {
     else if (splitDrag_ || (sidebar_ && L_.split.contains(mx_, my_))) c = Cursor::ResizeW;
     else if (panelDrag_ || (panelOpen_ && L_.panel.contains(mx_, my_) && my_ < L_.panel.y + 6 * S())) c = Cursor::ResizeN;
     else if (Pane* hp = paneAt(mx_, my_); hp && hp->cur && isPreview(*hp->cur) && hp->editor.contains(mx_, my_)) c = previewHoverAt(*hp) ? Cursor::Hand : Cursor::Default;
+    else if (Pane* np = paneAt(mx_, my_); np && np->cur && isNotebook(*np->cur) && np->editor.contains(mx_, my_)) {
+        const NbView& nv = *notebooks_.at(np->cur);
+        c = Cursor::Default;
+        if (my_ < nv.viewTop) { for (const auto& btn : nv.btns) if (btn.r.contains(mx_, my_)) c = Cursor::Hand; }
+        else {
+            const float cy = my_ - nv.viewTop + std::round(np->cur->scrollY);
+            for (const auto& cell : nv.cells)
+                if (mx_ >= cell.boxX && mx_ < cell.boxX + cell.boxW && cy >= cell.boxY && cy < cell.boxY + cell.boxH) c = Cursor::Text;
+        }
+    }
     else if (!docs_.empty() && L_.editor.contains(mx_, my_) && mx_ >= L_.textX && !inScrollbar(doc(), mx_, my_) && !inMinimap(mx_, my_)) c = Cursor::Text;
     win_.setCursor(c);
 
@@ -181,7 +191,7 @@ void App::onPointerMove(float lx, float ly) {
         if (!(blameHover_ && hover_.show)) { blameHover_ = true; showBlameCard(blameHash_, blameUncommitted_); dirty_ = true; }
     }
     else if (hsel_.dragging || onPopup) {}
-    else if (!docs_.empty() && !menu_.open && !dragging_ && !isPreview(doc()) && L_.editor.contains(mx_, my_) && mx_ >= L_.textX && mx_ < L_.minimap.x) { blameHover_ = false; hoverMoved(); }
+    else if (!docs_.empty() && !menu_.open && !dragging_ && !isPreview(doc()) && !isNotebook(doc()) && L_.editor.contains(mx_, my_) && mx_ >= L_.textX && mx_ < L_.minimap.x) { blameHover_ = false; hoverMoved(); }
     else { blameHover_ = false; hideHover(); }
     if (panelDrag_) {
         panelH_ = std::clamp((L_.panel.bottom() - my_) / S(), 90.0f, std::max(90.0f, (L_.side.h > 0 ? L_.side.h : L_.island.h + L_.panel.h) / S() * 0.6f));
@@ -469,6 +479,11 @@ void App::onPointerButton(Button b, bool pressed, float lx, float ly) {
 
     if (docs_.empty() || !L_.editor.contains(mx_, my_)) return;
     Document& d = doc();
+    if (isNotebook(d)) {
+        if (b == Button::Left && inScrollbar(d, mx_, my_)) { scrollbarDrag_ = true; dragStep(d); }
+        else notebookClick(b);
+        return;
+    }
     if (isPreview(d)) {   // read-only rendered view: scrollbar and links only
         if (b == Button::Left && inScrollbar(d, mx_, my_)) { scrollbarDrag_ = true; dragStep(d); }
         else if (b == Button::Left) previewClick();
@@ -489,6 +504,7 @@ void App::onPointerButton(Button b, bool pressed, float lx, float ly) {
         if (mx_ < L_.editor.x + 1.9f * cw()) { dbgToggleBpAt(d.path, line + 1); return; }
         d.selectLine(line);
         dragging_ = false;
+        nbDragging_ = false;
         return;
     }
 

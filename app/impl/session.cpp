@@ -110,8 +110,12 @@ bool App::restoreSession() {
                 }
                 const std::string path = t["path"].str();
                 std::error_code ec;
-                auto d = std::make_unique<Document>();
-                if (path.empty() || !fs::is_regular_file(path, ec) || !d->load(path)) { ++i; continue; }
+                std::unique_ptr<Document> d;
+                if (path.ends_with(".ipynb")) { std::string err; if (fs::is_regular_file(path, ec)) d = createNotebookDoc(path, err); if (!d) { ++i; continue; } }
+                else {
+                    d = std::make_unique<Document>();
+                    if (path.empty() || !fs::is_regular_file(path, ec) || !d->load(path)) { ++i; continue; }
+                }
                 d->cursor = d->buf.clamp({t["line"].integer(), t["col"].integer()});
                 d->anchor = d->buf.clamp({t["aline"].integer(), t["acol"].integer()});
                 d->scrollY = d->targetY = static_cast<float>(t["scroll"].num());
@@ -138,6 +142,7 @@ bool App::restoreSession() {
     for (auto& d : docs_) lspDetach(*d);
     closeCompletion();
     previews_.clear();
+    for (auto& od : docs_) notebooks_.erase(od.get());
     docs_ = std::move(loaded);
     root_ = std::move(tree);
     for (const auto& pp : pendingPreviews) {

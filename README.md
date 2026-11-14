@@ -35,6 +35,7 @@ It is small, starts in well under a second, idles at zero wakeups, and prefers y
 - **Integrated terminal** — real PTY shell with a truecolor xterm emulator.
 - **Explorer** — Material icons, git status, drag to move, live refresh on external changes, trash support.
 - **Markdown preview** — `Ctrl+Shift+V` opens a live rendered view beside the editor: headings, lists, tables, code with syntax colours, working links and real images (PNG, JPEG, SVG, badges).
+- **C++ notebooks** — open an `.ipynb` and run C++20 modules cell by cell on a built-in kernel (GCC 15+): state persists, `import std;` and your own modules work, no Jupyter needed.
 - **Sessions** — open tabs, split layout, cursors and scroll position come back when you reopen a project (a plain launch continues the last one).
 - **Projects** — welcome screen, new-project wizard (C++, modules, library, C), recent projects, system folder chooser.
 - **Look** — translucent chrome with compositor blur (`ext-background-effect-v1`), client-side decorations, HiDPI.
@@ -47,7 +48,7 @@ See the [user guide](docs/USER_GUIDE.md) and [feature inventory](docs/FEATURES.m
 - A **Vulkan 1.3** capable GPU and driver
 - **GCC 15+** (or Clang with libc++), **CMake 4.3+**, **Ninja**
 - Development packages: `wayland-client`, `wayland-cursor`, `xkbcommon`, Vulkan headers/loader, and `glslc` **or** `libshaderc_shared`
-- Optional at run time: `clangd` (code intelligence), `gdb` (debugger), `git`, `curl` (remote images in the Markdown preview)
+- Optional at run time: `clangd` (code intelligence), `gdb` (debugger), `git`, `curl` (remote images in the Markdown preview), `g++` 15+ (C++ notebooks)
 
 On Fedora: `sudo dnf install gcc-c++ cmake ninja-build wayland-devel libxkbcommon-devel vulkan-headers vulkan-loader-devel glslc clang-tools-extra gdb git`
 

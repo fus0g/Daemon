@@ -17,6 +17,7 @@ target_sources(daemon_app
     impl/setup.cpp
     impl/session.cpp
     impl/md_view.cpp
+    impl/notebook_view.cpp
     impl/debugger.cpp
     impl/dialogs.cpp
     impl/documents.cpp

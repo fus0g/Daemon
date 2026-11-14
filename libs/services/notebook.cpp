@@ -773,6 +773,11 @@ Session::Session(std::string notebookPath) : d_(std::make_unique<Impl>()) {
     d_->sharedCache = (base / "daemon" / "notebook" / "shared").string();
     std::error_code ec;
     fs::remove_all(d_->dir, ec);
+    {   // directories of sessions that were never cleaned up (a crash): forget the ones untouched for a day
+        const auto cutoff = fs::file_time_type::clock::now() - std::chrono::hours(24);
+        for (const auto& e : fs::directory_iterator(fs::path(d_->dir).parent_path(), ec))
+            if (e.is_directory(ec) && e.path().filename().string().starts_with('s') && fs::last_write_time(e.path(), ec) < cutoff) fs::remove_all(e.path(), ec);
+    }
     fs::create_directories(d_->dir, ec);
     d_->worker = std::jthread([this](std::stop_token st) { d_->loop(st); });
 }
@@ -907,9 +912,15 @@ bool Session::Impl::prepare(int cell, std::string& error) {
     const fs::path shared = fs::path(sharedCache) / std::format("{:016x}", h);
     const fs::path stdGcm = shared / "std.gcm", supGcm = shared / "nb_support.gcm", kernelBin = shared / "nb_kernel";
     if (fs::exists(stdGcm, ec) && fs::exists(supGcm, ec) && fs::exists(kernelBin, ec)) {
-        fs::copy_file(stdGcm, fs::path(dir) / "gcm.cache" / "std.gcm", fs::copy_options::overwrite_existing, ec);
-        fs::copy_file(supGcm, fs::path(dir) / "gcm.cache" / "nb_support.gcm", fs::copy_options::overwrite_existing, ec);
-        fs::copy_file(kernelBin, fs::path(dir) / "nb_kernel", fs::copy_options::overwrite_existing, ec);
+        // hard links (the files are only read), copies when the cache is on another file system
+        auto link = [&](const fs::path& from, const fs::path& to) {
+            std::error_code e2;
+            fs::create_hard_link(from, to, e2);
+            if (e2) fs::copy_file(from, to, fs::copy_options::overwrite_existing, e2);
+        };
+        link(stdGcm, fs::path(dir) / "gcm.cache" / "std.gcm");
+        link(supGcm, fs::path(dir) / "gcm.cache" / "nb_support.gcm");
+        link(kernelBin, fs::path(dir) / "nb_kernel");
     } else {
         note(cell, "Building the std module (first run, about 5 s)...");
         ProcessOptions o;

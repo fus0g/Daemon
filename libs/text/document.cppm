@@ -69,7 +69,9 @@ public:
         hl.setLang(lang);
     }
 
-    bool modified() const { return buf.modified(); }
+    // Set by views that keep their own model (notebooks): the document counts as modified although its buffer is not.
+    bool extraModified = false;
+    bool modified() const { return buf.modified() || extraModified; }
 
     // ------------------------------------------------------------ selection helpers
 

@@ -27,6 +27,40 @@ the pane, small ones (badges) sit inline with the text, and a picture that canno
 support is NanoSVG's (shapes, paths, gradients; no CSS, filters or clip paths) plus our own `<text>` drawing, which is what shields.io
 badges need. The preview tab is part of the saved session.
 
+### Notebooks (C++ in `.ipynb` files)
+
+Open or create a file ending in `.ipynb` (File > Open, or a new file with that name) and it opens as a notebook: a list of
+**code** and **markdown** cells, each with its own editor. Nothing else has to be installed: Jupyter is not used, the notebook
+runs on Daemon's own C++ kernel, and the files are ordinary Jupyter notebooks (nbformat 4) that other tools can open too.
+
+**Running.** `Shift+Enter` runs the cell and moves on (adding a cell after the last one), `Ctrl+Enter` runs it in place,
+`Alt+Enter` runs it and inserts a cell below. The toolbar has *Run*, *Run all* (`Ctrl+Shift+Enter`), *Stop*, *Restart*, *+ Code*,
+*+ Text*, *Delete* and *Save* (`Ctrl+S`). Output, the value of a last expression written without a semicolon (`v.size()`), and
+compiler errors with `cell:line:col` positions appear under the cell. Variables, functions, classes, templates and `using`
+declarations stay alive between cells and between runs of a cell, until you press *Restart*.
+
+**Modes** (as in Jupyter). `Esc` leaves editing: arrow keys / `j` `k` move between cells, `Enter` edits, `a` / `b` insert a cell
+above / below, `dd` deletes, `m` / `y` turn a cell into markdown / code. Markdown cells are rendered like the preview (double
+click or `Enter` edits). `Up` / `Down` at the first / last line of a cell move into the neighbouring one.
+
+**How it works.** Every cell is compiled with GCC as a C++20 module and loaded into a long-lived runner process, so the
+compiler itself carries types and `auto` variables from cell to cell. A cell is split into declarations (exported, kept) and
+statements (run once); `#include`s, macros, `using namespace` and `import`s are repeated in later cells automatically. That
+makes `import std;` work, and so do modules of your own: a cell that starts with `export module geometry;` is compiled as that
+module, and a later cell can `import geometry;`.
+
+**Magics.** Lines at the top of a cell: `%flags -O2 -I/some/include -DFOO` adds compiler flags for this and later cells,
+`%link -lm -lfoo` adds libraries.
+
+**Limits.** Needs **GCC 15 or newer** (`g++` on `PATH`, or set `DAEMON_NB_CXX`); the first run builds the `std` module (about
+5 s, then cached in `~/.cache/daemon/notebook`), a cell takes about a second to compile. Redefining a name that an earlier
+cell defined is an error unless you re-run that same cell. A top-level variable declared in a cell is a global, so it keeps its
+value; structured bindings (`auto [a, b] = ...`) are local to their cell. *Stop* kills the kernel (a runaway loop cannot be
+interrupted otherwise), which also forgets the variables. `std::cin` reads nothing. Plots and images are not shown yet. Notebooks
+of other languages open for reading and editing but cannot be run.
+
+`daemon --nb-run in.ipynb [out.ipynb]` runs all cells without a window and writes the outputs (handy for CI).
+
 ### File explorer
 
 Right-click a row (or the empty area) for the context menu. With the sidebar focused:

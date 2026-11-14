@@ -51,7 +51,7 @@ const Lang* langByName(std::string_view name) {
 
 class Builder {
 public:
-    Builder(FontAtlas& f, float width, float s, const MdImageSize& sizer) : f_(f), s_(s), width_(width), sizer_(sizer) {
+    Builder(FontAtlas& f, float width, float s, const MdImageSize& sizer, bool center) : f_(f), s_(s), width_(width), sizer_(sizer), center_(center) {
         bh_ = std::round(f_.uiLineHeight() * 1.5f);
         boldOff_ = std::max(1.0f, std::round(0.5f * s_));
         items_ = &out_.items;
@@ -62,7 +62,7 @@ public:
         const float pad = std::round(28 * s_);
         const float usable = std::max(120.0f * s_, width_ - 2 * pad - std::round(10 * s_));
         const float colW = std::min(usable, std::round(880 * s_));
-        const float x0 = pad + std::max(0.0f, std::floor((usable - colW) / 2));
+        const float x0 = pad + (center_ ? std::max(0.0f, std::floor((usable - colW) / 2)) : 0.0f);
         float y = std::round(22 * s_);
         y = sequence(blocks, x0, colW, y, 0, false, theme::text);
         out_.height = y + std::round(36 * s_);
@@ -73,6 +73,7 @@ private:
     FontAtlas& f_;
     float s_, width_, bh_ = 20, boldOff_ = 1;
     const MdImageSize& sizer_;
+    bool center_ = true;
     MdLayout out_;
     std::vector<MdItem>* items_;
     std::vector<MdLink>* links_;
@@ -477,8 +478,8 @@ private:
 
 }  // namespace
 
-MdLayout mdLayout(const std::vector<md::Block>& blocks, FontAtlas& font, float width, float scale, const MdImageSize& imageSize) {
-    return Builder(font, width, scale, imageSize).run(blocks);
+MdLayout mdLayout(const std::vector<md::Block>& blocks, FontAtlas& font, float width, float scale, const MdImageSize& imageSize, bool center) {
+    return Builder(font, width, scale, imageSize, center).run(blocks);
 }
 
 }  // namespace ide

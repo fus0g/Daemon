@@ -24,6 +24,7 @@ import daemon.base.process;
 import daemon.services.cmake;
 import daemon.services.project;
 import daemon.services.toolchain;
+import daemon.services.notebook;
 import daemon.services.git;
 import daemon.services.search;
 import daemon.services.gdb;
@@ -135,7 +136,10 @@ private:
         bool cut = false;
     };
 
-    Document& doc() { return *docs_[static_cast<std::size_t>(cur_)]; }
+    // The document keys act on: normally the current tab, but while a notebook routes a key to the cell being edited it is
+    // that cell's buffer.
+    Document& doc() { return docOverride_ ? *docOverride_ : *docs_[static_cast<std::size_t>(cur_)]; }
+    Document* docOverride_ = nullptr;
     float lh() const { return font_.lineHeight(); }
     float cw() const { return font_.cellW(); }
     float S() const { return static_cast<float>(scale_); }
@@ -226,6 +230,61 @@ private:
     bool previewHoverAt(Pane& p);
     void previewClick();
     void openLink(MdView& v, const std::string& url);
+
+    void drawMdItems(const MdLayout& lay, const std::string& hoverUrl, float ox, float oy, float clipTop, float clipBottom, const MdView& ctx);
+
+    // ---- notebooks: a tab that shows an .ipynb as a list of editable cells, run by a C++ kernel (see services/notebook)
+    struct NbCell {
+        nb::Cell data;                       // type, outputs, execution count, id, metadata (the text lives in `doc`)
+        std::unique_ptr<Document> doc;
+        int rid = 0;                         // stable id the kernel events refer to
+        bool running = false, queued = false;
+        float y = 0, h = 0, boxX = 0, boxY = 0, boxW = 0, boxH = 0, outY = 0;   // content coordinates, set by layoutNotebook
+        std::vector<md::Block> blocks;       // markdown cells: rendered form
+        MdLayout lay;
+        std::uint64_t mdVer = 0;
+        float mdWidth = 0;
+        bool mdParsed = false;
+    };
+    struct NbView {
+        Document* owner = nullptr;
+        nb::Notebook meta;                   // metadata of the file (the cells live in `cells`)
+        std::vector<NbCell> cells;
+        std::unique_ptr<nb::Session> session;
+        int sel = 0;
+        bool editing = false, pendingD = false, follow = true, runnable = true;
+        int nextRid = 1;
+        float contentH = 0, viewH = 0, viewTop = 0;
+        struct Btn { Rect r; int id = 0; };
+        std::vector<Btn> btns;
+        std::string note;                    // what the kernel last said about itself ("Building the std module...")
+        MdView md;                           // path context for relative images in markdown cells
+    };
+    std::unordered_map<const Document*, std::unique_ptr<NbView>> notebooks_;
+    bool nbDragging_ = false;
+    bool isNotebook(const Document& d) const { return notebooks_.contains(&d); }
+    std::unique_ptr<Document> createNotebookDoc(const std::string& absPath, std::string& error);
+    void openNotebook(const std::string& absPath);
+    void saveNotebook(Document& d);
+    std::string notebookText(NbView& v);
+    void layoutNotebook(Document& d);
+    void drawNotebook(Document& d);
+    void drawCellText(Document& cd, float x, float y, float w, bool active);
+    bool notebookKey(const KeyEvent& k);
+    void notebookClick(Button b);
+    void notebookDragStep();
+    void notebookPoll();
+    bool notebookBusy() const;
+    void nbRun(NbView& v, int idx);
+    void nbRunAll(NbView& v);
+    void nbInsert(NbView& v, int at, nb::Cell::Type t);
+    void nbDelete(NbView& v);
+    void nbSetType(NbView& v, nb::Cell::Type t);
+    void nbSelect(NbView& v, int i, bool edit);
+    void nbMarkModified(NbView& v) { v.owner->extraModified = true; dirty_ = true; }
+    NbCell makeNbCell(NbView& v, nb::Cell data);
+    Pos nbCellPosAt(const NbView& v, const NbCell& c, float mx, float cy) const;
+    bool nbNeedsSession(NbView& v);
 
     // ---- sessions: open files, split layout, cursor and scroll positions are kept per project and restored on open
     void saveSession(bool force = false);
@@ -383,6 +442,7 @@ private:
     void leavePane(Pane& p, const PaneCtx& sv);
 
     float maxScroll(const Document& d) const {
+        if (auto nit = notebooks_.find(&d); nit != notebooks_.end()) return std::max(0.0f, nit->second->contentH - nit->second->viewH);
         if (auto it = previews_.find(&d); it != previews_.end()) return std::max(0.0f, it->second.lay.height - L_.editor.h);
         return std::max(0.0f, (static_cast<float>(d.buf.lineCount()) - 1.0f) * lh());
     }

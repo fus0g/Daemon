@@ -435,6 +435,7 @@ std::optional<Clock::time_point> App::nextWake() const {
     if (sPending_) consider(sRunAt_);
     if (nextBlameWake_ > Clock::now()) consider(nextBlameWake_);
     if (lsp_ && cmakeOpen_) consider(nextDbCheck_);
+    if (notebookBusy()) consider(Clock::now() + std::chrono::milliseconds(50));   // kernel output arrives on its own thread
     if (lsp_ && healTries_ < 3 && nextHeal_ != Clock::time_point{}) consider(nextHeal_);
     if (hover_.pending) consider(hover_.due);
     return t;
@@ -443,6 +444,7 @@ std::optional<Clock::time_point> App::nextWake() const {
 void App::update(Clock::time_point now, float dt) {
     if (toolDl_) dirty_ = true;   // download progress is polled while drawing
     sessionTick(now);
+    notebookPoll();
     if (fsPending_ && now >= fsEventAt_ + std::chrono::milliseconds(150)) { fsPending_ = false; handleFsChanges(); }
     if (sPending_ && now >= sRunAt_) startSearch();
     if (now >= fsSyncAt_) { fsSyncAt_ = now + std::chrono::seconds(1); syncFsWatches(); }
@@ -466,6 +468,8 @@ void App::update(Clock::time_point now, float dt) {
     if (!docs_.empty()) {
         Document& d = doc();
         if (isPreview(d)) refreshPreview(d);
+        if (isNotebook(d)) layoutNotebook(d);
+        if (nbDragging_) notebookDragStep();
         if (scrollToCursor_) { ensureCursorVisible(d); scrollToCursor_ = false; }
         if (dragging_ || scrollbarDrag_) dragStep(d);
         clampScroll(d);
@@ -565,8 +569,8 @@ void App::updateTitle() {
 }
 
 void App::screenshotStep() {
-    const bool busy = tasksRunning() || pendingBuild_ || hover_.pending || !jobs_.empty() || Clock::now() < settleUntil_;
-    if (frames_ >= opt_.screenshotFrames && !shotRequested_ && ((!busy && scriptPos_ >= script_.size()) || frames_ > 2400)) {
+    const bool busy = tasksRunning() || pendingBuild_ || hover_.pending || !jobs_.empty() || notebookBusy() || Clock::now() < settleUntil_;
+    if (frames_ >= opt_.screenshotFrames && !shotRequested_ && ((!busy && scriptPos_ >= script_.size()) || frames_ > (notebookBusy() || scriptPos_ < script_.size() ? 1000000 : 2400))) {
         shotRequested_ = true;
         ren_.requestScreenshot(opt_.screenshot);
         dirty_ = true;

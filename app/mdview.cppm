@@ -37,6 +37,6 @@ struct MdLayout {
 using MdImageSize = std::function<std::pair<int, int>(const std::string& src)>;
 
 // `width` is the viewport width in pixels, `scale` the UI scale factor.
-MdLayout mdLayout(const std::vector<md::Block>& blocks, FontAtlas& font, float width, float scale, const MdImageSize& imageSize = {});
+MdLayout mdLayout(const std::vector<md::Block>& blocks, FontAtlas& font, float width, float scale, const MdImageSize& imageSize = {}, bool center = true);
 
 }  // namespace ide

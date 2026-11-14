@@ -342,6 +342,7 @@ void App::drawEditor(Document& d) {
     const Rect& e = L_.editor;
     if (e.h <= 0) return;
     if (isPreview(d)) { drawPreview(d); return; }
+    if (isNotebook(d)) { drawNotebook(d); return; }
     const float line = lh(), cell = cw(), s = S();
     const float sy = std::round(d.scrollY), sx = std::round(d.scrollX);
     const float baseX = L_.textX - sx;
@@ -591,6 +592,12 @@ void App::drawStatus() {
     carve(r);
     if (docs_.empty()) return;
     Document& d = doc();
+    if (isNotebook(d)) {
+        const auto& nv = *notebooks_.at(&d);
+        uiLabelR(r.w - std::round(16 * s), r.y, r.h, nv.runnable ? "Notebook - C++" : "Notebook", theme::dim);
+        uiLabel(L_.island.x + 8 * s, r.y, r.h, !message_.empty() ? message_ : d.path, !message_.empty() && messageError_ ? Color::rgb(0xe6a23c) : theme::dim, r.w - 220 * s);
+        return;
+    }
     if (isPreview(d)) {   // nothing editable: just say what is shown
         uiLabelR(r.w - std::round(16 * s), r.y, r.h, "Markdown preview", theme::dim);
         const auto& v = previews_.at(&d);

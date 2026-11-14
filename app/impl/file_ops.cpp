@@ -438,6 +438,7 @@ void App::editorKey(const KeyEvent& k) {
     if (comp_.open && completionKey(k)) { scrollToCursor_ = true; return; }
     hideHover();
     if (isPreview(doc()) && previewKey(k)) return;
+    if (isNotebook(doc()) && notebookKey(k)) return;
     const Document* dp = &doc();
     const std::uint64_t verBefore = doc().buf.version();
     editorKeyImpl(k);
