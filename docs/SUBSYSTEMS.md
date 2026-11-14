@@ -25,6 +25,9 @@
   replay lines; re-running a cell replaces its entry, so redefinitions do not clash.
 - Markers in the runner's output (`ESC ] nb ; res|done ; ... BEL`) carry results and completion. A stuck cell is stopped by killing
   the runner (state lost) - there is no cooperative interrupt.
+- IntelliSense: `buildVirtualDoc` turns the code cells into one C++ file (chunks keep their column, so `toVirtual` / `fromVirtual` map
+  positions both ways); each notebook owns a clangd (`NbView::lsp`, started on first edit, `nbLspSync` sends the file 150 ms after a
+  change). The ordinary completion popup, hover and squiggle code is reused through `lspTarget()` / `lspAvailable()` and `docOverride_`.
 - Tests: `tests/test_markdown.cpp` (planner, file format; `DAEMON_TEST_NB=1` adds a real compile-and-run test), `daemon --nb-run`.
 
 ## Git — `services/git`, `app/impl/git_view.cpp`

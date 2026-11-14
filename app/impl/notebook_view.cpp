@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // daemon.app / notebook_view - the notebook tab: an .ipynb as a list of editable cells, executed by the C++ kernel.
+module;
+#include <unistd.h>
 module daemon.app;
 import std;
 import daemon.base.util;
@@ -14,6 +16,9 @@ import daemon.text.buffer;
 import daemon.text.markdown;
 import daemon.text.syntax;
 import daemon.services.notebook;
+import daemon.services.lsp;
+import daemon.base.json;
+import daemon.base.process;
 
 namespace ide {
 
@@ -25,6 +30,8 @@ constexpr Color kCodeBox = Color::rgb(0x0f1114);
 constexpr Color kErr = Color::rgb(0xf2777a);
 constexpr Color kEditGreen = Color::rgb(0x6aab73);
 constexpr int kMaxOutLines = 400;
+constexpr int kMaxErrLines = 40;
+int maxLinesFor(const nb::Output& o) { return o.kind == nb::Output::Kind::Error ? kMaxErrLines : kMaxOutLines; }
 constexpr std::size_t kMaxOutBytes = 256 * 1024;
 
 int lineCount(const std::string& t) {
@@ -125,8 +132,10 @@ bool App::notebookBusy() const {
 
 void App::nbSelect(NbView& v, int i, bool edit) {
     if (v.cells.empty()) return;
+    closeCompletion();
     v.sel = std::clamp(i, 0, static_cast<int>(v.cells.size()) - 1);
     v.editing = edit;
+    if (edit && v.cells[static_cast<std::size_t>(v.sel)].data.type == nb::Cell::Type::Code) nbEnsureLsp(v);
     v.pendingD = false;
     v.follow = true;
     resetCaret();
@@ -270,7 +279,7 @@ void App::layoutNotebook(Document& d) {
             c.boxH = static_cast<float>(c.doc->buf.lineCount()) * line + 2 * bpad;
             float oh = 0;
             if (c.data.type == nb::Cell::Type::Code)
-                for (const auto& o : c.data.outputs) oh += static_cast<float>(std::min(kMaxOutLines + 1, lineCount(o.text))) * line + std::round(4 * s);
+                for (const auto& o : c.data.outputs) oh += static_cast<float>(std::min(maxLinesFor(o) + 1, lineCount(o.text))) * line + std::round(4 * s);
             if (oh > 0) oh += std::round(4 * s);
             c.outY = y + c.boxH + std::round(4 * s);
             c.h = c.boxH + oh;
@@ -293,7 +302,7 @@ void App::layoutNotebook(Document& d) {
     }
 }
 
-void App::drawCellText(Document& cd, float x, float y, float w, bool active) {
+void App::drawCellText(Document& cd, float x, float y, float w, bool active, const std::vector<LspDiag>* diags) {
     const float line = lh(), cell = cw(), s = S();
     const int total = cd.buf.lineCount();
     const bool hasSel = active && cd.hasSelection();
@@ -323,6 +332,23 @@ void App::drawCellText(Document& cd, float x, float y, float w, bool active) {
             }
             cx += cell;
             ++dcol;
+        }
+    }
+    if (diags) {   // squiggles under what clangd complains about
+        for (const LspDiag& dg : *diags) {
+            const Color c = diagColor(dg.severity);
+            for (int ln = std::max(dg.line, 0); ln <= std::min(dg.endLine, total - 1); ++ln) {
+                const std::string& str = cd.buf.line(ln);
+                int sc = ln == dg.line ? byteColFromUtf16(str, dg.col) : static_cast<int>(std::min(str.find_first_not_of(" \t"), str.size()));
+                int ec = ln == dg.endLine ? byteColFromUtf16(str, dg.endCol) : static_cast<int>(str.size());
+                if (ec <= sc) ec = static_cast<int>(utf8Next(str, static_cast<std::size_t>(sc)));
+                const float x0 = x + static_cast<float>(displayCol(str, sc, cd.tabWidth)) * cell;
+                const float x1 = std::max(x0 + cell, x + static_cast<float>(displayCol(str, ec, cd.tabWidth)) * cell);
+                const float sy = y + static_cast<float>(ln + 1) * line - std::round(3.5f * s);
+                const float step = std::max(2.0f, std::round(2.0f * s)), th = std::max(1.0f, std::round(1.2f * s));
+                int k = 0;
+                for (float sx = x0; sx < std::min(x1, right); sx += step, ++k) fill(sx, sy + ((k & 1) ? std::round(1.5f * s) : 0.0f), std::min(step, x1 - sx), th, c);
+            }
         }
     }
     if (active && caretOn_ && (focused_ || !opt_.screenshot.empty())) {
@@ -356,7 +382,8 @@ void App::drawNotebook(Document& d) {
             fill(c.boxX, by, c.boxW, c.boxH, kCodeBox, std::round(6 * s));
             const Color ring = editingThis ? kEditGreen.alpha(170) : selected ? theme::accent.alpha(160) : Color::rgb(0xffffff, 26);
             dl_.ring(font_, c.boxX, by, c.boxW, c.boxH, ring, std::round(6 * s), std::max(1.0f, std::round(s * (selected ? 1.2f : 0.8f))));
-            drawCellText(*c.doc, c.boxX + bpad, by + bpad, c.boxW - 2 * bpad, editingThis);
+            const auto dit = v.lsp.diags.find(c.doc.get());
+            drawCellText(*c.doc, c.boxX + bpad, by + bpad, c.boxW - 2 * bpad, editingThis, dit != v.lsp.diags.end() ? &dit->second : nullptr);
             if (c.doc->buf.lineCount() == 1 && c.doc->buf.line(0).empty() && !editingThis)
                 label(c.boxX + bpad, by + bpad, code ? "// code" : "markdown", theme::lineNum);
             if (c.data.type == nb::Cell::Type::Code) {   // the execution counter in the margin
@@ -377,7 +404,7 @@ void App::drawNotebook(Document& d) {
             float oy = top + c.outY - sy;
             for (const auto& o : c.data.outputs) {
                 const int n = lineCount(o.text);
-                const int shown = std::min(n, kMaxOutLines);
+                const int shown = std::min(n, maxLinesFor(o));
                 const Color col = o.kind == nb::Output::Kind::Error ? kErr : o.kind == nb::Output::Kind::Result ? theme::text : Color::rgb(0xc2c6cf);
                 if (o.kind == nb::Output::Kind::Result)
                     uiLabelR(c.boxX - std::round(10 * s), oy, line, c.data.execCount > 0 ? std::format("Out [{}]:", c.data.execCount) : "Out:", theme::accent.mix(theme::text, 0.3f));
@@ -391,7 +418,7 @@ void App::drawNotebook(Document& d) {
                     if (ln + 1 == shown && n > shown) row = std::format("... {} more lines", n - shown);
                     label(c.boxX + bpad, ly, row, col, c.boxX + c.boxW);
                 }
-                oy += static_cast<float>(std::min(kMaxOutLines + 1, n)) * line + std::round(4 * s);
+                oy += static_cast<float>(std::min(maxLinesFor(o) + 1, n)) * line + std::round(4 * s);
             }
         }
     }
@@ -425,6 +452,7 @@ void App::drawNotebook(Document& d) {
     }
     std::string status = !v.runnable ? "no C++ kernel for this notebook" : v.session ? v.session->statusLine() : "C++ kernel (GCC modules) - starts with the first run";
     if (!v.note.empty() && busy) status = v.note;
+    status = std::string(v.editing ? "EDIT mode" : "COMMAND mode (Enter edits)") + "   |   " + status;
     uiLabelR(e.right() - pad, e.y, tbH, status, busy ? theme::text : theme::dim);
 }
 
@@ -452,7 +480,7 @@ bool App::notebookKey(const KeyEvent& k) {
 
     if (v.editing) {
         if (k.key == Key::Escape && !comp_.open) { v.editing = false; v.pendingD = false; return true; }
-        if (plain && !k.shift) {   // arrow keys cross into the neighbouring cell at its first / last line
+        if (plain && !k.shift && !comp_.open) {   // arrow keys cross into the neighbouring cell at its first / last line
             if (k.key == Key::Up && cur.doc->cursor.line == 0 && v.sel > 0) {
                 nbSelect(v, v.sel - 1, true);
                 NbCell& p = v.cells[static_cast<std::size_t>(v.sel)];
@@ -490,6 +518,7 @@ bool App::notebookKey(const KeyEvent& k) {
         case Key::End: nbSelect(v, static_cast<int>(v.cells.size()) - 1, false); return true;
         case Key::Enter: nbSelect(v, v.sel, true); return true;
         case Key::Delete: nbDelete(v); return true;
+        case Key::Left: case Key::Right: setMessage("Command mode: press Enter or click inside the cell to edit its text", false, 3.5f); return true;
         case Key::Char:
             switch (k.ch) {
                 case U'k': nbSelect(v, v.sel - 1, false); return true;
@@ -500,7 +529,7 @@ bool App::notebookKey(const KeyEvent& k) {
                 case U'y': nbSetType(v, nb::Cell::Type::Code); return true;
                 case U'r': nbSetType(v, nb::Cell::Type::Raw); return true;
                 case U'i': if (v.session) { v.session->interrupt(); setMessage("Kernel stopped - its variables are gone", false, 3); } return true;
-                default: return true;   // letters do nothing in command mode
+                default: setMessage("Command mode: press Enter or click inside the cell to type (Esc comes back here)", false, 3.5f); return true;
             }
         default: return false;
     }
@@ -568,6 +597,220 @@ void App::notebookDragStep() {
     NbCell& c = v.cells[static_cast<std::size_t>(v.sel)];
     const float cy = my_ - v.viewTop + std::round(doc().scrollY);
     c.doc->setCursor(nbCellPosAt(v, c, mx_, cy), true);
+    dirty_ = true;
+}
+
+// ---------------------------------------------------------------------------- IntelliSense
+
+auto App::nbOfCell(const Document& d) const -> NbView* {
+    for (const auto& [doc, v] : notebooks_)
+        for (const auto& c : v->cells) if (c.doc.get() == &d) return v.get();
+    return nullptr;
+}
+
+int App::nbCellIndex(const NbView& v, const Document& d) const {
+    for (std::size_t i = 0; i < v.cells.size(); ++i) if (v.cells[i].doc.get() == &d) return static_cast<int>(i);
+    return -1;
+}
+
+void App::nbStopLsp(NbView& v) {
+    if (v.lsp.fd >= 0) win_.unwatch(v.lsp.fd);
+    v.lsp.fd = -1;
+    v.lsp.client.reset();
+    v.lsp.opened = false;
+    v.lsp.diags.clear();
+    if (!v.lsp.dir.empty()) { std::error_code ec; fs::remove_all(v.lsp.dir, ec); }
+}
+
+void App::eraseNotebook(const Document* d) {
+    auto it = notebooks_.find(d);
+    if (it == notebooks_.end()) return;
+    nbStopLsp(*it->second);
+    notebooks_.erase(it);
+}
+
+// clangd for the notebook, started on first use: it sees the virtual C++ file described in services/notebook.
+bool App::nbEnsureLsp(NbView& v) {
+    if (v.lsp.client) return true;
+    if (v.lsp.failed || !v.runnable) return false;
+    const char* env = std::getenv("IDE_CLANGD");
+    auto exe = findExecutable(env && *env ? env : "clangd");
+    if (!exe) {
+        v.lsp.failed = true;
+        if (!lspNoticeShown_) { lspNoticeShown_ = true; setMessage("clangd not found - install it (or set IDE_CLANGD) for completion in notebooks", true, 7); }
+        return false;
+    }
+    fs::path base;
+    if (const char* x = std::getenv("XDG_CACHE_HOME"); x && *x) base = x;
+    else if (const char* h = std::getenv("HOME"); h && *h) base = fs::path(h) / ".cache";
+    else base = fs::temp_directory_path();
+    std::uint64_t hash = 1469598103934665603ull;
+    for (unsigned char c : v.owner->path) { hash ^= c; hash *= 1099511628211ull; }
+    hash ^= static_cast<std::uint64_t>(::getpid()) * 0x9E3779B97F4A7C15ull;
+    v.lsp.dir = (base / "daemon" / "notebook" / std::format("lsp{:016x}", hash)).string();
+    v.lsp.path = (fs::path(v.lsp.dir) / "notebook.cpp").string();
+    std::error_code ec;
+    fs::create_directories(v.lsp.dir, ec);
+    writeFile(v.lsp.path, "");
+    // compile command: clang with libstdc++ (the GCC the kernel uses), plus -I / -D / -std from the cells' %flags magics
+    auto args = json::array();
+    for (const char* a : {"clang++", "-std=c++23", "-stdlib=libstdc++", "-x", "c++"}) args.push(a);
+    args.push("-I" + fs::path(v.owner->path).parent_path().string());
+    for (const auto& c : v.cells)
+        for (const auto& f : nb::planCell(c.doc->buf.text()).flags)
+            if (f.starts_with("-I") || f.starts_with("-D") || f.starts_with("-U") || f.starts_with("-std=")) args.push(f);
+    args.push(v.lsp.path);
+    auto entry = json::object();
+    entry.set("directory", v.lsp.dir).set("file", v.lsp.path).set("arguments", std::move(args));
+    writeFile(fs::path(v.lsp.dir) / "compile_commands.json", json::dump(json::array().push(std::move(entry))));
+
+    std::vector<std::string> argv = {"nice", "-n", "10", *exe, "--log=error", "--header-insertion=never", "--completion-parse=always", "-j=2",
+                                     "--background-index=false", "--compile-commands-dir=" + v.lsp.dir};
+    auto client = std::make_unique<LspClient>();
+    NbView* vp = &v;
+    client->onDiagnostics = [this, vp](const std::string& path, std::vector<LspDiag> diags) {
+        if (path != vp->lsp.path) return;
+        vp->lsp.diags.clear();
+        for (auto& d : diags) {
+            if (d.severity > 2 || d.code == "unused-includes") continue;
+            std::string m = d.message;
+            for (auto& ch : m) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            if (m.find("unused") != std::string::npos || m.find("result of") != std::string::npos) continue;   // noise: values shown by the notebook, globals nobody reads yet
+            const auto a = nb::fromVirtual(vp->lsp.vdoc, d.line, d.col);
+            if (!a || a->cell < 0 || a->cell >= static_cast<int>(vp->cells.size())) continue;
+            LspDiag out = d;
+            out.line = a->line;
+            out.col = a->col;
+            const auto b = nb::fromVirtual(vp->lsp.vdoc, d.endLine, d.endCol);
+            if (b && b->cell == a->cell) { out.endLine = b->line; out.endCol = b->col; }
+            else { out.endLine = a->line; out.endCol = a->col + 1; }
+            vp->lsp.diags[vp->cells[static_cast<std::size_t>(a->cell)].doc.get()].push_back(std::move(out));
+        }
+        dirty_ = true;
+    };
+    client->onState = [vp](LspClient::State st) { if (st == LspClient::State::Failed) vp->lsp.failed = true; };
+    if (auto r = client->start(argv, v.lsp.dir); !r) { v.lsp.failed = true; return false; }
+    v.lsp.fd = client->fd();
+    v.lsp.client = std::move(client);
+    win_.watch(v.lsp.fd, [this, vp] {
+        if (!vp->lsp.client) return;
+        vp->lsp.client->pump();
+        if (vp->lsp.client->fd() < 0) { win_.unwatch(vp->lsp.fd); vp->lsp.fd = -1; }
+        dirty_ = true;
+    });
+    v.lsp.opened = false;
+    nbLspSync(v, true);
+    return true;
+}
+
+// Sends the current text of all code cells (as one virtual file) when it changed; edits are batched for 150 ms.
+void App::nbLspSync(NbView& v, bool force) {
+    if (!v.lsp.client) return;
+    std::uint64_t sig = 1469598103934665603ull;
+    auto mix = [&](std::uint64_t x) { sig ^= x + 0x9E3779B97F4A7C15ull + (sig << 6) + (sig >> 2); };
+    for (std::size_t i = 0; i < v.cells.size(); ++i) {
+        if (v.cells[i].data.type != nb::Cell::Type::Code) continue;
+        mix(i); mix(v.cells[i].doc->buf.version()); mix(v.cells[i].doc->buf.lineCount());
+    }
+    if (v.lsp.opened && sig == v.lsp.sig) { v.lsp.flushAt.reset(); return; }
+    const auto now = Clock::now();
+    if (!force && v.lsp.opened) {
+        if (!v.lsp.flushAt) v.lsp.flushAt = now + std::chrono::milliseconds(150);
+        if (now < *v.lsp.flushAt) return;
+    }
+    v.lsp.flushAt.reset();
+    std::vector<std::pair<int, std::string>> cells;
+    for (std::size_t i = 0; i < v.cells.size(); ++i)
+        if (v.cells[i].data.type == nb::Cell::Type::Code) cells.emplace_back(static_cast<int>(i), v.cells[i].doc->buf.text());
+    v.lsp.vdoc = nb::buildVirtualDoc(cells);
+    if (!v.lsp.opened) { v.lsp.client->didOpen(v.lsp.path, "cpp", ++v.lsp.version, v.lsp.vdoc.text); v.lsp.opened = true; }
+    else v.lsp.client->didChange(v.lsp.path, ++v.lsp.version, v.lsp.vdoc.text);
+    v.lsp.sig = sig;
+}
+
+std::optional<App::LspTarget> App::lspTarget(Document& d, Pos p) {
+    if (NbView* v = nbOfCell(d)) {
+        const int idx = nbCellIndex(*v, d);
+        if (idx < 0 || v->cells[static_cast<std::size_t>(idx)].data.type != nb::Cell::Type::Code) return std::nullopt;
+        if (!v->lsp.client || !v->lsp.client->ready()) return std::nullopt;
+        nbLspSync(*v, true);   // the server must see what is on screen
+        const auto m = nb::toVirtual(v->lsp.vdoc, idx, p.line, p.col);
+        if (!m) return std::nullopt;
+        return LspTarget{v->lsp.client.get(), v->lsp.path, m->first, utf16Col(d.buf.line(p.line), p.col)};
+    }
+    if (lsp_ && lsp_->ready() && isCppDoc(d) && d.lspOpen) {
+        flushDoc(d);
+        auto [l, c] = lspPos(d, p);
+        return LspTarget{lsp_.get(), d.path, l, c};
+    }
+    return std::nullopt;
+}
+
+bool App::lspAvailable(Document& d) {
+    if (NbView* v = nbOfCell(d)) {
+        const int idx = nbCellIndex(*v, d);
+        if (idx < 0 || v->cells[static_cast<std::size_t>(idx)].data.type != nb::Cell::Type::Code) return false;
+        return nbEnsureLsp(*v) && v->lsp.client && v->lsp.client->ready();
+    }
+    return lsp_ && lsp_->ready() && isCppDoc(d);
+}
+
+void App::nbHoverMoved() {
+    if (docs_.empty()) return;
+    auto nit = notebooks_.find(&doc());
+    if (nit == notebooks_.end()) return;
+    NbView& v = *nit->second;
+    const float cy = my_ - v.viewTop + std::round(doc().scrollY);
+    for (auto& c : v.cells) {
+        if (c.data.type != nb::Cell::Type::Code || mx_ < c.boxX || mx_ >= c.boxX + c.boxW || cy < c.boxY || cy >= c.boxY + c.boxH) continue;
+        const Pos p = nbCellPosAt(v, c, mx_, cy);
+        if ((hover_.pending || hover_.show) && hoverCell_ == c.doc.get() && p == hover_.pos) return;
+        nbEnsureLsp(v);
+        hoverCell_ = c.doc.get();
+        hover_.show = false;
+        hover_.pos = p;
+        hover_.px = mx_;
+        hover_.py = my_;
+        hover_.pending = true;
+        hover_.due = Clock::now() + std::chrono::milliseconds(450);
+        ++hoverSeq_;
+        dirty_ = true;
+        return;
+    }
+    hoverCell_ = nullptr;
+    hideHover();
+}
+
+void App::nbHoverTick(Clock::time_point now) {
+    if (!hover_.pending || now < hover_.due || !hoverCell_) return;
+    hover_.pending = false;
+    settleUntil_ = now + std::chrono::milliseconds(250);
+    if (menu_.open || prompt_.kind != PromptKind::None || comp_.open) return;
+    Document& d = *hoverCell_;
+    NbView* v = nbOfCell(d);
+    if (!v) return;
+    hover_.lines.clear();
+    if (auto it = v->lsp.diags.find(&d); it != v->lsp.diags.end()) {
+        for (const auto& dg : it->second) {
+            if (dg.line >= d.buf.lineCount() || dg.endLine >= d.buf.lineCount()) continue;
+            Pos a{dg.line, byteColFromUtf16(d.buf.line(dg.line), dg.col)};
+            Pos b{dg.endLine, byteColFromUtf16(d.buf.line(dg.endLine), dg.endCol)};
+            if (b <= a) b.col = a.col + 1;
+            if (hover_.pos >= a && hover_.pos <= b) addHoverText(dg.message, dg.severity);
+        }
+    }
+    const std::uint64_t seq = hoverSeq_;
+    const Pos at = hover_.pos;
+    if (auto t = lspTarget(d, at)) {
+        t->c->hover(t->path, t->line, t->col, [this, seq, at](std::string text) {
+            if (seq != hoverSeq_ || hover_.pos != at || text.empty()) return;
+            if (!hover_.lines.empty()) hover_.lines.emplace_back("", 0);
+            addHoverText(cleanMarkdown(text), 0);
+            hover_.show = !hover_.lines.empty();
+            dirty_ = true;
+        });
+    }
+    hover_.show = !hover_.lines.empty();
     dirty_ = true;
 }
 

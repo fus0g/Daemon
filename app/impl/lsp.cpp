@@ -372,18 +372,24 @@ int App::matchScore(std::string_view prefix, std::string_view text) {
 
 void App::requestCompletion(int triggerKind) {
     if (docs_.empty()) return;
-    if (isCppDoc(doc()) && completeImport(doc())) return;
-    if (!lsp_ || !lsp_->ready()) return;
     Document& d = doc();
-    if (!isCppDoc(d) || !d.lspOpen) return;
-    flushDoc(d);
+    if (isCppDoc(d) && completeImport(d)) return;
+    auto target = lspTarget(d, d.cursor);   // an ordinary C++ file, or a cell of a notebook (mapped into its virtual file)
+    if (!target) return;
+    NbView* nbv = nbOfCell(d);
     const Pos at = d.cursor;
     const Document* dp = &d;
     const std::uint64_t seq = ++compSeq_;
-    auto [l, c] = lspPos(d, at);
-    lsp_->cancel(compReq_);  // a newer keystroke supersedes the pending request
-    compReq_ = lsp_->completion(d.path, l, c, triggerKind, [this, seq, at, dp](std::vector<LspCompletion> items) {
-        if (seq != compSeq_ || docs_.empty() || &doc() != dp) return;
+    target->c->cancel(compReq_);  // a newer keystroke supersedes the pending request
+    compReq_ = target->c->completion(target->path, target->line, target->col, triggerKind, [this, seq, at, dp, nbv](std::vector<LspCompletion> items) {
+        if (seq != compSeq_ || docs_.empty()) return;
+        struct Reset { Document*& o; ~Reset() { o = nullptr; } } reset{docOverride_};
+        if (nbv) {   // the cell must still be the one being edited
+            auto nit = notebooks_.find(&doc());
+            if (nit == notebooks_.end() || nit->second.get() != nbv || !nbv->editing || nbv->sel < 0 || nbv->sel >= static_cast<int>(nbv->cells.size()) ||
+                nbv->cells[static_cast<std::size_t>(nbv->sel)].doc.get() != dp) return;
+            docOverride_ = const_cast<Document*>(dp);
+        } else if (&doc() != dp) return;
         Document& d = doc();
         const std::string& ln = d.buf.line(at.line);
         int a = at.col;
@@ -401,6 +407,7 @@ void App::showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol
     else while (a > 0 && identChar(ln[static_cast<std::size_t>(a - 1)])) --a;
     std::ranges::stable_sort(items, [](const LspCompletion& x, const LspCompletion& y) { return x.sortText < y.sortText; });
     comp_ = {};
+    comp_.owner = &d;
     comp_.all = std::move(items);
     comp_.anchor = {at.line, a};
     comp_.dotted = anchorCol >= 0;
@@ -523,7 +530,7 @@ void App::afterEditorKey(const KeyEvent& k, std::uint64_t verBefore) {
             return;
         }
     }
-    if (!lsp_ || !lsp_->ready() || !isCppDoc(d)) return;
+    if (!lspAvailable(d)) return;
     if (k.ctrl && !k.alt && k.key == Key::Char && k.ch == ' ') { requestCompletion(1); return; }
     if (k.ctrl || k.alt || k.text.empty() || d.buf.version() == verBefore) return;
     const char c = k.text.back();
@@ -570,7 +577,8 @@ auto App::completionKindIcon(int kind) -> KindIcon {
 
 void App::drawCompletion() {
     if (!comp_.open || comp_.shown.empty() || docs_.empty()) return;
-    Document& d = doc();
+    Document& active = doc();
+    const Document& d = comp_.owner ? *comp_.owner : active;
     const float s = S(), cell = cw(), line = lh(), rowH = std::round(line + 4 * s);
     const int n = static_cast<int>(comp_.shown.size());
     const int rows = std::min(n, kCompletionRows);
@@ -589,9 +597,21 @@ void App::drawCompletion() {
     w = std::min(w, L_.editor.w * 0.9f);
     const float h = static_cast<float>(rows) * rowH + 8 * s;
     const float sx = std::round(d.scrollX), sy = std::round(d.scrollY);
-    float x = L_.textX - sx + static_cast<float>(displayCol(d.buf.line(comp_.anchor.line), comp_.anchor.col, d.tabWidth)) * cell - iconW;
-    float y = L_.editor.y + static_cast<float>(comp_.anchor.line + 1) * line - sy + 2 * s;
-    if (y + h > L_.editor.bottom()) y = L_.editor.y + static_cast<float>(comp_.anchor.line) * line - sy - h - 2 * s;  // flip above
+    float x, y;
+    const NbView* nbv = isNotebook(active) && comp_.owner != &active ? notebooks_.at(&active).get() : nullptr;
+    if (nbv) {   // a cell of a notebook: place the popup under the text of that cell
+        const NbCell* cellp = nullptr;
+        for (const auto& c : nbv->cells) if (c.doc.get() == comp_.owner) { cellp = &c; break; }
+        if (!cellp) return;
+        const float bpad = std::round(8 * s), top = nbv->viewTop + cellp->boxY - std::round(active.scrollY) + bpad + static_cast<float>(comp_.anchor.line) * line;
+        x = cellp->boxX + bpad + static_cast<float>(displayCol(d.buf.line(comp_.anchor.line), comp_.anchor.col, d.tabWidth)) * cell - iconW;
+        y = top + line + 2 * s;
+        if (y + h > L_.editor.bottom()) y = top - h - 2 * s;
+    } else {
+        x = L_.textX - sx + static_cast<float>(displayCol(d.buf.line(comp_.anchor.line), comp_.anchor.col, d.tabWidth)) * cell - iconW;
+        y = L_.editor.y + static_cast<float>(comp_.anchor.line + 1) * line - sy + 2 * s;
+        if (y + h > L_.editor.bottom()) y = L_.editor.y + static_cast<float>(comp_.anchor.line) * line - sy - h - 2 * s;  // flip above
+    }
     x = std::clamp(x, L_.editor.x + 4 * s, std::max(L_.editor.x + 4 * s, L_.editor.right() - w - 4 * s));
     const Rect r{x, y, w, h};
     glassPanel(r, 10 * s);
@@ -624,6 +644,7 @@ void App::drawCompletion() {
 }
 
 void App::hoverMoved() {
+    hoverCell_ = nullptr;
     Document& d = doc();
     Pos p = posAt(d, mx_, my_);
     if ((hover_.pending || hover_.show) && p == hover_.pos) return;
@@ -664,6 +685,7 @@ void App::addHoverText(const std::string& text, int sev) {
 }
 
 void App::hoverTick(Clock::time_point now) {
+    if (hoverCell_) { nbHoverTick(now); return; }
     if (!hover_.pending || now < hover_.due || docs_.empty()) return;
     hover_.pending = false;
     settleUntil_ = now + std::chrono::milliseconds(250);  // (screenshots wait for the reply)

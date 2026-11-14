@@ -119,6 +119,7 @@ private:
         int sel = 0, scroll = 0;
         Pos anchor;               // start of the identifier being completed
         bool dotted = false;      // module names: "." and ":" belong to the word
+        const Document* owner = nullptr;   // the document (or notebook cell) the popup belongs to
     };
     struct Hover {
         bool pending = false, show = false;
@@ -246,8 +247,20 @@ private:
         float mdWidth = 0;
         bool mdParsed = false;
     };
+    // IntelliSense of a notebook: one clangd per notebook that sees all code cells as a single virtual C++ file
+    struct NbLsp {
+        std::unique_ptr<LspClient> client;
+        std::string dir, path;                // compile_commands.json and the virtual file
+        nb::VirtualDoc vdoc;                  // what was last sent
+        bool opened = false, failed = false;
+        int version = 0, fd = -1;
+        std::uint64_t sig = 0;
+        std::optional<Clock::time_point> flushAt;
+        std::unordered_map<const Document*, std::vector<LspDiag>> diags;   // per cell, in cell coordinates
+    };
     struct NbView {
         Document* owner = nullptr;
+        NbLsp lsp;
         nb::Notebook meta;                   // metadata of the file (the cells live in `cells`)
         std::vector<NbCell> cells;
         std::unique_ptr<nb::Session> session;
@@ -269,7 +282,7 @@ private:
     std::string notebookText(NbView& v);
     void layoutNotebook(Document& d);
     void drawNotebook(Document& d);
-    void drawCellText(Document& cd, float x, float y, float w, bool active);
+    void drawCellText(Document& cd, float x, float y, float w, bool active, const std::vector<LspDiag>* diags = nullptr);
     bool notebookKey(const KeyEvent& k);
     void notebookClick(Button b);
     void notebookDragStep();
@@ -285,6 +298,18 @@ private:
     NbCell makeNbCell(NbView& v, nb::Cell data);
     Pos nbCellPosAt(const NbView& v, const NbCell& c, float mx, float cy) const;
     bool nbNeedsSession(NbView& v);
+    NbView* nbOfCell(const Document& d) const;
+    int nbCellIndex(const NbView& v, const Document& d) const;
+    bool nbEnsureLsp(NbView& v);
+    void nbStopLsp(NbView& v);
+    void nbLspSync(NbView& v, bool force);
+    void eraseNotebook(const Document* d);
+    struct LspTarget { LspClient* c = nullptr; std::string path; int line = 0, col = 0; };
+    std::optional<LspTarget> lspTarget(Document& d, Pos p);
+    bool lspAvailable(Document& d);
+    Document* hoverCell_ = nullptr;           // notebook cell under the pointer (hover requests go through its notebook's clangd)
+    void nbHoverMoved();
+    void nbHoverTick(Clock::time_point now);
 
     // ---- sessions: open files, split layout, cursor and scroll positions are kept per project and restored on open
     void saveSession(bool force = false);
@@ -576,6 +601,7 @@ private:
     // ---- hover (diagnostics + clangd documentation)
 
     void hideHover() {
+        hoverCell_ = nullptr;
         if (hover_.pending || hover_.show) { hover_.pending = hover_.show = false; ++hoverSeq_; hsel_ = {}; dirty_ = true; }
     }
 

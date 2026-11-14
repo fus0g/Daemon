@@ -320,3 +320,42 @@ void testNotebook() {
         }
     }
 }
+
+void testNotebookVirtualDoc() {
+    using namespace ide::nb;
+    const std::vector<std::pair<int, std::string>> cells = {
+        {0, "#include <vector>\nint counter = 10;\nstruct P { int x; };"},
+        {2, "counter += 5;  int y = counter;\nstd::cout << y;\nlast"},
+        {3, "export module geo;\nimport std;\nexport int f(int a) { return a; }"}};
+    VirtualDoc vd = buildVirtualDoc(cells);
+    CHECK(vd.text.starts_with("#include <bits/stdc++.h>\n#include <vector>\n"));
+    CHECK(vd.text.find("void nb_cell1() {") != std::string::npos);
+    CHECK(vd.text.find("last;") != std::string::npos);   // the unterminated expression gets its semicolon
+    CHECK(vd.text.find("int f(int a)") != std::string::npos && vd.text.find("export") == std::string::npos);
+    // every position of a chunk maps there and back
+    for (auto [cell, line, col] : {std::tuple{0, 1, 4}, {0, 2, 12}, {2, 0, 2}, {2, 0, 20}, {2, 1, 5}, {2, 2, 1}, {3, 2, 10}}) {
+        auto v = toVirtual(vd, cell, line, col);
+        CHECK(v.has_value());
+        if (!v) continue;
+        auto back = fromVirtual(vd, v->first, v->second);
+        CHECK(back.has_value() && back->cell == cell && back->line == line && back->col == col);
+    }
+    // the virtual text at a mapped position is the cell's text
+    auto at = [&](int vline, int col) { std::istringstream in(vd.text); std::string l; for (int i = 0; i <= vline; ++i) std::getline(in, l); return l.size() > static_cast<std::size_t>(col) ? l.substr(static_cast<std::size_t>(col), 7) : std::string(); };
+    auto m = toVirtual(vd, 2, 0, 15);   // `int y = counter;` starts after "counter += 5;  "
+    CHECK(m.has_value() && at(m->first, m->second) == "int y =");
+    CHECK(!toVirtual(vd, 7, 0, 0).has_value() && !fromVirtual(vd, 0, 0).has_value());
+}
+
+void testCondense() {
+    std::string raw = "cell: In function ‘void nbrun1_3()’:\ncell:1:29: error: no match for ‘operator<<’ in x\ncell:1:29: note: there are 102 candidates\n";
+    for (int i = 0; i < 100; ++i) raw += "In file included from /usr/include/c++/16/ostream:42,\n/usr/include/c++/16/bits/ostream.h:116:7: note: candidate " + std::to_string(i) + "\n";
+    raw += "cell:2:3: warning: something\ncell:2:3: note: one\ncell:2:3: note: two\ncell:2:3: note: three\ncell:2:3: note: four\n";
+    const std::string c = ide::nb::condenseDiagnostics(raw);
+    CHECK(c.find("cell:1:29: error: no match") != std::string::npos && c.find("102 candidates") != std::string::npos);
+    CHECK(c.find("cell:2:3: warning") != std::string::npos && c.find("note: three") != std::string::npos && c.find("note: four") == std::string::npos);
+    CHECK(c.find("/usr/include") == std::string::npos && c.find("nbrun") == std::string::npos && c.find("more lines of compiler output hidden") != std::string::npos);
+    CHECK(c.size() < 700);
+    CHECK(ide::nb::condenseDiagnostics("ld: cannot find -lfoo\ncollect2: error: ld returned 1 exit status\n").find("cannot find -lfoo") != std::string::npos);
+    CHECK(ide::nb::condenseDiagnostics("") == "compilation failed");
+}

@@ -436,6 +436,7 @@ std::optional<Clock::time_point> App::nextWake() const {
     if (nextBlameWake_ > Clock::now()) consider(nextBlameWake_);
     if (lsp_ && cmakeOpen_) consider(nextDbCheck_);
     if (notebookBusy()) consider(Clock::now() + std::chrono::milliseconds(50));   // kernel output arrives on its own thread
+    for (const auto& [nd, nv] : notebooks_) if (nv->lsp.flushAt) consider(*nv->lsp.flushAt);
     if (lsp_ && healTries_ < 3 && nextHeal_ != Clock::time_point{}) consider(nextHeal_);
     if (hover_.pending) consider(hover_.due);
     return t;
@@ -445,6 +446,7 @@ void App::update(Clock::time_point now, float dt) {
     if (toolDl_) dirty_ = true;   // download progress is polled while drawing
     sessionTick(now);
     notebookPoll();
+    for (auto& [nd, nv] : notebooks_) if (nv->lsp.client) nbLspSync(*nv, false);
     if (fsPending_ && now >= fsEventAt_ + std::chrono::milliseconds(150)) { fsPending_ = false; handleFsChanges(); }
     if (sPending_ && now >= sRunAt_) startSearch();
     if (now >= fsSyncAt_) { fsSyncAt_ = now + std::chrono::seconds(1); syncFsWatches(); }

@@ -58,6 +58,7 @@ struct Chunk {
     enum class Kind { Include, Import, Using, Decl, Stmt, Expr } kind = Kind::Stmt;
     std::string text;
     int line = 1;              // 1-based line of the first character in the cell
+    int col = 0;               // byte column of the first character on that line
     bool exported = false;     // Decl: gets `export` in front
 };
 
@@ -79,6 +80,27 @@ struct Plan {
 };
 
 Plan planCell(std::string_view source);
+
+// GCC's output for one mistake can run to hundreds of lines (every overload candidate, every header in the include chain).
+// This keeps the errors and warnings, the first few notes that point into the cell, and says how much was left out.
+std::string condenseDiagnostics(std::string_view raw);
+
+// ------------------------------------------------------------------------------------------------ IntelliSense support
+
+// The notebook as one C++ file for a language server: statements are wrapped in functions so that names declared in earlier
+// cells are visible, `import std;` becomes a standard header, user module cells are inlined. Every chunk is kept at the same
+// column, so a position inside a cell maps to a position in the file and back.
+struct VirtualDoc {
+    struct Span { int cell = -1, cellLine = 0, lines = 0, vline = 0, col = 0; };
+    std::string text;
+    std::vector<Span> spans;
+};
+struct CellPos { int cell = -1, line = 0, col = 0; };
+
+// `cells`: (notebook cell index, source) of the code cells, in order.
+VirtualDoc buildVirtualDoc(const std::vector<std::pair<int, std::string>>& cells);
+std::optional<std::pair<int, int>> toVirtual(const VirtualDoc& vd, int cell, int line, int col);   // -> (line, byte column)
+std::optional<CellPos> fromVirtual(const VirtualDoc& vd, int vline, int vcol);
 
 // ------------------------------------------------------------------------------------------------ the kernel
 

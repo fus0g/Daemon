@@ -152,6 +152,8 @@ std::expected<Notebook, std::string> parseNotebook(std::string_view text) {
                             for (const auto& l : *tb) o.text += stripAnsi(l.str()) + "\n";
                             while (!o.text.empty() && o.text.back() == '\n') o.text.pop_back();
                         }
+                        if (o.name == "CompileError") o.text = condenseDiagnostics(o.text);   // older versions stored every overload candidate GCC listed
+                        while (!o.text.empty() && o.text.back() == '\n') o.text.pop_back();
                     } else {   // execute_result / display_data: keep the plain text
                         o.kind = Output::Kind::Result;
                         o.text = joinSource(oj["data"]["text/plain"]);
@@ -420,6 +422,7 @@ std::vector<Chunk> splitChunks(std::string_view s) {
             c.kind = Chunk::Kind::Include;
             c.text = std::string(s.substr(i, j - i));
             c.line = lineOf(i);
+            c.col = static_cast<int>(i - (c.line >= 2 ? nls[static_cast<std::size_t>(c.line - 2)] + 1 : 0));
             out.push_back(std::move(c));
             i = j;
             continue;
@@ -463,6 +466,7 @@ std::vector<Chunk> splitChunks(std::string_view s) {
         Chunk c;
         c.text = std::string(s.substr(start, j - start));
         c.line = lineOf(start);
+        c.col = static_cast<int>(start - (c.line >= 2 ? nls[static_cast<std::size_t>(c.line - 2)] + 1 : 0));
         classify(c, terminated);
         if (!trimView(c.text).empty()) out.push_back(std::move(c));
         i = j;
@@ -536,6 +540,108 @@ Plan planCell(std::string_view source) {
     }
     flush();
     return plan;
+}
+
+std::string condenseDiagnostics(std::string_view raw) {
+    constexpr std::size_t kMaxLen = 320, kMaxNotes = 3, kMaxLines = 30;
+    auto clip = [&](std::string l) { if (l.size() > kMaxLen) { l.resize(kMaxLen); l += "..."; } return l; };
+    auto has = [](const std::string& l, std::string_view s) { return l.find(s) != std::string::npos; };
+    std::vector<std::string> out;
+    std::size_t hidden = 0, notes = 0;
+    std::istringstream in{std::string(raw)};
+    for (std::string l; std::getline(in, l);) {
+        if (l.empty()) continue;
+        if (has(l, ": error:") || has(l, ": fatal error:") || has(l, ": warning:")) { out.push_back(clip(l)); notes = 0; continue; }
+        if (l.starts_with("cell:") && has(l, ": note:")) {
+            if (notes < kMaxNotes) { out.push_back(clip(l)); ++notes; } else ++hidden;
+            continue;
+        }
+        if (has(l, "undefined reference") || has(l, "cannot find -l") || l.starts_with("ld:") || has(l, "/ld:")) { out.push_back(clip(l)); continue; }   // the linker
+        if (l.starts_with("cell: In ")) continue;   // "cell: In function 'void nbrun1_3()':" - an internal name
+        ++hidden;
+    }
+    if (out.empty()) {   // nothing recognisable (a linker error, a crash): show the start of the raw text
+        std::istringstream again{std::string(raw)};
+        std::size_t n = 0;
+        for (std::string l; std::getline(again, l) && n < kMaxLines; ++n) out.push_back(clip(l));
+        return out.empty() ? std::string("compilation failed") : [&] { std::string s; for (auto& l : out) s += l + "\n"; return s; }();
+    }
+    if (out.size() > kMaxLines) { hidden += out.size() - kMaxLines; out.resize(kMaxLines); }
+    std::string text;
+    for (const auto& l : out) text += l + "\n";
+    if (hidden > 0) text += std::format("({} more lines of compiler output hidden)\n", hidden);
+    return text;
+}
+
+// ================================================================================================ IntelliSense support
+
+VirtualDoc buildVirtualDoc(const std::vector<std::pair<int, std::string>>& cells) {
+    VirtualDoc vd;
+    std::vector<Plan> plans;
+    std::vector<std::string> includes;
+    for (const auto& [idx, src] : cells) {
+        plans.push_back(planCell(src));
+        for (const auto& seg : plans.back().segments)
+            for (const auto& c : seg.chunks)
+                if (c.kind == Chunk::Kind::Include && std::ranges::find(includes, std::string(trimView(c.text))) == includes.end()) includes.push_back(std::string(trimView(c.text)));
+    }
+    vd.text = "#include <bits/stdc++.h>\n";   // what `import std;` stands for
+    for (const auto& inc : includes) vd.text += inc + "\n";
+    int vline = static_cast<int>(std::ranges::count(vd.text, '\n'));
+    auto append = [&](const std::string& s) { vd.text += s; vline += static_cast<int>(std::ranges::count(s, '\n')); };
+    int group = 0;
+    for (std::size_t n = 0; n < cells.size(); ++n) {
+        const int idx = cells[n].first;
+        for (const auto& seg : plans[n].segments) {
+            if (seg.kind == Segment::Kind::Module) {   // the module's text as plain declarations
+                std::string out;
+                std::istringstream in(seg.text);
+                int lines = 0;
+                for (std::string l; std::getline(in, l); ++lines) {
+                    std::string_view t = trimView(l);
+                    const bool drop = t == "module;" || ((t.starts_with("export module") || t.starts_with("module ")) && t.ends_with(";")) ||
+                                      ((t.starts_with("import ") || t.starts_with("export import ")) && t.ends_with(";"));
+                    if (drop) l.assign(l.size(), ' ');
+                    else if (const auto p = l.find("export "); p != std::string::npos && l.find_first_not_of(' ') == p) l.replace(p, 6, "      ");
+                    out += l + "\n";
+                }
+                vd.spans.push_back({idx, 0, std::max(1, lines), vline, 0});
+                append(out);
+                continue;
+            }
+            bool inFunc = false;
+            auto closeGroup = [&] { if (inFunc) { append("}\n"); inFunc = false; } };
+            for (const auto& c : seg.chunks) {
+                if (c.kind == Chunk::Kind::Include || c.kind == Chunk::Kind::Import) continue;
+                const bool stmt = c.kind == Chunk::Kind::Stmt || c.kind == Chunk::Kind::Expr;
+                if (stmt && !inFunc) { append("void nb_cell" + std::to_string(++group) + "() {\n"); inFunc = true; }
+                if (!stmt) closeGroup();
+                const int lines = static_cast<int>(std::ranges::count(c.text, '\n')) + 1;
+                vd.spans.push_back({idx, c.line - 1, lines, vline, c.col});
+                append(std::string(static_cast<std::size_t>(c.col), ' ') + c.text + (c.kind == Chunk::Kind::Expr ? ";" : "") + "\n");
+            }
+            closeGroup();
+        }
+    }
+    return vd;
+}
+
+std::optional<std::pair<int, int>> toVirtual(const VirtualDoc& vd, int cell, int line, int col) {
+    const VirtualDoc::Span* best = nullptr;
+    for (const auto& s : vd.spans) {
+        if (s.cell != cell || line < s.cellLine || line >= s.cellLine + s.lines) continue;
+        if (line == s.cellLine && col < s.col) continue;                    // the chunk starts further right on this line
+        if (!best || (line == s.cellLine && s.col >= best->col) || best->cellLine != line) best = &s;   // several chunks may share a line: the last one that starts before `col`
+    }
+    if (!best) return std::nullopt;
+    return std::pair{best->vline + (line - best->cellLine), col};   // chunks are padded to their column: columns are the same on both sides
+}
+
+std::optional<CellPos> fromVirtual(const VirtualDoc& vd, int vline, int vcol) {
+    for (const auto& s : vd.spans)
+        if (vline >= s.vline && vline < s.vline + s.lines)
+            return CellPos{s.cell, s.cellLine + (vline - s.vline), vcol};
+    return std::nullopt;
 }
 
 // ================================================================================================ code generation
@@ -682,7 +788,7 @@ std::string assemble(const Segment& seg, const std::vector<CellState>& states, c
     std::string ownImports;
     for (const auto& c : seg.chunks) {
         switch (c.kind) {
-            case Chunk::Kind::Include: gmf += c.text + "\n"; break;
+            case Chunk::Kind::Include: gmf += "#line " + std::to_string(c.line) + " \"cell\"\n" + c.text + "\n"; break;
             case Chunk::Kind::Import: ownImports += c.text + "\n"; break;
             default: break;
         }
@@ -783,7 +889,7 @@ Session::Session(std::string notebookPath) : d_(std::make_unique<Impl>()) {
     {   // directories of sessions that were never cleaned up (a crash): forget the ones untouched for a day
         const auto cutoff = fs::file_time_type::clock::now() - std::chrono::hours(24);
         for (const auto& e : fs::directory_iterator(fs::path(d_->dir).parent_path(), ec))
-            if (e.is_directory(ec) && e.path().filename().string().starts_with('s') && fs::last_write_time(e.path(), ec) < cutoff) fs::remove_all(e.path(), ec);
+            if (e.is_directory(ec) && (e.path().filename().string().starts_with('s') || e.path().filename().string().starts_with("lsp")) && fs::last_write_time(e.path(), ec) < cutoff) fs::remove_all(e.path(), ec);
     }
     fs::create_directories(d_->dir, ec);
     d_->worker = std::jthread([this](std::stop_token st) { d_->loop(st); });
@@ -1069,7 +1175,7 @@ void Session::Impl::runRequest(const Request& r) {
                 }
             }
             const std::string name = std::format("nbm{}_{}", generation, n);
-            if (!compile(name, seg.text, true, diag)) { fail("CompileError", diag); ok = false; break; }
+            if (!compile(name, seg.text, true, diag)) { fail("CompileError", condenseDiagnostics(diag)); ok = false; break; }
             bool died = false;
             if (!load(cell, (fs::path(dir) / (name + ".so")).string(), "", died)) { if (died) { fail("KernelError", "the kernel died"); } ok = false; break; }
             if (!seg.moduleName.empty()) userModules[seg.moduleName] = seg.text;
@@ -1077,7 +1183,7 @@ void Session::Impl::runRequest(const Request& r) {
         }
         const std::string mod = std::format("nb{}_{}", generation, n), entry = std::format("nbrun{}_{}", generation, n);
         const std::string text = assemble(seg, states, cur, cell, mod, entry);
-        if (!compile(mod, text, true, diag)) { fail("CompileError", diag); ok = false; break; }
+        if (!compile(mod, text, true, diag)) { fail("CompileError", condenseDiagnostics(diag)); ok = false; break; }
         bool died = false;
         const bool ran = load(cell, (fs::path(dir) / (mod + ".so")).string(), seg.kind == Segment::Kind::Stmts ? entry : "", died);
         if (died) { fail("KernelError", interrupted ? "interrupted - the kernel was stopped, its state is gone" : "the kernel died (crash in the cell); its state is gone"); ok = false; break; }

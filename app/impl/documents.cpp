@@ -181,7 +181,7 @@ void App::closeTab(int i, bool force) {
     std::vector<Document*> dependents;   // previews of the document being closed go with it
     for (const auto& [pd, v] : previews_) if (v.src == closingDoc) dependents.push_back(const_cast<Document*>(pd));
     previews_.erase(closingDoc);
-    notebooks_.erase(closingDoc);
+    eraseNotebook(closingDoc);
     lspDetach(*docs_[static_cast<std::size_t>(i)]);
     closeCompletion();
     docs_.erase(docs_.begin() + i);

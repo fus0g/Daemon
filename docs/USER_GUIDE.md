@@ -49,6 +49,12 @@ statements (run once); `#include`s, macros, `using namespace` and `import`s are 
 makes `import std;` work, and so do modules of your own: a cell that starts with `export module geometry;` is compiled as that
 module, and a later cell can `import geometry;`.
 
+**IntelliSense.** Cells have completion (as you type, after `.` / `->` / `::`, or with `Ctrl+Space`; `Tab` / `Enter` accept),
+error squiggles and hover information, from clangd (`clangd` on `PATH`, or `IDE_CLANGD`). The server sees all code cells as one C++
+file (statements wrapped in functions, `import std;` read as the standard headers, module cells inlined), so a name from an earlier
+cell completes in a later one. It is a preview of what the compiler will say, not a substitute: a cell can still fail to
+compile when it runs. Errors from a failed run are shortened to the errors themselves, with the first few notes.
+
 **Magics.** Lines at the top of a cell: `%flags -O2 -I/some/include -DFOO` adds compiler flags for this and later cells,
 `%link -lm -lfoo` adds libraries.
 

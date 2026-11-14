@@ -142,7 +142,7 @@ bool App::restoreSession() {
     for (auto& d : docs_) lspDetach(*d);
     closeCompletion();
     previews_.clear();
-    for (auto& od : docs_) notebooks_.erase(od.get());
+    for (auto& od : docs_) eraseNotebook(od.get());
     docs_ = std::move(loaded);
     root_ = std::move(tree);
     for (const auto& pp : pendingPreviews) {

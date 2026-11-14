@@ -191,6 +191,7 @@ void App::onPointerMove(float lx, float ly) {
         if (!(blameHover_ && hover_.show)) { blameHover_ = true; showBlameCard(blameHash_, blameUncommitted_); dirty_ = true; }
     }
     else if (hsel_.dragging || onPopup) {}
+    else if (!docs_.empty() && !menu_.open && !dragging_ && !nbDragging_ && isNotebook(doc()) && L_.editor.contains(mx_, my_) && my_ >= notebooks_.at(&doc())->viewTop) { blameHover_ = false; nbHoverMoved(); }
     else if (!docs_.empty() && !menu_.open && !dragging_ && !isPreview(doc()) && !isNotebook(doc()) && L_.editor.contains(mx_, my_) && mx_ >= L_.textX && mx_ < L_.minimap.x) { blameHover_ = false; hoverMoved(); }
     else { blameHover_ = false; hideHover(); }
     if (panelDrag_) {

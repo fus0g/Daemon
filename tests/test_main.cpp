@@ -13,6 +13,8 @@ void testMarkdownLayout();
 void testReadOnlyBuffer();
 void testImages();
 void testNotebook();
+void testNotebookVirtualDoc();
+void testCondense();
 
 int main() {
     runBaseTests();
@@ -22,6 +24,8 @@ int main() {
     testReadOnlyBuffer();
     testImages();
     testNotebook();
+    testNotebookVirtualDoc();
+    testCondense();
     runServicesTests();
     runUiTests();
     if (failures == 0) std::println("all tests passed");
