@@ -445,7 +445,10 @@ std::optional<Clock::time_point> App::nextWake() const {
     if (nextBlameWake_ > Clock::now()) consider(nextBlameWake_);
     if (lsp_ && cmakeOpen_) consider(nextDbCheck_);
     if (notebookBusy()) consider(Clock::now() + std::chrono::milliseconds(50));   // kernel output arrives on its own thread
-    for (const auto& [nd, nv] : notebooks_) if (nv->lsp.flushAt) consider(*nv->lsp.flushAt);
+    for (const auto& [nd, nv] : notebooks_) {
+        if (nv->lsp.flushAt) consider(*nv->lsp.flushAt);
+        if (nv->lsp.retryAt) consider(*nv->lsp.retryAt);
+    }
     if (lsp_ && healTries_ < 3 && nextHeal_ != Clock::time_point{}) consider(nextHeal_);
     if (hover_.pending) consider(hover_.due);
     return t;
@@ -455,7 +458,19 @@ void App::update(Clock::time_point now, float dt) {
     if (toolDl_) dirty_ = true;   // download progress is polled while drawing
     sessionTick(now);
     notebookPoll();
-    for (auto& [nd, nv] : notebooks_) if (nv->lsp.client) nbLspSync(*nv, false);
+    for (auto& [nd, nv] : notebooks_) {
+        if (!nv->lsp.client) continue;
+        nbLspSync(*nv, false);
+        if (nv->lsp.retryAt && now >= *nv->lsp.retryAt) {   // an empty completion while clangd warmed up: try again if the cell is still being edited
+            nv->lsp.retryAt.reset();
+            Document* rd = nv->lsp.retryDoc;
+            if (rd && nv->editing && nv->sel >= 0 && nv->sel < static_cast<int>(nv->cells.size()) && nv->cells[static_cast<std::size_t>(nv->sel)].doc.get() == rd && !comp_.open) {
+                docOverride_ = rd;
+                requestCompletion(1);
+                docOverride_ = nullptr;
+            }
+        }
+    }
     if (fsPending_ && now >= fsEventAt_ + std::chrono::milliseconds(150)) { fsPending_ = false; handleFsChanges(); }
     if (sPending_ && now >= sRunAt_) startSearch();
     if (now >= fsSyncAt_) { fsSyncAt_ = now + std::chrono::seconds(1); syncFsWatches(); }

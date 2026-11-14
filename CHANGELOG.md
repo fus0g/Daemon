@@ -6,6 +6,9 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 ## [Unreleased]
 
 ### Fixed
+- Notebook completion could stay silent when you typed right after opening: clangd answered an empty list while it was still parsing
+  and nothing asked again. It now starts when the notebook is shown, retries an empty answer while it warms up, and the toolbar says
+  "IntelliSense: warming up" (or that it is off when clangd is missing). The toolbar also no longer overlaps its buttons in narrow panes.
 - Notebooks: after clicking in a cell the caret kept following the mouse pointer (the end of the drag was never noticed), so the arrow
   keys seemed dead. The drag now ends when the button is released or a key is pressed.
 - Notebooks: a failed cell no longer prints hundreds of lines of GCC output (every overload candidate and header in the include

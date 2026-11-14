@@ -383,6 +383,12 @@ void App::requestCompletion(int triggerKind) {
     target->c->cancel(compReq_);  // a newer keystroke supersedes the pending request
     compReq_ = target->c->completion(target->path, target->line, target->col, triggerKind, [this, seq, at, dp, nbv](std::vector<LspCompletion> items) {
         if (seq != compSeq_ || docs_.empty()) return;
+        if (nbv && items.empty() && !nbv->lsp.warm && nbv->lsp.retries < 40) {   // clangd answers nothing while it still parses: ask again shortly
+            ++nbv->lsp.retries;
+            nbv->lsp.retryAt = Clock::now() + std::chrono::milliseconds(400);
+            nbv->lsp.retryDoc = const_cast<Document*>(dp);
+            return;
+        }
         struct Reset { Document*& o; ~Reset() { o = nullptr; } } reset{docOverride_};
         if (nbv) {   // the cell must still be the one being edited
             auto nit = notebooks_.find(&doc());
@@ -606,7 +612,7 @@ void App::drawCompletion() {
         const float bpad = std::round(8 * s), top = nbv->viewTop + cellp->boxY - std::round(active.scrollY) + bpad + static_cast<float>(comp_.anchor.line) * line;
         x = cellp->boxX + bpad + static_cast<float>(displayCol(d.buf.line(comp_.anchor.line), comp_.anchor.col, d.tabWidth)) * cell - iconW;
         y = top + line + 2 * s;
-        if (y + h > L_.editor.bottom()) y = top - h - 2 * s;
+        if (y + h > L_.editor.bottom() && top - h - 2 * s >= nbv->viewTop) y = top - h - 2 * s;   // above the line, unless that would cover the toolbar
     } else {
         x = L_.textX - sx + static_cast<float>(displayCol(d.buf.line(comp_.anchor.line), comp_.anchor.col, d.tabWidth)) * cell - iconW;
         y = L_.editor.y + static_cast<float>(comp_.anchor.line + 1) * line - sy + 2 * s;

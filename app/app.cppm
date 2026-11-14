@@ -256,6 +256,10 @@ private:
         int version = 0, fd = -1;
         std::uint64_t sig = 0;
         std::optional<Clock::time_point> flushAt;
+        bool warm = false;                    // clangd has finished a first parse (it answers completion properly from then on)
+        std::optional<Clock::time_point> retryAt;   // an empty answer while warming up is asked again
+        Document* retryDoc = nullptr;
+        int retries = 0;
         std::unordered_map<const Document*, std::vector<LspDiag>> diags;   // per cell, in cell coordinates
     };
     struct NbView {

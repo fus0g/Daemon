@@ -363,6 +363,7 @@ void App::drawNotebook(Document& d) {
     if (nit == notebooks_.end()) return;
     layoutNotebook(d);
     NbView& v = *nit->second;
+    if (!v.lsp.client && !v.lsp.failed && v.runnable) nbEnsureLsp(v);   // warm clangd up while the notebook is on screen, not at the first keystroke
     const Rect& e = L_.editor;
     const float s = S(), line = lh(), sy = std::round(d.scrollY);
     const float pad = std::round(14 * s), bpad = std::round(8 * s);
@@ -452,8 +453,13 @@ void App::drawNotebook(Document& d) {
     }
     std::string status = !v.runnable ? "no C++ kernel for this notebook" : v.session ? v.session->statusLine() : "C++ kernel (GCC modules) - starts with the first run";
     if (!v.note.empty() && busy) status = v.note;
-    status = std::string(v.editing ? "EDIT mode" : "COMMAND mode (Enter edits)") + "   |   " + status;
-    uiLabelR(e.right() - pad, e.y, tbH, status, busy ? theme::text : theme::dim);
+    if (v.runnable && v.lsp.client && !v.lsp.warm) status += "   |   IntelliSense: warming up";
+    else if (v.runnable && v.lsp.failed) status += "   |   IntelliSense off (clangd missing or failed)";
+    const std::string mode = v.editing ? "EDIT mode" : "COMMAND mode (Enter edits)";
+    const float room = e.right() - pad - bx - std::round(16 * s);
+    for (const std::string& text : {mode + "   |   " + status, status, mode, std::string(v.editing ? "EDIT" : "COMMAND")}) {   // the longest that fits beside the buttons
+        if (uiW(text) <= room) { uiLabelR(e.right() - pad, e.y, tbH, text, busy ? theme::text : theme::dim); break; }
+    }
 }
 
 // ---------------------------------------------------------------------------- input
@@ -671,6 +677,7 @@ bool App::nbEnsureLsp(NbView& v) {
     NbView* vp = &v;
     client->onDiagnostics = [this, vp](const std::string& path, std::vector<LspDiag> diags) {
         if (path != vp->lsp.path) return;
+        vp->lsp.warm = true;   // the first publish means the file was parsed
         vp->lsp.diags.clear();
         for (auto& d : diags) {
             if (d.severity > 2 || d.code == "unused-includes") continue;
