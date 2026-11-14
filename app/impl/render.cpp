@@ -154,7 +154,8 @@ void App::drawTitleBar() {
     const Rect lg = logoPill();
     const float maxX = c.x - 12 * s;
     const float tw = std::min(uiW(title), maxX - lg.right() - 24 * s);
-    if (!cmakeOpen_) uiLabel(std::max(lg.right() + 12 * s, (t.w - tw) / 2), t.y, t.h, title, theme::dim, maxX);
+    drawMenuBar();
+    if (!cmakeOpen_ && bar_.anim < 0.01f) uiLabel(std::max(lg.right() + 12 * s, (t.w - tw) / 2), t.y, t.h, title, theme::dim, maxX);
 }
 
 void App::drawSidebar() {

@@ -79,6 +79,12 @@ void App::onPointerMove(float lx, float ly) {
         win_.setCursor(id == kDlgName || id == kDlgLoc || id == kDlgPath ? Cursor::Text : Cursor::Default);
         return;
     }
+    if (L_.csd) {   // menu bar: hover highlight, and moving along it while a dropdown is open switches the dropdown
+        const int l = barLabelAt(mx_, my_);
+        if (l != bar_.hover) { bar_.hover = l; dirty_ = true; }
+        if (l >= 0 && menu_.open && bar_.active >= 0 && l != bar_.active) barOpen(l);
+        if (l >= 0 || barZone().contains(mx_, my_)) bar_.lastUse = Clock::now();
+    }
     if (menu_.open) {
         int i = menuItemAt(mx_, my_);
         if (i != menu_.hover) { menu_.hover = i; dirty_ = true; }
@@ -346,6 +352,12 @@ void App::onPointerButton(Button b, bool pressed, float lx, float ly) {
         return;
     }
     if (pressed && b == Button::Left && !menu_.open && dbgBarClick()) return;
+    if (pressed && b == Button::Left) {   // a menu-bar label opens (or closes) its dropdown, also while another one is open
+        if (const int l = barLabelAt(mx_, my_); l >= 0) {
+            if (menu_.open && bar_.active == l) closeMenu(); else barOpen(l);
+            return;
+        }
+    }
     if (menu_.open) {  // the menu captures the click; clicking outside just dismisses it
         if (pressed) {
             int i = menuItemAt(mx_, my_);
@@ -429,7 +441,7 @@ void App::onPointerButton(Button b, bool pressed, float lx, float ly) {
         if (b != Button::Left) return;
         switch (titleButtonAt(mx_, my_)) {
             case 3: requestQuit(); return;
-            case 4: welcomeOpen(); return;   // logo: projects
+            case 4: barToggle(); return;   // logo: slides the menu bar out / in
             default: break;
         }
         auto now = Clock::now();

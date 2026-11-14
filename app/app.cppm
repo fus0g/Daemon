@@ -811,7 +811,29 @@ private:
 
     // ---- context menu
 
-    void closeMenu() { menu_.open = false; dirty_ = true; }
+    void closeMenu() { menu_.open = false; bar_.active = -1; bar_.lastUse = Clock::now(); dirty_ = true; }
+
+    // The menu bar (File / Edit / ...) that the logo slides out of the title bar; the toolbar slides to the right to make room.
+    struct MenuBar {
+        bool shown = false;
+        float anim = 0;                 // 0 hidden .. 1 fully out
+        int active = -1, hover = -1;    // open dropdown, hovered label
+        float x = 0, w = 0;
+        std::vector<Rect> rects;
+        Clock::time_point lastUse{};
+    };
+    MenuBar bar_;
+    float barPad() const;
+    void barLayout();
+    float barShift() const;             // how far the toolbar is pushed right
+    int barLabelAt(float x, float y) const;
+    Rect barZone() const;
+    void barToggle();
+    void barHide();
+    void barOpen(int i);
+    void barKey(int dir);
+    void barTick(Clock::time_point now);
+    void drawMenuBar();
 
     void openMenu(float x, float y, const std::string* path);
 
@@ -1672,7 +1694,7 @@ private:
     std::vector<NavEntry> navBack_;
 
     Explorer explorer_;
-    Menu menu_;
+    Menu menu_;   // (the MenuBar state `bar_` is declared with closeMenu above)
     FileClip fileClip_;
     fs::path fileOpPath_;
     bool deleteForever_ = false;

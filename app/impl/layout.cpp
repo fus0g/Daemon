@@ -72,6 +72,7 @@ bool App::stepAnimations(float dt) {
     };
     chase(panelAnim_, panelOpen_ ? 1.0f : 0.0f, 14.0f);
     chase(sideAnim_, sidebar_ ? 1.0f : 0.0f, 14.0f);
+    chase(bar_.anim, bar_.shown ? 1.0f : 0.0f, 12.0f);
     for (Node* n : leaves())
         for (auto& e : n->pane->anim) {
             if (snap || std::abs(e.target - e.w) < 0.4f) e.w = e.target;
@@ -128,7 +129,8 @@ void App::layout() {
     if (cmakeOpen_) {
         const float cy = L_.toolbar.y + std::round(4 * s), ch = L_.toolbar.h - std::round(8 * s);
         auto chipW = [&](const std::string& t) { return uiW(t) + std::round(56 * s); };
-        float x = L_.csd ? std::round(46 * s) : m;
+        barLayout();
+        float x = L_.csd ? std::round(46 * s) + barShift() : m;
         const std::string pn = profiles_.empty() ? "-" : profiles_[static_cast<std::size_t>(profile_)].name;
         const std::string tn = target_ >= 0 ? targets_[static_cast<std::size_t>(target_)].name : "No target";
         tool_.profile = {x, cy, chipW(pn), ch};

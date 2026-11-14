@@ -26,6 +26,7 @@ target_sources(daemon_app
     impl/git_view.cpp
     impl/keyboard.cpp
     impl/layout.cpp
+    impl/menubar.cpp
     impl/lsp.cpp
     impl/pointer.cpp
     impl/prompts.cpp

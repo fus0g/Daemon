@@ -66,7 +66,9 @@ void App::onKey(const KeyEvent& k) {
         if (k.key == Key::Escape) { tabDrag_ = {}; dirty_ = true; }
         return;
     }
+    if (menu_.open && bar_.active >= 0 && (k.key == Key::Left || k.key == Key::Right)) { barKey(k.key == Key::Left ? -1 : 1); dirty_ = true; return; }
     if (menu_.open) { menuKey(k); dirty_ = true; return; }
+    if (bar_.shown && k.key == Key::Escape) { barHide(); return; }
     if (prompt_.kind != PromptKind::None) { promptKey(k); return; }
     if (sidebar_ && sideFocus_ && !sideGit_ && !sideSearch_ && !sideDebug_ && explorerKey(k)) { dirty_ = true; return; }
     editorKey(k);

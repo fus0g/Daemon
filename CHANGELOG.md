@@ -21,7 +21,7 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
   are now re-checked after every build and a few times shortly after clangd starts.
 
 ### Changed
-- Title bar: the minimise and maximise buttons are gone; the logo (left, opens the project list) and the close button (right) are round pills like the activity bar.
+- Title bar: the minimise and maximise buttons are gone; the logo (left, shows the menu bar) and the close button (right) are round pills like the activity bar.
 
 ### Added
 - Notebook IntelliSense: completion, error squiggles and hover inside cells (clangd over a virtual file made of all code cells);
@@ -72,7 +72,8 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.2.0...HEAD
+[Unreleased]: https://example.invalid/compare/v0.3.0...HEAD
+[0.3.0]: https://example.invalid/compare/v0.2.0...v0.3.0
 [0.2.0]: https://example.invalid/compare/v0.1.1...v0.2.0
 [0.1.1]: https://example.invalid/compare/v0.1.0...v0.1.1
 [0.1.0]: https://example.invalid/releases/tag/v0.1.0
