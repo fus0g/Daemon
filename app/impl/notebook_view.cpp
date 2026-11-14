@@ -640,10 +640,10 @@ void App::eraseNotebook(const Document* d) {
 bool App::nbEnsureLsp(NbView& v) {
     if (v.lsp.client) return true;
     if (v.lsp.failed || !v.runnable) return false;
-    const char* env = std::getenv("IDE_CLANGD");
-    auto exe = findExecutable(env && *env ? env : "clangd");
+    auto exe = cfgB("lsp.enabled") ? findExecutable(clangdName()) : std::nullopt;
     if (!exe) {
         v.lsp.failed = true;
+        if (!cfgB("lsp.enabled")) return false;
         if (!lspNoticeShown_) { lspNoticeShown_ = true; setMessage("clangd not found - install it (or set IDE_CLANGD) for completion in notebooks", true, 7); }
         return false;
     }

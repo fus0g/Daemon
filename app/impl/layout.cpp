@@ -58,13 +58,13 @@ void App::syncTabs(Pane& p) {
     }
     for (auto& g : ghosts) if (!g.used) next.push_back(g);
     p.anim = std::move(next);
-    if (frames_ < 2 || (!opt_.screenshot.empty() && !std::getenv("DAEMON_ANIMATE")))
+    if (frames_ < 2 || snapAnimations())
         for (auto& e : p.anim) { e.w = e.target; e.x = -1; }
 }
 
 bool App::stepAnimations(float dt) {
     bool moving = false;
-    const bool snap = frames_ < 3 || (!opt_.screenshot.empty() && !std::getenv("DAEMON_ANIMATE"));
+    const bool snap = snapAnimations();
     auto chase = [&](float& v, float target, float rate) {
         if (snap || std::abs(target - v) < 0.002f * std::max(1.0f, std::abs(target))) { v = target; return; }
         v += (target - v) * (1.0f - std::exp(-dt * rate));
@@ -261,14 +261,14 @@ void App::layoutPane(Pane& p, bool active, float promptH) {
     const float s = S(), uh = uiH();
     const float tabH = std::round(uh + 20 * s);
     // A file directly in the project root would only repeat its tab title, so it gets no breadcrumb row.
-    const float crumbH = (p.cur && !p.cur->path.empty() && crumbParts(*p.cur).size() > 1) ? std::round(uh + 8 * s) : 0;
+    const float crumbH = (cfgB("editor.breadcrumbs") && p.cur && !p.cur->path.empty() && crumbParts(*p.cur).size() > 1) ? std::round(uh + 8 * s) : 0;
     const Rect& r = p.rect;
     p.tabsR = {r.x, r.y, r.w, std::min(tabH, r.h)};
     p.crumbs = {r.x, p.tabsR.bottom(), r.w, std::min(crumbH, std::max(0.0f, r.h - tabH))};
     float bottom = r.bottom();
     if (active) bottom -= promptH;
     p.editor = {r.x, p.crumbs.bottom(), r.w, std::max(0.0f, bottom - p.crumbs.bottom())};
-    const float mapW = r.w > 640 * s && !(p.cur && (isPreview(*p.cur) || isNotebook(*p.cur))) ? std::round(92 * s) : 0;
+    const float mapW = cfgB("editor.minimap") && r.w > 640 * s && !(p.cur && (isPreview(*p.cur) || isNotebook(*p.cur))) ? std::round(92 * s) : 0;
     p.minimap = {p.editor.right() - mapW, p.editor.y, mapW, p.editor.h};
     const int lines = p.cur ? p.cur->buf.lineCount() : 1;
     const int digits = std::max(3, static_cast<int>(std::to_string(lines).size()));
@@ -322,7 +322,7 @@ void App::layoutPane(Pane& p, bool active, float promptH) {
         } else p.tabFirst = 0;
         p.tabLastCur = p.cur;
     }
-    if (frames_ < 2 || (!opt_.screenshot.empty() && !std::getenv("DAEMON_ANIMATE")))
+    if (frames_ < 2 || snapAnimations())
         for (auto* e : liveTabs) e->w = e->target;   // no animation: use the fitted widths right away
     for (auto& e : p.anim) {
         if (hidden.contains(&e)) {   // out of the window: no room, no drawing, no hit

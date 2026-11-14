@@ -487,8 +487,10 @@ void Document::detectIndentation() {
             if (n != std::string::npos && n >= 2 && n <= 8 && n % 2 == 0) ++widths[n];
         }
     }
-    useTabs = tabs > spaces;
-    tabWidth = 4;
+    tabWidth = defaultTabWidth;
+    useTabs = defaultUseTabs;
+    if (!defaultDetectIndent) return;   // always the configured indentation
+    if (tabs != spaces) useTabs = tabs > spaces;
     if (!useTabs && spaces > 0) {
         // Guess the unit as the smallest common indentation seen.
         if (widths[2] > widths[4] / 2 && widths[2] > 2) tabWidth = 2;

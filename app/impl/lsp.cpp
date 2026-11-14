@@ -48,10 +48,16 @@ const LspDiag* App::diagOnLine(const Document& d, int line) const {
     return best;
 }
 
+std::string App::clangdName() const {
+    if (const char* env = std::getenv("IDE_CLANGD"); env && *env) return env;
+    if (auto s = cfgS("lsp.clangd"); !s.empty()) return s;
+    return "clangd";
+}
+
 void App::startLsp() {
     if (lsp_ && lsp_->running()) return;
-    const char* env = std::getenv("IDE_CLANGD");
-    auto exe = findExecutable(env && *env ? env : "clangd");
+    if (!cfgB("lsp.enabled")) { lspStatus_ = "clangd off (Settings)"; return; }
+    auto exe = findExecutable(clangdName());
     if (!exe) {
         lspStatus_ = "clangd not found";
         if (!lspNoticeShown_) {
@@ -65,7 +71,7 @@ void App::startLsp() {
                                      "--completion-parse=always",  // real AST completions, never the text-based fallback
                                      // resource limits: clangd defaults to every core and GBs of RAM
                                      "-j=2", "--background-index-priority=low", "--pch-storage=disk", "--malloc-trim"};
-    if (const char* o = std::getenv("IDE_BGINDEX"); o && *o == '0') std::erase(argv, std::string("--background-index"));
+    if (const char* o = std::getenv("IDE_BGINDEX"); (o && *o == '0') || (!o && !cfgB("lsp.backgroundIndex"))) std::erase(argv, std::string("--background-index"));
     // run the language server at low CPU priority so typing and the UI stay smooth and the machine stays cool
     argv.insert(argv.begin(), {"nice", "-n", "10"});
     clangdModules_ = false;

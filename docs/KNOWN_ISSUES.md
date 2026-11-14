@@ -28,4 +28,4 @@ See "Compiler quirks" in `docs/DEVELOPMENT.md` (GCC 16 module bugs; clean the bu
 ## Roadmap ideas (none started)
 Clone-from-URL on the welcome screen · terminal tabs/splits · in-editor find overlay instead of the bottom prompt bar ·
 breakpoint line tracking on edits · disassembly/registers panels · test explorer · formatting (clang-format) · rename symbol / code
-actions through LSP · settings UI and keymap customisation · Windows/macOS are out of scope (Wayland + Vulkan only).
+actions through LSP · keymap customisation and colour themes · Windows/macOS are out of scope (Wayland + Vulkan only).

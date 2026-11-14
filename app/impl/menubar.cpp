@@ -38,7 +38,7 @@ const std::vector<Top>& tops() {
     static const std::vector<Top> t = {
         {"File", {C("New File", "Ctrl+N", 'n', true), C("Open File...", "Ctrl+O", 'o', true), C("Open Folder...", "Ctrl+Shift+O", 'o', true, true),
                   C("Open Project...", "Ctrl+Shift+P", 'p', true, true), sep, C("Save", "Ctrl+S", 's', true), C("Save As...", "Ctrl+Shift+S", 's', true, true), sep,
-                  C("Close Tab", "Ctrl+W", 'w', true), C("Quit", "Ctrl+Q", 'q', true)}},
+                  C("Settings...", "Ctrl+,", ',', true), sep, C("Close Tab", "Ctrl+W", 'w', true), C("Quit", "Ctrl+Q", 'q', true)}},
         {"Edit", {C("Undo", "Ctrl+Z", 'z', true), C("Redo", "Ctrl+Y", 'y', true), sep, C("Cut", "Ctrl+X", 'x', true), C("Copy", "Ctrl+C", 'c', true),
                   C("Paste", "Ctrl+V", 'v', true), sep, C("Find", "Ctrl+F", 'f', true), C("Replace", "Ctrl+H", 'h', true),
                   C("Find in Files", "Ctrl+Shift+F", 'f', true, true), C("Replace in Files", "Ctrl+Shift+H", 'h', true, true), sep,

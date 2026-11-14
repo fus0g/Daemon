@@ -29,6 +29,7 @@ expansion, hover values, Debug console, floating control bar.
 ## Shortcuts
 | keys | action |
 |---|---|
+| Ctrl+, | settings |
 | Ctrl+O / Ctrl+Shift+O | open file / open folder |
 | Ctrl+N, Ctrl+S, Ctrl+Shift+S, Ctrl+W, Ctrl+Q | new, save, save as, close tab, quit |
 | Ctrl+B / Ctrl+Shift+E | toggle sidebar / focus explorer (then arrows, Enter, F2, Del, Ctrl+C/X/V, F5) |
@@ -42,3 +43,5 @@ expansion, hover values, Debug console, floating control bar.
 | Ctrl+Z/Y, Ctrl+/, Ctrl+D/K (Shift), Alt+Up/Down, Ctrl+]/[ | undo/redo, comment, duplicate/delete line, move line, indent |
 | F12, Alt+Left, Alt+O, Ctrl+Space | definition, back, header/source, completion |
 | Ctrl+Tab, Ctrl+PgUp/PgDn | switch tabs |
+
+**Settings**: `libs/services/settings.*` (the table of settings, validation, `settings.json`), `app/impl/settings_view.cpp` (dialog and applying changes to the running IDE). To add a setting: one entry in `defs()`, then read it with `cfgB/cfgI/cfgS` where the feature lives; the dialog and the file format pick it up by themselves.

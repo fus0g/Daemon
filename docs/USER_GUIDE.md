@@ -93,6 +93,36 @@ diagnostics (squiggles, gutter marks, counts in the status bar, hover for the me
 go to definition (`F12` or `Ctrl+click`, `Alt+Left` to go back) and header/source switching (`Alt+O`).
 
 
+## Settings
+Open them with **Ctrl+,** or File > Settings... A search box at the top finds a setting by name, description or key; the sections on
+the left group them. Changes apply immediately and are saved to `~/.config/daemon/settings.json` (`$XDG_CONFIG_HOME/daemon/`).
+Only values that differ from the default are stored, as flat `"section.name"` keys:
+```json
+{
+  "editor.fontSize": 16,
+  "editor.tabWidth": 2,
+  "lsp.clangd": "/opt/llvm/bin/clangd"
+}
+```
+The file can also be edited by hand ("Open settings.json" in the dialog); Daemon notices the change within a couple of seconds.
+A value of the wrong type or outside the allowed range falls back to the default and the dialog says which key it was. Unknown
+keys are left alone. A coloured label means the value is not the default; the arrow next to it resets just that setting.
+
+| Section | Settings |
+|---|---|
+| Editor | font size, tab width, indent with spaces, detect indentation, close brackets and quotes, minimap, breadcrumbs, blinking cursor, reload changed files |
+| Appearance | interface font size, animations, start maximized (restart) |
+| General | reopen the last project, restore open tabs, remind me about missing tools |
+| Git | change markers, inline blame |
+| C/C++ intelligence | use clangd, clangd program, background indexing |
+| Terminal | shell |
+| Notebooks | compiler, extra compiler flags |
+| Markdown | load images from the web |
+
+Environment variables still win over the file where they existed before: `IDE_CLANGD`, `IDE_BGINDEX=0`, `DAEMON_NB_CXX`,
+`DAEMON_NB_FLAGS`, `DAEMON_NO_REMOTE_IMAGES`, and `--font-size` on the command line. Zooming with Ctrl+= / Ctrl+- changes
+`editor.fontSize`.
+
 ## Look: translucent chrome and blur
 
 Daemon draws the window chrome (title bar, status bar, gaps between panels) translucent and asks the compositor to blur

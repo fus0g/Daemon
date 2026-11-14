@@ -193,7 +193,32 @@ static void testNavigationAndSearch() {
     CHECK(br && br->second == (Pos{0, 1}));
 }
 
+static void testDocumentSettings() {
+    {   // closing brackets can be turned off
+        Document d;
+        d.autoPair = false;
+        d.insertText("(");
+        CHECK(d.buf.line(0) == "(");
+    }
+    {   // the defaults reach new documents; indentation detection can be switched off
+        const int tw = Document::defaultTabWidth; const bool ut = Document::defaultUseTabs, det = Document::defaultDetectIndent;
+        Document::defaultTabWidth = 8; Document::defaultUseTabs = true;
+        Document a;
+        CHECK(a.tabWidth == 8 && a.useTabs && a.indentUnit() == "\t");
+        Document::defaultTabWidth = 2; Document::defaultUseTabs = false; Document::defaultDetectIndent = false;
+        Document b;
+        b.buf.setText("int f() {\n\treturn 1;\n}\n");
+        b.redetectIndent();
+        CHECK(!b.useTabs && b.tabWidth == 2);     // the file uses tabs, but detection is off
+        Document::defaultDetectIndent = true;
+        b.redetectIndent();
+        CHECK(b.useTabs);                          // now the file wins
+        Document::defaultTabWidth = tw; Document::defaultUseTabs = ut; Document::defaultDetectIndent = det;
+    }
+}
+
 void runTextTests() {
+    testDocumentSettings();
     testBuffer();
     testCoalescing();
     testGroups();

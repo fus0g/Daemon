@@ -28,7 +28,7 @@ void App::toolsCheck(bool openDialog) {
             toolsCmd_ = toolchain::installCommand(tools_, distro_);
             const bool missing = std::ranges::any_of(tools_, [](const auto& s) { return !s.ok(); });
             // At start-up only interrupt the user when something is wrong and they have not muted the reminder.
-            if (openDialog && missing && !state_.setupMuted && (dlg_.kind == DlgKind::None || dlg_.kind == DlgKind::Welcome)) {
+            if (openDialog && missing && cfgB("general.toolReminders") && (dlg_.kind == DlgKind::None || dlg_.kind == DlgKind::Welcome)) {
                 dlg_ = {};
                 dlg_.kind = DlgKind::Setup;
             }
@@ -73,7 +73,7 @@ void App::setupClick(int id) {
     }
     if (id == kDlgSetupClose) { dlgClose(); return; }
     if (id == kDlgSetupRecheck) { toolsCheck(false); setMessage("Checking tools...", false, 1.5f); return; }
-    if (id == kDlgSetupMute) { state_.setupMuted = true; saveState(state_); dlgClose(); setMessage("Tool reminders turned off (Welcome > Check Tools reopens this)", false, 4); return; }
+    if (id == kDlgSetupMute) { { auto& c = settings::current(); c.set("general.toolReminders", false); settings::save(c); } dlgClose(); setMessage("Tool reminders turned off (turn them back on in Settings > General)", false, 4); return; }
     if (id == kDlgSetupCopy && !toolsCmd_.empty()) { win_.setClipboard(toolsCmd_); setMessage("Install command copied", false, 2); return; }
     if (id == kDlgSetupRun && !toolsCmd_.empty()) {   // typed into the integrated terminal: the user sees it and enters their password there
         dlgClose();

@@ -4,6 +4,7 @@ module daemon.app;
 import std;
 import daemon.base.util;
 import daemon.services.notebook;
+import daemon.services.settings;
 
 namespace {
 
@@ -38,6 +39,7 @@ void usage() {
 
 // Called by main() (a plain translation unit that does not need to import any module).
 extern "C" int daemon_main(int argc, char** argv) {
+    ide::settings::current() = ide::settings::load();
     ide::Options opts;
     for (int i = 1; i < argc; ++i) {
         std::string_view a = argv[i];

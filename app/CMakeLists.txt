@@ -32,6 +32,7 @@ target_sources(daemon_app
     impl/prompts.cpp
     impl/render.cpp
     impl/search_view.cpp
+    impl/settings_view.cpp
     impl/terminal_view.cpp
     impl/ui_helpers.cpp)
 # Version: the single source of truth is project(VERSION) in the top-level CMakeLists.txt.

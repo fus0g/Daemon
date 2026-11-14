@@ -28,13 +28,15 @@ import daemon.services.search;
 import daemon.services.gdb;
 import daemon.services.terminal;
 import daemon.services.lsp;
+import daemon.services.settings;
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
 
 namespace ide {
 
 std::expected<void, std::string> App::init() {
-    fontSize_ = opt_.fontSize;
+    fontSize_ = opt_.fontSize != 14 ? opt_.fontSize : static_cast<float>(cfgI("editor.fontSize"));   // --font-size beats the setting
+    syncDocDefaults();
     if (auto r = font_.load(); !r) return r;
 
     win_.onResize = [this](int w, int h, int s) { onResize(w, h, s); };
@@ -48,7 +50,7 @@ std::expected<void, std::string> App::init() {
     if (auto r = win_.create("Daemon", 1280, 800); !r) return r;
     win_.setIcon(appIconPixels(256), 256);   // compositors that support xdg-toplevel-icon (KDE, ...)
     installDesktopEntry();                   // the rest (GNOME) match the app id to a .desktop file
-    if (opt_.screenshot.empty()) win_.setMaximized();   // start maximized (captures keep a fixed size)
+    if (opt_.screenshot.empty() && cfgB("appearance.startMaximized")) win_.setMaximized();   // start maximized (captures keep a fixed size)
 
     scale_ = win_.scale();
     wLog_ = win_.width();
@@ -63,6 +65,7 @@ std::expected<void, std::string> App::init() {
     std::println("Vulkan device: {}   font: {}   scale: {}x", ren_.deviceName(), font_.fontPath(), scale_);
 
     state_ = loadState();
+    settingsInit();
     toolchain::init();   // shipped / managed tools first on PATH
     // Sessions: not for --screenshot runs (deterministic, must not touch the user's files); with files named on the
     // command line those files win, a single folder argument restores that project's session.
@@ -70,7 +73,7 @@ std::expected<void, std::string> App::init() {
     std::error_code sec;
     if (opt_.files.size() > 1 || (opt_.files.size() == 1 && !fs::is_directory(expandPath(opt_.files[0]), sec))) sessionOn_ = false;
     for (const auto& f : opt_.files) openFile(f);
-    if (opt_.files.empty() && sessionOn_ && !state_.lastProject.empty() && fs::is_directory(state_.lastProject, sec))
+    if (opt_.files.empty() && sessionOn_ && cfgB("general.restoreLastProject") && !state_.lastProject.empty() && fs::is_directory(state_.lastProject, sec))
         openFolder(state_.lastProject);   // plain launch: continue where the last session ended
     if (docs_.empty()) newDoc();
     if (opt_.files.empty() && opt_.screenshot.empty() && !explorer_.isOpen()) welcomeOpen();   // nothing to open: show the project chooser
@@ -425,7 +428,7 @@ void App::resetCaret() {
 }
 
 // The caret stops blinking after 30 s without input: an idle editor then sleeps completely (no wakeups, no frames).
-bool App::blinking(Clock::time_point now) const { return now - caretReset_ < std::chrono::seconds(30); }
+bool App::blinking(Clock::time_point now) const { return cfgB("editor.cursorBlink") && now - caretReset_ < std::chrono::seconds(30); }
 
 std::optional<Clock::time_point> App::nextWake() const {
     std::optional<Clock::time_point> t;
@@ -451,6 +454,7 @@ std::optional<Clock::time_point> App::nextWake() const {
     }
     if (lsp_ && healTries_ < 3 && nextHeal_ != Clock::time_point{}) consider(nextHeal_);
     if (hover_.pending) consider(hover_.due);
+    consider(nextSettingsCheck_ > Clock::now() ? nextSettingsCheck_ : Clock::now() + std::chrono::milliseconds(1500));
     if (bar_.shown && !menu_.open) consider(bar_.lastUse + std::chrono::milliseconds(2250));
     return t;
 }
@@ -530,6 +534,7 @@ void App::update(Clock::time_point now, float dt) {
     if (docs_.empty()) animating_ = false;
     if (stepAnimations(dt)) { animating_ = true; dirty_ = true; }
     barTick(now);
+    settingsPoll(now);
     pollTasks();
     if (scriptPos_ < script_.size()) stepScript();
     lspSync(now);
@@ -624,10 +629,11 @@ void App::onResize(int w, int h, int s) {
 }
 
 void App::zoom(float delta, bool reset) {
-    float next = reset ? opt_.fontSize : std::clamp(fontSize_ + delta, 8.0f, 48.0f);
+    float next = reset ? static_cast<float>(cfgI("editor.fontSize")) : std::clamp(fontSize_ + delta, 8.0f, 48.0f);
     if (next == fontSize_) return;
     rescaleViews(next / fontSize_);
     fontSize_ = next;
+    if (!reset) { auto& c = settings::current(); c.set("editor.fontSize", static_cast<int>(std::lround(next))); settings::save(c); }   // zooming is a setting change too
     applyFonts();
     scrollToCursor_ = true;
     dirty_ = true;

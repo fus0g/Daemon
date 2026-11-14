@@ -30,6 +30,7 @@ import daemon.services.search;
 import daemon.services.gdb;
 import daemon.services.terminal;
 import daemon.services.lsp;
+import daemon.services.settings;
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
@@ -405,9 +406,31 @@ private:
 
     // ============================================================ UI font helpers
 
-    static constexpr float kUiSize = 13.0f;   // interface font, logical px
 
-    void applyFonts() { font_.setSizes(fontSize_ * S(), kUiSize * S()); }
+    void applyFonts() { font_.setSizes(fontSize_ * S(), static_cast<float>(cfgI("appearance.uiFontSize")) * S()); }
+
+    // ---- user settings (libs/services/settings, app/impl/settings_view.cpp)
+    static bool cfgB(std::string_view k) { return settings::current().b(k); }
+    static int cfgI(std::string_view k) { return settings::current().i(k); }
+    static std::string cfgS(std::string_view k) { return settings::current().s(k); }
+    bool snapAnimations() const { return frames_ < 3 || (!opt_.screenshot.empty() && !std::getenv("DAEMON_ANIMATE")) || !cfgB("appearance.animations"); }
+    std::string clangdName() const;                 // IDE_CLANGD, then the setting, then "clangd"
+    void applySettings(const settings::Settings& before);   // makes the running IDE match settings::current()
+    void settingChanged(const std::string& key, const settings::Value& v);   // from the dialog: set, save, apply
+    void settingsPoll(Clock::time_point now);      // picks up edits of settings.json made outside
+    void settingsOpenFile();
+    void settingsInit();
+    void syncDocDefaults();
+    void settingsOpen();
+    std::vector<const settings::Def*> settingsShown() const;
+    void settingsCommitEdit();
+    void settingsClick(int id, float x);
+    void settingsKey(const KeyEvent& k);
+    void drawSettings(const Rect& r);
+    float settingsMax_ = 0;
+    Clock::time_point nextSettingsCheck_{};
+    std::filesystem::file_time_type settingsMtime_{};
+    std::string settingsNote_;                      // problems found in settings.json, shown in the dialog
     float uiH() { return font_.uiLineHeight(); }
     float uiW(std::string_view t) { return font_.uiWidth(t); }
     // Draws UI text vertically centred in the row [rowY, rowY + rowH); returns the end x.
@@ -1412,7 +1435,7 @@ private:
         kDlgBm = 500, kDlgPath = 550, kDlgUp = 551, kDlgHidden = 552, kDlgOk = 553, kDlgBrowseCancel = 554, kDlgEntry = 600,
         kDlgSetup = 3, kDlgSetupCopy = 700, kDlgSetupRun = 701, kDlgSetupRecheck = 702, kDlgSetupClose = 703, kDlgSetupMute = 704, kDlgSetupDl = 710,
     };
-    enum class DlgKind { None, Welcome, NewProject, Browse, Setup };
+    enum class DlgKind { None, Welcome, NewProject, Browse, Setup, Settings };
     struct BrowseEntry { std::string name; bool cmake = false; };
     struct Dialog {
         DlgKind kind = DlgKind::None;
@@ -1430,6 +1453,10 @@ private:
         int sel = -1;
         float scroll = 0;
         int hover = -1;
+        // settings
+        int setSection = 0, setFocus = -1;   // setFocus: -2 search box, >= 0 the row whose text is being edited
+        float setScroll = 0;
+        TextBox setSearch, setEdit;
     };
     struct DlgHit { Rect r; int id; };
     Dialog dlg_;

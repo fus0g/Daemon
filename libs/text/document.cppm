@@ -34,8 +34,13 @@ public:
 
     Pos cursor, anchor;
     int wantCol = -1;           // remembered display column for vertical movement
-    int tabWidth = 4;
-    bool useTabs = false;
+    // Defaults for new documents (the App sets them from the user settings).
+    static inline int defaultTabWidth = 4;
+    static inline bool defaultUseTabs = false, defaultAutoPair = true, defaultDetectIndent = true;
+    int tabWidth = defaultTabWidth;
+    bool useTabs = defaultUseTabs;
+    void redetectIndent() { detectIndentation(); }   // after the defaults changed
+    bool autoPair = defaultAutoPair;   // typing an opening bracket or quote also types the closing one
 
     // View state, owned by the UI but stored per document so tabs keep their position.
     float scrollY = 0, targetY = 0, scrollX = 0;
@@ -144,7 +149,7 @@ public:
     // Typed text, including auto-pairing of brackets and quotes.
     void insertText(std::string_view t) {
         if (t.empty()) return;
-        if (t.size() == 1 && tryAutoPair(t[0])) return;
+        if (autoPair && t.size() == 1 && tryAutoPair(t[0])) return;
         if (hasSelection()) buf.breakGroup();
         replaceSelection(t, true);
     }

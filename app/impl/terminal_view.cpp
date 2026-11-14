@@ -32,7 +32,8 @@ namespace ide {
 
 void App::startTerminal() {
     if (termProc_) return;
-    std::string shell = std::getenv("SHELL") ? std::getenv("SHELL") : "";
+    std::string shell = cfgS("terminal.shell");
+    if (shell.empty() || !findExecutable(shell)) shell = std::getenv("SHELL") ? std::getenv("SHELL") : "";
     if (shell.empty() || !findExecutable(shell)) shell = findExecutable("bash") ? "bash" : "sh";
     ProcessOptions o;
     o.usePty = true;

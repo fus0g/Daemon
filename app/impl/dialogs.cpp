@@ -220,6 +220,7 @@ std::size_t App::caretFromX(const std::string& t, float relX) {
 
 void App::dlgKey(const KeyEvent& k) {
     Dialog& d = dlg_;
+    if (d.kind == DlgKind::Settings && k.key == Key::Escape) { settingsKey(k); return; }
     if (k.key == Key::Escape) {
         if (d.kind == DlgKind::Browse && !d.forLocation) { dlgClose(); return; }
         if (d.kind == DlgKind::Browse) { d.kind = DlgKind::NewProject; return; }
@@ -229,6 +230,7 @@ void App::dlgKey(const KeyEvent& k) {
         return;
     }
     if (k.ctrl && k.key == Key::Char && k.ch == 'q') { requestQuit(); return; }
+    if (d.kind == DlgKind::Settings) { settingsKey(k); return; }
     switch (d.kind) {
         case DlgKind::Welcome:
             if (k.key == Key::Enter) { newProjectOpen(); return; }
@@ -289,9 +291,11 @@ void App::dlgClick(Button b, float x, float y) {
     dlgLastId_ = id;
     Dialog& d = dlg_;
     if (id < 0) {
-        if (!dlgPanel_.contains(x, y)) { if (d.kind == DlgKind::Welcome) dlgClose(); }
+        if (!dlgPanel_.contains(x, y)) { if (d.kind == DlgKind::Welcome) dlgClose(); else if (d.kind == DlgKind::Settings) { settingsCommitEdit(); dlgClose(); } }
+        else if (d.kind == DlgKind::Settings) settingsCommitEdit();
         return;
     }
+    if (d.kind == DlgKind::Settings) { settingsClick(id, x); return; }
     auto hitRect = [&](int want) { for (const auto& h : dlgHits_) if (h.id == want) return h.r; return Rect{}; };
     if (id == kDlgNew) { newProjectOpen(); return; }
     if (id == kDlgOpen) { browseOpen(false); return; }
@@ -344,6 +348,7 @@ void App::dlgClick(Button b, float x, float y) {
 void App::dlgScroll(float dy) {
     Dialog& d = dlg_;
     if (d.kind == DlgKind::Welcome) d.recentScroll = std::clamp(d.recentScroll + dy, 0.0f, std::max(0.0f, dlgRecentMax_));
+    else if (d.kind == DlgKind::Settings) d.setScroll = std::clamp(d.setScroll + dy, 0.0f, std::max(0.0f, settingsMax_));
     else if (d.kind == DlgKind::Browse) d.scroll = std::clamp(d.scroll + dy, 0.0f, std::max(0.0f, static_cast<float>(d.entries.size()) * std::round(34 * S()) - browseListH_));
 }
 
@@ -404,6 +409,7 @@ void App::drawDialog() {
         case DlgKind::NewProject: drawNewProject(r); break;
         case DlgKind::Browse: drawBrowse(r); break;
         case DlgKind::Setup: drawSetup(r); break;
+        case DlgKind::Settings: drawSettings(r); break;
         default: break;
     }
 }

@@ -8,6 +8,7 @@ module;
 module daemon.services.notebook;
 import std;
 import daemon.base.util;
+import daemon.services.settings;
 
 namespace fs = std::filesystem;
 
@@ -871,6 +872,7 @@ struct Session::Impl {
 
 std::string Session::compilerName() {
     if (const char* c = std::getenv("DAEMON_NB_CXX"); c && *c) return c;
+    if (auto s = settings::current().s("notebook.compiler"); !s.empty()) return s;
     return "g++";
 }
 
@@ -1010,8 +1012,9 @@ bool Session::Impl::prepare(int cell, std::string& error) {
         if (major < 15) { error = std::format("notebooks need GCC 15 or newer (import std, C++20 modules); found {}", cxxVersion); return false; }
     }
     setState(State::Starting, "g++ " + cxxVersion);
-    if (const char* f = std::getenv("DAEMON_NB_FLAGS"); f && *f) {
-        std::istringstream in(f);
+    {
+        const char* env = std::getenv("DAEMON_NB_FLAGS");
+        std::istringstream in(env && *env ? std::string(env) : settings::current().s("notebook.flags"));
         std::string a;
         while (in >> a) flags.push_back(a);
     }

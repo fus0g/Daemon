@@ -471,6 +471,7 @@ void App::editorKeyImpl(const KeyEvent& k) {
             case 'b': toggleSidebar(); scrollToCursor_ = false; break;
             case 'e': if (shift) focusSidebar(); scrollToCursor_ = false; break;
             case 'n': if (shift) newProjectOpen(); else newDoc(); break;
+            case ',': settingsOpen(); break;
             case 'w': closeTab(cur_); break;
             case 'q': requestQuit(); break;
             case 'f': if (shift) openSearch(false); else openPrompt(PromptKind::Find); scrollToCursor_ = false; break;

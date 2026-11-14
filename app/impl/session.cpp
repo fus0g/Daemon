@@ -89,7 +89,7 @@ void App::sessionTick(Clock::time_point now) {
 }
 
 bool App::restoreSession() {
-    if (!sessionOn_ || !explorer_.isOpen()) return false;
+    if (!sessionOn_ || !explorer_.isOpen() || !cfgB("general.restoreSession")) return false;
     const std::string rootPath = explorer_.rootPath().string();
     // Never throw away edits: only replace tabs that are all saved (or the untitled placeholder).
     if (std::ranges::any_of(docs_, [](const auto& d) { return d->modified(); })) return false;

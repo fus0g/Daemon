@@ -468,7 +468,7 @@ void App::drawEditor(Document& d) {
     }
 
     // Inline blame for the cursor line: who changed it, when, and the commit summary.
-    if (drawActive_) {
+    if (drawActive_ && cfgB("git.blame")) {
         if (const git::Commit* bc = blameOf(d, d.cursor.line)) {
             const std::string& cl = d.buf.line(d.cursor.line);
             const float by = e.y + static_cast<float>(d.cursor.line) * line - sy;
@@ -504,11 +504,11 @@ void App::drawEditor(Document& d) {
         if (auto wit = worstSeverity.find(ln); wit != worstSeverity.end())
             fill(e.x + std::round(3 * s), y + std::round(3 * s), std::max(2.0f, std::round(3 * s)), line - std::round(6 * s), diagColor(wit->second), 1.5f * s);
         drawDebugGutter(d, ln, y, line);
-        if (gd && ln < static_cast<int>(gd->kinds.size()) && gd->kinds[static_cast<std::size_t>(ln)])   // change bar vs HEAD
+        if (gd && cfgB("git.gutter") && ln < static_cast<int>(gd->kinds.size()) && gd->kinds[static_cast<std::size_t>(ln)])   // change bar vs HEAD
             fill(e.x + L_.gutterW - std::round(5 * s), y + 1, std::max(2.0f, std::round(3 * s)), line - 2,
                  gd->kinds[static_cast<std::size_t>(ln)] == 1 ? Color::rgb(0x4fb36d) : Color::rgb(0x5b9bff), 1.5f * s);
     }
-    if (gd)
+    if (gd && cfgB("git.gutter"))
         for (int dl : gd->deletedAt) {   // removed lines: a small red wedge at the boundary
             if (dl < first || dl > last + 1) continue;
             const float y = e.y + static_cast<float>(dl) * line - sy;

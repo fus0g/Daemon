@@ -9,6 +9,7 @@ target_sources(daemon_services
     notebook.cppm
     project.cppm
     search.cppm
+    settings.cppm
     terminal.cppm
     toolchain.cppm
   PRIVATE
@@ -20,6 +21,7 @@ target_sources(daemon_services
     notebook.cpp
     project.cpp
     search.cpp
+    settings.cpp
     terminal.cpp
     toolchain.cpp)
 target_link_libraries(daemon_services PUBLIC daemon_base)

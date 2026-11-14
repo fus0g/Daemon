@@ -98,9 +98,9 @@ void App::checkDocsOnDisk() {
         d.diskGone = false;
         const auto t = fs::last_write_time(d.path, ec);
         if (ec || t == d.diskTime) continue;
-        if (d.modified()) {   // keep the user's edits; just tell them once per change
+        if (d.modified() || !cfgB("editor.autoReload")) {   // keep the user's edits (or the user's choice); just tell them once per change
             d.diskTime = t;
-            setMessage(d.name + " changed on disk - you have unsaved edits", true, 5);
+            setMessage(d.name + (d.modified() ? " changed on disk - you have unsaved edits" : " changed on disk"), true, 5);
             continue;
         }
         const Pos c = d.cursor, a = d.anchor;

@@ -19,6 +19,7 @@ import daemon.services.gdb;
 import daemon.services.terminal;
 import daemon.services.lsp;
 import daemon.services.toolchain;
+import daemon.services.settings;
 import daemon.ui.font;
 import daemon.ui.draw;
 #include "check.hpp"
@@ -613,7 +614,45 @@ void testToolchain() {
     for (const auto& s : found) if (s.tool.id == "git") CHECK(s.found && !s.version.empty());
 }
 
+static void testSettings() {
+    using namespace ide::settings;
+    // every definition has a default that passes its own validation, and keys are unique
+    std::set<std::string> keys;
+    for (const auto& d : defs()) {
+        CHECK(keys.insert(d.key).second);
+        Settings t;
+        CHECK(t.set(d.key, d.def));
+        CHECK(t.isDefault(d.key));
+        if (d.type == Type::Int) CHECK(std::get<int>(d.def) >= d.min && std::get<int>(d.def) <= d.max);
+    }
+    Settings s;
+    CHECK(s.i("editor.tabWidth") == 4 && s.b("editor.minimap") && s.s("terminal.shell").empty());
+    CHECK(s.toText() == "{}\n");
+    CHECK(s.set("editor.tabWidth", 2) && s.i("editor.tabWidth") == 2 && !s.isDefault("editor.tabWidth"));
+    CHECK(s.set("editor.fontSize", 500) && s.i("editor.fontSize") == 48);      // clamped
+    CHECK(!s.set("editor.tabWidth", true));                                      // wrong type
+    CHECK(!s.set("no.such.key", 1));
+    CHECK(s.set("terminal.shell", std::string("  /bin/zsh \n")) && s.s("terminal.shell") == "/bin/zsh");
+    CHECK(s.set("editor.minimap", false));
+    const std::string text = s.toText();
+    Settings back = Settings::fromText(text);
+    CHECK(back == s);
+    CHECK(back.i("editor.tabWidth") == 2 && !back.b("editor.minimap") && back.s("terminal.shell") == "/bin/zsh");
+    s.reset("editor.minimap");
+    CHECK(s.b("editor.minimap") && s.isDefault("editor.minimap"));
+    // hand-written files: bad values fall back, unknown keys survive a save
+    std::vector<std::string> problems;
+    Settings h = Settings::fromText("{\"editor.tabWidth\": \"wide\", \"editor.minimap\": false, \"future.thing\": [1,2]}", &problems);
+    CHECK(problems.size() == 1 && h.i("editor.tabWidth") == 4 && !h.b("editor.minimap"));
+    CHECK(h.toText().find("future.thing") != std::string::npos);
+    problems.clear();
+    Settings bad = Settings::fromText("{ nonsense", &problems);
+    CHECK(problems.size() == 1 && bad == Settings{});
+    CHECK(sections().size() >= 5);
+}
+
 void runServicesTests() {
+    testSettings();
     testToolchain();
     testFileOps();
     testCMake();

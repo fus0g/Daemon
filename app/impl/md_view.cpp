@@ -247,7 +247,7 @@ std::string App::pictureKey(MdView& v, const std::string& src) {
     if (auto it = v.keys.find(src); it != v.keys.end()) return it->second;
     std::string key;
     if (src.starts_with("https://")) {
-        if (!std::getenv("DAEMON_NO_REMOTE_IMAGES")) key = src;
+        if (!std::getenv("DAEMON_NO_REMOTE_IMAGES") && cfgB("markdown.remoteImages")) key = src;
     } else if (src.find("://") == std::string::npos && !src.starts_with("data:") && !src.empty() && v.src) {
         std::string rel = src.substr(0, src.find_first_of("#?"));
         fs::path p = rel.starts_with("/") && explorer_.isOpen() && fs::exists(explorer_.rootPath() / rel.substr(1))
