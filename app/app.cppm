@@ -875,7 +875,7 @@ private:
 
     static Cursor cursorForEdge(Edge e);
 
-    // 3 = close (circular pill at the left), 4 = logo (circular pill above the activity bar, opens the project list)
+    // 3 = close (circular pill at the right), 4 = logo (circular pill at the left, opens the project list)
     int titleButtonAt(float x, float y) const;
     Rect closePill() const;
     Rect logoPill() const;

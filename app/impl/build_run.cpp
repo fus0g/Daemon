@@ -441,7 +441,7 @@ void App::drawToolbar() {
     if (busy) animating_ = true;   // keeps the status bar / progress fresh
 
     // Status text with a slim progress bar while building.
-    float rx = L_.toolbar.w - m - std::round(6 * s) - 0.0f;
+    float rx = L_.toolbar.w - m - std::round(6 * s) - (L_.csd ? closePill().w + std::round(8 * s) : 0.0f);
     const float ry = tool_.run.y, rhh = tool_.run.h;
     if (!buildStatus_.empty()) {
         const bool bad = buildStatus_.find("failed") != std::string::npos || buildStatus_.find("Failed") != std::string::npos;
