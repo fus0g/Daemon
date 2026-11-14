@@ -124,7 +124,7 @@ Rect App::closePill() const {
 }
 
 Rect App::logoPill() const {
-    const float s = S(), d = std::min(L_.activity.w - 2 * std::round(3.5f * s), std::round(L_.title.h - 4 * s));
+    const float s = S(), d = std::min(L_.activity.w - 2 * std::round(3.5f * s), std::round(activityCell() + 7 * s));   // as wide as the pills below
     return {std::round(L_.activity.x + (L_.activity.w - d) / 2), L_.title.y + std::round((L_.title.h - d) / 2), d, d};
 }
 
@@ -146,7 +146,7 @@ void App::drawTitleBar() {
     // logo: a circular pill above the activity-bar pills
     const Rect lg = logoPill();
     pill(lg, hoverBtn_ == 4, Color::rgb(0x23252b));
-    const int ls = std::max(12, static_cast<int>(std::round(lg.w * 0.56f)));
+    const int ls = std::max(12, static_cast<int>(std::round(lg.w * 0.6f)));
     Icons::logo(dl_, font_, std::round(lg.x + (lg.w - static_cast<float>(ls)) / 2), std::round(lg.y + (lg.h - static_cast<float>(ls)) / 2), ls, theme::accent);
 
     std::string title = docs_.empty() ? "Daemon" : doc().name + (doc().modified() ? " \xE2\x80\xA2" : "");
