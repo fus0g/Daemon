@@ -44,7 +44,6 @@ const std::vector<Def>& defs() {
 
         v.push_back(boolean("general.restoreLastProject", "General", "Reopen the last project", "A plain launch continues with the project you closed last.", true));
         v.push_back(boolean("general.restoreSession", "General", "Restore open tabs", "Reopen the files, splits and cursor positions of a project.", true));
-        v.push_back(boolean("general.toolReminders", "General", "Remind me about missing tools", "Open the tool set-up dialog at start-up when something is missing.", true));
 
         v.push_back(boolean("git.gutter", "Git", "Change markers", "Mark added, changed and removed lines next to the line numbers.", true));
         v.push_back(boolean("git.blame", "Git", "Inline blame", "Show who last changed the current line, at the end of the line.", true));
@@ -59,6 +58,7 @@ const std::vector<Def>& defs() {
         v.push_back(text("notebook.flags", "Notebooks", "Extra compiler flags", "Added to every cell, e.g. -O1 -Wall. %flags in a cell adds to them."));
 
         v.push_back(boolean("markdown.remoteImages", "Markdown", "Load images from the web", "Preview pictures that are linked with https (cached on disk).", true));
+        v.push_back(boolean("general.toolReminders", "Tools", "Remind me about missing tools", "Open this page at start-up when a tool Daemon needs is missing.", true));
         return v;
     }();
     return t;

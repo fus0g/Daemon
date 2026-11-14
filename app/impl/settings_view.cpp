@@ -119,10 +119,13 @@ std::string lower(std::string s) { for (auto& c : s) c = static_cast<char>(std::
 
 }  // namespace
 
-void App::settingsOpen() {
+void App::settingsOpen(const std::string& section) {
     dlg_ = {};
     dlg_.kind = DlgKind::Settings;
     dlg_.setSection = 0;
+    const auto secs = settings::sections();
+    if (auto it = std::ranges::find(secs, section); it != secs.end()) dlg_.setSection = static_cast<int>(it - secs.begin());
+    if (section == "Tools") toolsCheck(false);
     dlg_.setFocus = -1;
     dirty_ = true;
 }
@@ -161,7 +164,8 @@ void App::settingsClick(int id, float x) {
     if (id == kSetClose) { dlgClose(); return; }
     if (id == kSetOpenFile) { settingsOpenFile(); return; }
     if (id == kSetSearch) { d.setFocus = -2; d.setSearch.cur = caretFromX(d.setSearch.text, x - (hitRect(id).x + 10 * S())); return; }
-    if (id >= kSetSection && id < kSetSection + 20) { d.setSection = id - kSetSection; d.setScroll = 0; d.setSearch = {}; if (d.setFocus == -2) d.setFocus = -1; return; }
+    if ((id >= kDlgSetupCopy && id <= kDlgSetupRecheck) || (id >= kDlgSetupDl && id < kDlgSetupDl + 20)) { setupClick(id); return; }
+    if (id >= kSetSection && id < kSetSection + 20) { d.setSection = id - kSetSection; d.setScroll = 0; if (settings::sections()[static_cast<std::size_t>(d.setSection)] == "Tools") toolsCheck(false); d.setSearch = {}; if (d.setFocus == -2) d.setFocus = -1; return; }
     if (id < kSetRow) return;
     const int idx = (id - kSetRow) / 4, part = (id - kSetRow) % 4;
     const auto shown = settingsShown();
@@ -247,7 +251,10 @@ void App::drawSettings(const Rect& r) {
     const float areaTop = r.y + headH, areaBottom = r.bottom() - footH;
     const float rowH = std::round(60 * s);
     const auto shown = settingsShown();
-    const float content = static_cast<float>(shown.size()) * rowH;
+    const bool toolsPage = !searching && d.setSection < static_cast<int>(secs.size()) && secs[static_cast<std::size_t>(d.setSection)] == "Tools";
+    const float rowsH = static_cast<float>(shown.size()) * rowH;
+    const float toolsH = toolsPage ? std::round(420 * s) + static_cast<float>(tools_.size()) * std::round(38 * s) : 0;   // generous: refined below while drawing
+    float content = rowsH + toolsH;
     settingsMax_ = std::max(0.0f, content - (areaBottom - areaTop));
     d.setScroll = std::clamp(d.setScroll, 0.0f, settingsMax_);
     const settings::Settings& cur = settings::current();
@@ -329,6 +336,11 @@ void App::drawSettings(const Rect& r) {
         uiLabel(cx, ry + std::round(rowH * 0.48f), std::round(rowH * 0.42f), help, theme::lineNum, cx + lw);
     }
     if (shown.empty()) uiLabel(cx, areaTop + 10 * s, rowH, "No setting matches \"" + d.setSearch.text + "\"", theme::dim);
+
+    if (toolsPage) {   // the tool check: a table under the setting(s) of the section
+        const float used = drawToolsBody(cx, areaTop + rowsH + 14 * s - d.setScroll, cw, areaTop, areaBottom);
+        settingsMax_ = std::max(0.0f, rowsH + 14 * s + used - (areaBottom - areaTop));
+    }
 
     // header and footer cover rows that are scrolled past their edge
     const Rect main{r.x + sideW + std::round(6 * s), r.y, r.w - sideW - std::round(6 * s), r.h};

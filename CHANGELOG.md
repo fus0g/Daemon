@@ -5,13 +5,17 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-14
+
+### Changed
+- The toolchain check moved from its own dialog into Settings > Tools (Help > Check Toolchain... and the start-up reminder open that page; the welcome screen's "Check Tools" became "Settings"). "Don't remind me" is now the setting Tools > Remind me about missing tools (an earlier choice is carried over).
+
 ## [0.4.0] - 2026-11-14
 
 ### Added
 - Settings (Ctrl+, or File > Settings...): a dialog with search and sections for everything Daemon can be configured for - editor (font size, tab width, spaces/tabs, indentation detection, closing brackets, minimap, breadcrumbs, cursor blink, reload on change), appearance (interface font size, animations, start maximized), general (reopen last project, restore tabs, tool reminders), git (change markers, blame), clangd (on/off, program, background index), terminal shell, notebook compiler and flags, Markdown web images. Changes apply at once and are saved to `~/.config/daemon/settings.json`, which can also be edited by hand and is reloaded when it changes.
 
 ### Changed
-- "Don't remind me" in the tool set-up dialog is now the setting General > Remind me about missing tools (an earlier choice is carried over).
 - Zooming the editor font (Ctrl+= / Ctrl+-) is saved as the font size setting.
 
 ## [0.3.1] - 2026-11-14
@@ -87,7 +91,8 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.4.0...HEAD
+[Unreleased]: https://example.invalid/compare/v0.4.1...HEAD
+[0.4.1]: https://example.invalid/compare/v0.4.0...v0.4.1
 [0.4.0]: https://example.invalid/compare/v0.3.1...v0.4.0
 [0.3.1]: https://example.invalid/compare/v0.3.0...v0.3.1
 [0.3.0]: https://example.invalid/compare/v0.2.0...v0.3.0

@@ -112,12 +112,13 @@ keys are left alone. A coloured label means the value is not the default; the ar
 |---|---|
 | Editor | font size, tab width, indent with spaces, detect indentation, close brackets and quotes, minimap, breadcrumbs, blinking cursor, reload changed files |
 | Appearance | interface font size, animations, start maximized (restart) |
-| General | reopen the last project, restore open tabs, remind me about missing tools |
+| General | reopen the last project, restore open tabs |
 | Git | change markers, inline blame |
 | C/C++ intelligence | use clangd, clangd program, background indexing |
 | Terminal | shell |
 | Notebooks | compiler, extra compiler flags |
 | Markdown | load images from the web |
+| Tools | the toolchain check (what is installed, Download / install command / Re-check) and the reminder at start-up; also Help > Check Toolchain... |
 
 Environment variables still win over the file where they existed before: `IDE_CLANGD`, `IDE_BGINDEX=0`, `DAEMON_NB_CXX`,
 `DAEMON_NB_FLAGS`, `DAEMON_NO_REMOTE_IMAGES`, and `--font-size` on the command line. Zooming with Ctrl+= / Ctrl+- changes

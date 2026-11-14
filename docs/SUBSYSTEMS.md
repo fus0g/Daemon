@@ -87,17 +87,17 @@ context menu. New file/folder/rename/delete prompts appear as a card at the bott
 ## Toolchain check (libs/services/toolchain, app/impl/setup.cpp)
 At start Daemon looks for clangd, cmake, ninja, gdb, git (recommended) and clang++, zenity (optional), reads their versions
 (`--version`) and flags ones that are missing or older than the minimum (clangd 16, cmake 3.20, gdb 10, git 2.20). If something is
-wrong and the user has not pressed "Don't remind me" (`state.json: setupMuted`), the Setup dialog opens: per-tool status, the
+wrong and the setting `general.toolReminders` is on, Settings opens on its Tools page: per-tool status, the
 install command for the detected distribution (`/etc/os-release` -> dnf/apt/pacman/zypper/apk package names), **Run in terminal**
 (types it into the integrated terminal so the user enters their sudo password there), **Copy command**, **Re-check**. Always
-reachable from the welcome screen ("Check Tools"). Test hook: `--keys setup`.
+reachable from the welcome screen (Settings), Help > Check Toolchain.... Test hook: `--keys setup`.
 
 Shipped or managed tools take priority: `$DAEMON_TOOLS_DIR/bin`, `<exe>/../libexec/daemon/bin`, `<exe>/tools/bin`,
 `~/.local/share/daemon/tools/bin`, then `$PATH`; `toolchain::init()` prepends these to `$PATH` so child processes use them too.
 Dropping `clangd`, `cmake` and `ninja` binaries there is all a package needs to do to bundle them.
 
 ### Managed downloads
-For clangd, CMake and Ninja the Setup dialog offers **Download** when the tool is missing or too old. `toolchain::install` (worker thread):
+For clangd, CMake and Ninja the Tools page of Settings offers **Download** when the tool is missing or too old. `toolchain::install` (worker thread):
 GitHub `releases/latest` JSON -> pick the Linux asset for the CPU (`pickAsset`) -> download with `curl` (or `wget`) -> verify the
 SHA-256 digest GitHub publishes for the asset (refuses to install without one) -> extract (`tar`, or `unzip` / `bsdtar` / `python3 -m zipfile`)
 into `~/.local/share/daemon/tools/<tool>/<version>/` -> symlink the executables into `tools/bin` (first on PATH) -> run `--version`.
