@@ -196,7 +196,7 @@ std::optional<int> Process::tryWait() {
     return std::nullopt;
 }
 
-auto Process::runCapture(const ProcessOptions& opts, int timeoutMs) -> Result {
+auto Process::runCapture(const ProcessOptions& opts, int timeoutMs, const std::atomic<bool>* cancel) -> Result {
     Result res;
     Process p;
     if (auto r = p.start(opts); !r) { res.error = r.error(); return res; }
@@ -205,6 +205,7 @@ auto Process::runCapture(const ProcessOptions& opts, int timeoutMs) -> Result {
         pollfd pf{p.outFd_, POLLIN, 0};
         long left = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - std::chrono::steady_clock::now()).count();
         if (left <= 0) { res.timedOut = true; p.terminate(true); break; }
+        if (cancel && cancel->load()) { p.terminate(true); break; }
         if (::poll(&pf, 1, static_cast<int>(std::min<long>(left, 200))) > 0) {
             if (p.read(res.output) == 0) break;  // EOF
         }

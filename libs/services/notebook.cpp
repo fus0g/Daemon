@@ -859,6 +859,7 @@ struct Session::Impl {
     bool compile(const std::string& unitName, const std::string& source, bool shared, std::string& diagnostics);
     bool startKernel(std::string& error);
     void killKernel();
+    std::atomic<bool> aborting{false};   // the notebook is closing: running compilers are killed, nothing waits for them
     bool load(int cell, const std::string& so, const std::string& entry, bool& died);
     void runRequest(const Request& r);
     std::vector<std::string> baseFlags() const {
@@ -901,6 +902,7 @@ Session::~Session() {
         d_->stop = true;
     }
     d_->interrupted = true;
+    d_->aborting = true;
     d_->killKernel();
     d_->cv.notify_all();
     d_->worker.request_stop();
@@ -981,7 +983,7 @@ bool Session::Impl::compile(const std::string& unitName, const std::string& sour
         o.argv.push_back("-c");
         o.argv.push_back(unitName + ".cpp");
     }
-    auto r = Process::runCapture(o, 180000);
+    auto r = Process::runCapture(o, 180000, &aborting);
     if (!r.error.empty()) { diagnostics = r.error; return false; }
     diagnostics = r.output;
     if (r.timedOut) { diagnostics += "\ncompilation timed out"; return false; }
@@ -996,11 +998,11 @@ bool Session::Impl::prepare(int cell, std::string& error) {
     {
         ProcessOptions o;
         o.argv = {cxx, "-dumpfullversion"};
-        auto r = Process::runCapture(o, 10000);
+        auto r = Process::runCapture(o, 10000, &aborting);
         cxxVersion = std::string(trimView(r.output));
         ProcessOptions o2;
         o2.argv = {cxx, "--version"};
-        auto r2 = Process::runCapture(o2, 10000);
+        auto r2 = Process::runCapture(o2, 10000, &aborting);
         const bool gcc = r2.output.find("Free Software Foundation") != std::string::npos || r2.output.find("g++") == 0 || r2.output.find("GCC") != std::string::npos;
         int major = 0;
         std::from_chars(cxxVersion.data(), cxxVersion.data() + cxxVersion.size(), major);
@@ -1041,14 +1043,14 @@ bool Session::Impl::prepare(int cell, std::string& error) {
         o.argv = {cxx};
         for (const auto& f : baseFlags()) o.argv.push_back(f);
         for (const char* f : {"-fsearch-include-path", "-fmodule-only", "-c", "bits/std.cc"}) o.argv.push_back(f);
-        auto r = Process::runCapture(o, 180000);
+        auto r = Process::runCapture(o, 180000, &aborting);
         if (r.exitCode != 0) { error = "could not build the std module:\n" + r.output; return false; }
         std::string diag;
         if (!compile("nb_support", std::string(kSupportSource), false, diag)) { error = "could not build the notebook support module:\n" + diag; return false; }
         ProcessOptions k;
         k.cwd = dir;
         k.argv = {cxx, "-O1", "-std=c++17", "-o", "nb_kernel", "nb_kernel.cpp", "-ldl"};
-        auto kr = Process::runCapture(k, 120000);
+        auto kr = Process::runCapture(k, 120000, &aborting);
         if (kr.exitCode != 0) { error = "could not build the notebook runner:\n" + kr.output; return false; }
         fs::create_directories(shared, ec);
         fs::copy_file(fs::path(dir) / "gcm.cache" / "std.gcm", stdGcm, fs::copy_options::overwrite_existing, ec);

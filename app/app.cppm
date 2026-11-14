@@ -937,7 +937,12 @@ private:
 
     // Runs `work` on a worker thread; the function it returns is applied on the main thread when it is done.
     void spawn(std::function<std::function<void()>()> work) {
-        jobs_.push_back(std::async(std::launch::async, std::move(work)));
+        // Not std::async: the future of an async task blocks in its destructor until the task is done, which made closing the
+        // window wait for a slow `git fetch` or a picture download. A detached thread's result is simply dropped on exit
+        // (the work functions touch no App state; only the function they return does, and that runs on the main thread).
+        std::packaged_task<std::function<void()>()> task(std::move(work));
+        jobs_.push_back(task.get_future());
+        std::thread(std::move(task)).detach();
     }
     void pollJobs();
     bool docAlive(const Document* d) const {

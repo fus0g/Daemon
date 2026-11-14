@@ -54,11 +54,16 @@ extern "C" int daemon_main(int argc, char** argv) {
         opts.files.emplace_back(a);
     }
 
-    ide::App app(std::move(opts));
-    if (auto r = app.init(); !r) {
+    auto app = std::make_unique<ide::App>(std::move(opts));
+    if (auto r = app->init(); !r) {
         std::println(std::cerr, "daemon: {}", r.error());
         return 1;
     }
-    
-    return app.run();
+    const int rc = app->run();
+    const auto t0 = std::chrono::steady_clock::now();
+    app.reset();
+    ide::logLine(std::format("shutdown took {} ms", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count()));
+    std::cout.flush();
+    std::cerr.flush();
+    std::_Exit(rc);   // background jobs may still be running (a git fetch, a download): do not wait for them or race their statics
 }

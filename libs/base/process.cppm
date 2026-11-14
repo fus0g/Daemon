@@ -91,7 +91,8 @@ public:
     };
 
     // Runs a command to completion and captures its output (used for short, synchronous jobs / tests).
-    static Result runCapture(const ProcessOptions& opts, int timeoutMs = 60000);
+    // `cancel`, when set to true from another thread, kills the process and returns early.
+    static Result runCapture(const ProcessOptions& opts, int timeoutMs = 60000, const std::atomic<bool>* cancel = nullptr);
 
 private:
     void closeFds() {
