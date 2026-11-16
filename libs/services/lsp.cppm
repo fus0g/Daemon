@@ -100,6 +100,10 @@ public:
     // Returns the request id (for cancel()).
     int completion(const std::string& path, int line, int col, int triggerKind,
                    std::function<void(std::vector<LspCompletion>)> cb);
+    // Also tells whether the list is incomplete: the server cut it off (or ranked it for the prefix typed so far), so a longer
+    // prefix needs a new request instead of filtering this list.
+    int completion(const std::string& path, int line, int col, int triggerKind,
+                   std::function<void(std::vector<LspCompletion>, bool incomplete)> cb);
 
     void definition(const std::string& path, int line, int col, std::function<void(std::vector<LspLocation>)> cb);
 

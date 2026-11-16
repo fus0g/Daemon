@@ -137,13 +137,19 @@ void LspClient::didChange(const std::string& path, int version, const std::strin
 
 int LspClient::completion(const std::string& path, int line, int col, int triggerKind,
                std::function<void(std::vector<LspCompletion>)> cb) {
+    return completion(path, line, col, triggerKind, [cb = std::move(cb)](std::vector<LspCompletion> items, bool) { cb(std::move(items)); });
+}
+
+int LspClient::completion(const std::string& path, int line, int col, int triggerKind,
+               std::function<void(std::vector<LspCompletion>, bool)> cb) {
     auto params = positionParams(path, line, col);
     params.set("context", json::object().set("triggerKind", triggerKind));
     return request("textDocument/completion", std::move(params), [cb = std::move(cb)](const json::Value& r, bool err) {
         std::vector<LspCompletion> out;
+        bool incomplete = false;
         if (!err) {
             const json::Value* items = &r;
-            if (r.isObject()) items = &r["items"];  // CompletionList
+            if (r.isObject()) { items = &r["items"]; incomplete = r["isIncomplete"].boolean(); }  // CompletionList
             if (auto* a = items->array()) {
                 for (const auto& it : *a) {
                     LspCompletion c;
@@ -159,7 +165,7 @@ int LspClient::completion(const std::string& path, int line, int col, int trigge
                 }
             }
         }
-        cb(std::move(out));
+        cb(std::move(out), incomplete);
     });
 }
 

@@ -70,7 +70,7 @@ void App::startLsp() {
                                      "--experimental-modules-support",
                                      "--completion-parse=always",  // real AST completions, never the text-based fallback
                                      // resource limits: clangd defaults to every core and GBs of RAM
-                                     "-j=2", "--background-index-priority=low", "--pch-storage=disk", "--malloc-trim"};
+                                     "-j=2", "--limit-results=1000", "--background-index-priority=low", "--pch-storage=disk", "--malloc-trim"};
     if (const char* o = std::getenv("IDE_BGINDEX"); (o && *o == '0') || (!o && !cfgB("lsp.backgroundIndex"))) std::erase(argv, std::string("--background-index"));
     // run the language server at low CPU priority so typing and the UI stay smooth and the machine stays cool
     argv.insert(argv.begin(), {"nice", "-n", "10"});
@@ -362,6 +362,8 @@ void App::lspSync(Clock::time_point now) {
     }
 }
 
+// How well `prefix` matches `text`: 0 same-case prefix, 1 prefix ignoring case, 2 the capitals / word starts (gw -> GLFWwindow,
+// vi -> vector_iterator), 3 any subsequence (two characters or more), -1 no match.
 int App::matchScore(std::string_view prefix, std::string_view text) {
     while (!text.empty() && text.front() == ' ') text.remove_prefix(1);
     if (prefix.empty()) return 0;
@@ -370,10 +372,36 @@ int App::matchScore(std::string_view prefix, std::string_view text) {
     bool prefixCI = text.size() >= prefix.size();
     for (std::size_t i = 0; prefixCI && i < prefix.size(); ++i) prefixCI = lower(text[i]) == lower(prefix[i]);
     if (prefixCI) return 1;
-    std::size_t pi = 0;  // subsequence
+    if (prefix.size() < 2) return -1;
+    auto wordStart = [&](std::size_t j) {
+        if (j == 0) return true;
+        const unsigned char c = static_cast<unsigned char>(text[j]), p = static_cast<unsigned char>(text[j - 1]);
+        if (p == '_' || p == ':' || p == ' ') return std::isalnum(c) != 0;
+        if (std::isupper(c) && !std::isupper(p)) return true;                                          // fooBar
+        return std::isupper(c) && std::isupper(p) && j + 1 < text.size() && std::islower(static_cast<unsigned char>(text[j + 1]));   // HTTPServer
+    };
+    std::size_t pi = 0;
+    bool prevMatched = false;
+    for (std::size_t j = 0; j < text.size() && pi < prefix.size(); ++j) {
+        if (lower(text[j]) == lower(prefix[pi]) && (pi == 0 || prevMatched || wordStart(j))) { ++pi; prevMatched = true; }
+        else prevMatched = false;
+    }
+    if (pi == prefix.size()) return 2;
+    pi = 0;
     for (char c : text)
         if (pi < prefix.size() && lower(c) == lower(prefix[pi])) ++pi;
-    return pi == prefix.size() ? 2 : -1;
+    return pi == prefix.size() ? 3 : -1;
+}
+
+// Types and objects before functions before values before macros (LSP CompletionItemKind numbers).
+int App::kindTier(int kind) {
+    switch (kind) {
+        case 7: case 8: case 13: case 22: case 25: return 0;   // class, interface, enum, struct, type parameter
+        case 9: case 14: return 1;                              // module / namespace, keyword
+        case 2: case 3: case 4: case 15: return 2;              // method, function, constructor, snippet
+        case 1: return 4;                                       // clangd reports macros as plain text
+        default: return 3;                                      // variables, fields, constants, enum members, ...
+    }
 }
 
 void App::requestCompletion(int triggerKind) {
@@ -387,7 +415,7 @@ void App::requestCompletion(int triggerKind) {
     const Document* dp = &d;
     const std::uint64_t seq = ++compSeq_;
     target->c->cancel(compReq_);  // a newer keystroke supersedes the pending request
-    compReq_ = target->c->completion(target->path, target->line, target->col, triggerKind, [this, seq, at, dp, nbv](std::vector<LspCompletion> items) {
+    compReq_ = target->c->completion(target->path, target->line, target->col, triggerKind, [this, seq, at, dp, nbv](std::vector<LspCompletion> items, bool incomplete) {
         if (seq != compSeq_ || docs_.empty()) return;
         if (nbv && items.empty() && !nbv->lsp.warm && nbv->lsp.retries < 40) {   // clangd answers nothing while it still parses: ask again shortly
             ++nbv->lsp.retries;
@@ -407,11 +435,11 @@ void App::requestCompletion(int triggerKind) {
         int a = at.col;
         while (a > 0 && identChar(ln[static_cast<std::size_t>(a - 1)])) --a;
         if (d.cursor.line != at.line || d.cursor.col < a) return;  // cursor moved away meanwhile
-        showCompletion(std::move(items), at);
+        showCompletion(std::move(items), at, -1, incomplete);
     });
 }
 
-void App::showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol) {
+void App::showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol, bool incomplete) {
     Document& d = doc();
     const std::string& ln = d.buf.line(at.line);
     int a = at.col;
@@ -423,6 +451,9 @@ void App::showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol
     comp_.all = std::move(items);
     comp_.anchor = {at.line, a};
     comp_.dotted = anchorCol >= 0;
+    comp_.incomplete = incomplete;
+    compStale_ = incomplete;
+    comp_.member = a > 0 && (ln[static_cast<std::size_t>(a - 1)] == '.' || (ln[static_cast<std::size_t>(a - 1)] == '>' && a >= 2 && ln[static_cast<std::size_t>(a - 2)] == '-'));
     comp_.open = true;
     refilterCompletion();
     dirty_ = true;
@@ -463,15 +494,33 @@ void App::refilterCompletion() {
     const std::string prefix = ln.substr(static_cast<std::size_t>(comp_.anchor.col), static_cast<std::size_t>(d.cursor.col - comp_.anchor.col));
     const bool dotted = comp_.dotted;
     if (!std::ranges::all_of(prefix, [dotted](char c) { return identChar(c) || (dotted && (c == '.' || c == ':')); })) { closeCompletion(); return; }
-    std::vector<std::pair<int, int>> scored;
+    struct Ranked { int match, kind, used; int idx; };
+    std::vector<Ranked> scored;
     for (int i = 0; i < static_cast<int>(comp_.all.size()); ++i) {
         const auto& it = comp_.all[static_cast<std::size_t>(i)];
-        int sc = matchScore(prefix, it.filterText.empty() ? it.label : it.filterText);
-        if (sc >= 0) scored.emplace_back(sc, i);
+        const int sc = matchScore(prefix, it.filterText.empty() ? it.label : it.filterText);
+        if (sc < 0) continue;
+        const auto used = compUsed_.find(it.label);
+        scored.push_back({sc, comp_.member ? 0 : kindTier(it.kind), used == compUsed_.end() ? 0 : -std::min(used->second, 9), i});
     }
-    std::ranges::stable_sort(scored, [](auto& a, auto& b) { return a.first < b.first; });
+    // Better match first, then types before functions before values before macros, then what you picked before, then the
+    // server's own order (its sort text), then shorter names.
+    std::ranges::stable_sort(scored, [&](const Ranked& a, const Ranked& b) {
+        if (a.match != b.match) return a.match < b.match;
+        if (a.kind != b.kind) return a.kind < b.kind;
+        if (a.used != b.used) return a.used < b.used;
+        const auto& x = comp_.all[static_cast<std::size_t>(a.idx)];
+        const auto& y = comp_.all[static_cast<std::size_t>(b.idx)];
+        if (x.sortText != y.sortText) return x.sortText < y.sortText;
+        return x.label.size() < y.label.size();
+    });
     comp_.shown.clear();
-    for (auto& [sc, i] : scored) { if (comp_.shown.size() >= 200) break; comp_.shown.push_back(i); }
+    std::unordered_set<std::string> typeNames;   // `typedef struct X X;` gives two entries for one name: show one
+    for (const auto& r : scored) {
+        if (comp_.shown.size() >= 200) break;
+        if (r.kind == 0 && !comp_.member && !typeNames.insert(comp_.all[static_cast<std::size_t>(r.idx)].label).second) continue;
+        comp_.shown.push_back(r.idx);
+    }
     comp_.sel = 0;
     comp_.scroll = 0;
     if (comp_.shown.empty()) closeCompletion();
@@ -504,6 +553,7 @@ void App::acceptCompletion() {
     const LspCompletion item = comp_.all[static_cast<std::size_t>(comp_.shown[static_cast<std::size_t>(comp_.sel)])];
     std::string text = item.insertText.empty() ? item.label : item.insertText;
     while (!text.empty() && text.front() == ' ') text.erase(0, 1);
+    ++compUsed_[item.label];
     const bool isCall = item.kind == 2 || item.kind == 3 || item.kind == 4;  // method, function, constructor
     const std::string& ln = d.buf.line(d.cursor.line);
     bool addParens = isCall && text.find('(') == std::string::npos && !(d.cursor.col < static_cast<int>(ln.size()) && ln[static_cast<std::size_t>(d.cursor.col)] == '(');
@@ -522,6 +572,7 @@ void App::acceptCompletion() {
 void App::afterEditorKey(const KeyEvent& k, std::uint64_t verBefore) {
     Document& d = doc();
     if (comp_.open) refilterCompletion();
+    const bool wasStale = compStale_ && !k.ctrl && !k.alt && !k.text.empty() && d.buf.version() != verBefore && identChar(k.text.back());
     if (isCMakeDoc(d)) {
         if (k.ctrl && !k.alt && k.key == Key::Char && k.ch == ' ') { requestCMakeCompletion(); return; }
         if (k.ctrl || k.alt || k.text.empty() || d.buf.version() == verBefore) return;
@@ -550,6 +601,7 @@ void App::afterEditorKey(const KeyEvent& k, std::uint64_t verBefore) {
     const int col = d.cursor.col;
     if (identChar(c)) {
         if (!comp_.open) requestCompletion(1);
+        else if (wasStale) requestCompletion(3);   // the server's list was cut off: ask again for the longer prefix (the old list stays until the answer)
     } else if (c == '.' || (c == '>' && col >= 2 && ln[static_cast<std::size_t>(col - 2)] == '-') ||
                (c == ':' && col >= 2 && ln[static_cast<std::size_t>(col - 2)] == ':')) {
         requestCompletion(2);

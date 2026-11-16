@@ -671,7 +671,7 @@ bool App::nbEnsureLsp(NbView& v) {
     entry.set("directory", v.lsp.dir).set("file", v.lsp.path).set("arguments", std::move(args));
     writeFile(fs::path(v.lsp.dir) / "compile_commands.json", json::dump(json::array().push(std::move(entry))));
 
-    std::vector<std::string> argv = {"nice", "-n", "10", *exe, "--log=error", "--header-insertion=never", "--completion-parse=always", "-j=2",
+    std::vector<std::string> argv = {"nice", "-n", "10", *exe, "--log=error", "--header-insertion=never", "--completion-parse=always", "--limit-results=1000", "-j=2",
                                      "--background-index=false", "--compile-commands-dir=" + v.lsp.dir};
     auto client = std::make_unique<LspClient>();
     NbView* vp = &v;

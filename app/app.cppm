@@ -121,7 +121,11 @@ private:
         Pos anchor;               // start of the identifier being completed
         bool dotted = false;      // module names: "." and ":" belong to the word
         const Document* owner = nullptr;   // the document (or notebook cell) the popup belongs to
+        bool incomplete = false;  // the server cut the list: typing more asks again instead of filtering
+        bool member = false;      // after . -> : the server's order is kept, kinds are not regrouped
     };
+    bool compStale_ = false;      // the last list was incomplete: the next identifier character asks the server again
+    std::unordered_map<std::string, int> compUsed_;   // accepted completions this session: they come first next time
     struct Hover {
         bool pending = false, show = false;
         Pos pos;
@@ -604,7 +608,8 @@ private:
 
     void requestCompletion(int triggerKind);
 
-    void showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol = -1);
+    void showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol = -1, bool incomplete = false);
+    static int kindTier(int kind);
 
     // CMake files: completion is computed locally from the installed cmake's own name lists.
     void requestCMakeCompletion();

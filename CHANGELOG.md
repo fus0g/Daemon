@@ -5,6 +5,14 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-14
+
+### Changed
+- Completion order: types (classes, structs, enums, typedefs) come first, then namespaces and keywords, functions, variables and fields, and macros last; within that a same-case prefix beats a case-insensitive one, then the capitals of the name (`gw` finds `GLFWwindow`), then the server's own ranking. Things you accepted before come first. After `.` and `->` the server's order is kept. A name that is both a typedef and a struct is listed once.
+
+### Fixed
+- Autocomplete showed the wrong things when the list was long: clangd cut it at 100 entries and Daemon only filtered that old list while you typed on, so `GLFWwi` showed one unrelated macro and never `GLFWwindow`. Cut-off lists are now requested again for the longer prefix, and the limit is 1000.
+
 ## [0.4.1] - 2026-11-14
 
 ### Changed
@@ -91,7 +99,8 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.4.1...HEAD
+[Unreleased]: https://example.invalid/compare/v0.4.2...HEAD
+[0.4.2]: https://example.invalid/compare/v0.4.1...v0.4.2
 [0.4.1]: https://example.invalid/compare/v0.4.0...v0.4.1
 [0.4.0]: https://example.invalid/compare/v0.3.1...v0.4.0
 [0.3.1]: https://example.invalid/compare/v0.3.0...v0.3.1
