@@ -69,13 +69,36 @@ std::vector<Lang> buildLanguages() {
         l.capsHeuristics = true;
     }
     {
-        auto& l = add("GLSL", "glsl vert frag comp geom tesc tese", "",
-                      "const uniform in out inout layout flat smooth centroid precision highp mediump "
-                      "lowp if else for while do break continue return discard struct buffer shared "
-                      "readonly writeonly coherent restrict",
-                      "void bool int uint float double vec2 vec3 vec4 ivec2 ivec3 ivec4 uvec2 uvec3 "
-                      "uvec4 mat2 mat3 mat4 sampler2D sampler3D samplerCube image2D",
-                      "true false", "//", "/*", "*/");
+        std::string types = "void bool int uint float double sampler samplerShadow atomic_uint accelerationStructureEXT rayQueryEXT";
+        for (const char* pre : {"", "i", "u", "b", "d"})
+            for (const char* n : {"vec2", "vec3", "vec4"}) { types += ' '; types += pre; types += n; }
+        for (const char* pre : {"mat", "dmat"}) {
+            for (int c = 2; c <= 4; ++c) {
+                types += std::format(" {}{}", pre, c);
+                for (int r = 2; r <= 4; ++r) types += std::format(" {}{}x{}", pre, c, r);
+            }
+        }
+        for (const char* pre : {"", "i", "u"})
+            for (const char* d : {"1D", "2D", "3D", "Cube", "2DRect", "1DArray", "2DArray", "CubeArray", "Buffer", "2DMS", "2DMSArray"}) {
+                types += std::format(" {0}sampler{1} {0}image{1}", pre, d);
+            }
+        for (const char* pre : {"", "i", "u"}) types += std::format(" {0}texture2D {0}texture3D {0}textureCube {0}texture2DArray {0}subpassInput {0}subpassInputMS", pre);
+        for (const char* d : {"1D", "2D", "Cube", "2DRect", "1DArray", "2DArray", "CubeArray"}) types += std::format(" sampler{}Shadow", d);
+        auto& l = add("GLSL", "glsl vert frag geom tesc tese comp mesh task rgen rint rahit rchit rmiss rcall vs fs tcs tes vsh fsh gsh "
+                              "glslv glslf glslg glslc glslh glslinc vertex fragment geometry compute vp fp", "",
+                      "const uniform buffer shared attribute varying in out inout centroid flat smooth noperspective patch sample layout "
+                      "invariant precise precision highp mediump lowp coherent volatile restrict readonly writeonly subroutine if else for "
+                      "while do switch case default break continue return discard struct rayPayloadEXT rayPayloadInEXT hitAttributeEXT "
+                      "callableDataEXT callableDataInEXT shaderRecordEXT taskPayloadSharedEXT perprimitiveEXT terminateRayEXT ignoreIntersectionEXT",
+                      types,
+                      "true false gl_Position gl_PointSize gl_ClipDistance gl_CullDistance gl_VertexID gl_InstanceID gl_VertexIndex gl_InstanceIndex "
+                      "gl_DrawID gl_BaseVertex gl_BaseInstance gl_FragCoord gl_FrontFacing gl_PointCoord gl_FragDepth gl_SampleID gl_SamplePosition "
+                      "gl_SampleMask gl_SampleMaskIn gl_Layer gl_ViewportIndex gl_PrimitiveID gl_HelperInvocation gl_FragColor gl_FragData "
+                      "gl_NumWorkGroups gl_WorkGroupSize gl_WorkGroupID gl_LocalInvocationID gl_GlobalInvocationID gl_LocalInvocationIndex gl_in gl_out "
+                      "gl_InvocationID gl_PrimitiveIDIn gl_PatchVerticesIn gl_TessLevelOuter gl_TessLevelInner gl_TessCoord gl_LaunchIDEXT "
+                      "gl_LaunchSizeEXT gl_WorldRayOriginEXT gl_WorldRayDirectionEXT gl_RayTminEXT gl_RayTmaxEXT gl_HitTEXT gl_InstanceCustomIndexEXT "
+                      "gl_ObjectToWorldEXT gl_WorldToObjectEXT gl_MeshVerticesEXT gl_PrimitiveTriangleIndicesEXT gl_SubgroupSize gl_SubgroupInvocationID",
+                      "//", "/*", "*/");
         l.preproc = true;
     }
     {

@@ -54,6 +54,12 @@ const std::vector<Def>& defs() {
         v.push_back(text("lsp.clangd", "C/C++ intelligence", "clangd program", "Name or path of clangd. Empty: look it up in PATH (the IDE_CLANGD variable wins)."));
         v.push_back(boolean("lsp.backgroundIndex", "C/C++ intelligence", "Index the project in the background", "Faster navigation and references across files, at the cost of some CPU.", true));
 
+        v.push_back(boolean("glsl.diagnostics", "Shaders", "Check shaders for errors", "Compile the shader with glslc (or glslangValidator) while you type and mark the errors. Needs one of them installed.", true));
+        {
+            Def d; d.key = "glsl.target"; d.section = "Shaders"; d.label = "Target API"; d.help = "Auto: Vulkan for shaders that use sets, push constants or gl_VertexIndex, OpenGL otherwise.";
+            d.type = Type::Choice; d.def = std::string("auto"); d.choices = {"auto", "vulkan", "opengl"};
+            v.push_back(std::move(d));
+        }
         v.push_back(text("terminal.shell", "Terminal", "Shell", "Program started in the terminal. Empty: your login shell ($SHELL)."));
 
         v.push_back(text("notebook.compiler", "Notebooks", "Compiler", "g++ 15 or newer that builds the cells. Empty: g++ (the DAEMON_NB_CXX variable wins)."));

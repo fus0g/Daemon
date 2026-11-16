@@ -13,6 +13,7 @@ import daemon.app.theme;
 import daemon.text.document;
 import daemon.ui.icons;
 import daemon.services.lsp;
+import daemon.services.glsl;
 import daemon.services.settings;
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
@@ -102,6 +103,10 @@ void App::outlineTick(Clock::time_point now) {
         if (od.version != ver) { od.tree = markdownSymbols(d.buf); od.version = ver; od.ready = true; }
         return;
     }
+    if (isGlslDoc(d)) {
+        if (od.version != ver) { od.tree = glsl::symbols(d.buf.text()); od.version = ver; od.ready = true; }
+        return;
+    }
     if (!isCppDoc(d)) return;
     if (od.version == ver || od.askedVersion == ver) return;
     if (od.due == Clock::time_point{} || od.due < now - std::chrono::seconds(30)) od.due = now + std::chrono::milliseconds(od.ready ? 600 : 100);
@@ -186,7 +191,7 @@ void App::drawOutline() {
         std::string msg = "No symbols in this file";
         if (isNotebook(d) || isPreview(d)) msg = "Not available here";
         else if (isCppDoc(d) && (it == outlines_.end() || !it->second.ready)) msg = lsp_ ? "Reading the file..." : "Waiting for clangd...";
-        else if (!isCppDoc(d) && !isMarkdownPath(d.path)) msg = "No structure for this file type";
+        else if (!isCppDoc(d) && !isGlslDoc(d) && !isMarkdownPath(d.path)) msg = "No structure for this file type";
         uiLabel(lst.x + 20 * s, lst.y + 6 * s, rh, msg, theme::lineNum, lst.right() - 8 * s);
         return;
     }

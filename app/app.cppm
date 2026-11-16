@@ -31,6 +31,7 @@ import daemon.services.gdb;
 import daemon.services.terminal;
 import daemon.services.lsp;
 import daemon.services.settings;
+import daemon.services.glsl;
 
 namespace fs = std::filesystem;
 using Clock = std::chrono::steady_clock;
@@ -165,6 +166,18 @@ private:
     bool outlineScrollBy(float dy);
     void outlineMoved();
     static std::pair<char32_t, Color> outlineIcon(int kind);
+    // ---- GLSL (app/impl/glsl_view.cpp)
+    static bool isGlslDoc(const Document& d) { return d.lang && d.lang->name == "GLSL"; }
+    struct GlslState { std::uint64_t askedVersion = ~0ull, dueVersion = ~0ull; Clock::time_point due{}; bool busy = false; };
+    std::unordered_map<const Document*, GlslState> glsl_;
+    bool glslNoticeShown_ = false;
+    void glslComplete();
+    void glslSignature();
+    void glslAfterKey(const KeyEvent& k, std::uint64_t verBefore);
+    bool glslHover(const Document& d, Pos at, std::string& out);
+    bool glslGoto();
+    void glslTick(Clock::time_point now);
+    std::optional<Clock::time_point> glslWake() const;
     bool compStale_ = false;      // the last list was incomplete: the next identifier character asks the server again
     std::unordered_map<std::string, int> compUsed_;   // accepted completions this session: they come first next time
     struct Hover {

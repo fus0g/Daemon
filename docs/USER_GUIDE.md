@@ -68,6 +68,15 @@ of other languages open for reading and editing but cannot be run.
 
 `daemon --nb-run in.dcxxnb [out.dcxxnb]` runs all cells without a window and writes the outputs (handy for CI).
 
+### GLSL shaders
+Files with a shader extension (`.vert`, `.frag`, `.comp`, `.glsl`, `.rgen`, ... also `shader.vert.glsl`) open as GLSL with their own
+completion, parameter hints, hover, F12 and structure view. The shader stage comes from the extension or from a
+`#pragma shader_stage(fragment)` line, so `gl_FragCoord`, `gl_Position` and friends are offered where they exist. Errors are found by
+compiling the text with `glslc` (or `glslangValidator`, both ship with the Vulkan SDK / shaderc) shortly after you stop typing;
+install one of them to get them (Settings > Tools shows whether it is found). Files without a known stage (include files, plain
+`.glsl`) are not compiled. Settings > Shaders turns the check off and picks the target: Auto uses Vulkan rules for shaders with
+`set =`, push constants or `gl_VertexIndex`, OpenGL otherwise.
+
 ### Structure view
 Below the file tree the sidebar lists what is in the current file: namespaces, classes, structs, enums, functions, methods, fields
 and constants of C/C++ files (it asks clangd, so it appears once clangd has read the file; the first time can take a moment in
@@ -124,6 +133,7 @@ keys are left alone. A coloured label means the value is not the default; the ar
 | C/C++ intelligence | use clangd, clangd program, background indexing |
 | Terminal | shell |
 | Notebooks | compiler, extra compiler flags |
+| Shaders | error checking on/off, target API (Auto / Vulkan / OpenGL) |
 | Markdown | load images from the web |
 | Tools | the toolchain check (what is installed, Download / install command / Re-check) and the reminder at start-up; also Help > Check Toolchain... |
 

@@ -5,6 +5,11 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-16
+
+### Added
+- GLSL shaders: syntax highlighting for every shader extension (`.glsl .vert .frag .geom .tesc .tese .comp .mesh .task .rgen .rint .rahit .rchit .rmiss .rcall .vs .fs .tcs .tes .vsh .fsh .glslv .glslf ...`) and IntelliSense that needs no language server: completion of keywords, types, built-in functions and the built-in variables of the shader's stage (`gl_FragCoord` only in fragment shaders), the functions, structs, uniforms, blocks, macros, parameters and locals of the file, members after `.` (struct fields, block members, swizzles `xyz` / `rgb` / `stp`), `#` directives and `layout(...)` qualifiers; parameter hints for built-ins, your functions, struct and vector constructors; hover text; go to definition (F12); the structure view; and error checking with glslc or glslangValidator while you type (squiggles, Problems tab; Settings > Shaders chooses the target API). glslc is listed in Settings > Tools.
+
 ## [0.6.1] - 2026-11-16
 
 ### Changed
@@ -115,7 +120,8 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.6.1...HEAD
+[Unreleased]: https://example.invalid/compare/v0.7.0...HEAD
+[0.7.0]: https://example.invalid/compare/v0.6.1...v0.7.0
 [0.6.1]: https://example.invalid/compare/v0.6.0...v0.6.1
 [0.6.0]: https://example.invalid/compare/v0.5.0...v0.6.0
 [0.5.0]: https://example.invalid/compare/v0.4.2...v0.5.0

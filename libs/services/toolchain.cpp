@@ -21,6 +21,7 @@ const std::vector<Tool>& tools() {
         {"gdb", "GDB", "the debugger", 10, 0, Need::Recommended},
         {"git", "Git", "source control, blame, project search", 2, 20, Need::Recommended},
         {"clang++", "Clang", "IntelliSense for C++20 modules projects built with GCC", 16, 0, Need::Optional},
+        {"glslc", "glslc", "error checking for GLSL shaders (glslangValidator also works)", 0, 0, Need::Optional},
         {"zenity", "Zenity", "the native folder chooser (a built-in one is used without it)", 0, 0, Need::Optional},
     };
     return t;
@@ -149,6 +150,7 @@ Distro distro() {
 std::string packageName(std::string_view id, std::string_view m) {
     if (id == "clangd") return m == "dnf" ? "clang-tools-extra" : m == "apt" ? "clangd" : m == "pacman" ? "clang" : m == "zypper" ? "clang-tools" : m == "apk" ? "clang-extra-tools" : "";
     if (id == "clang++") return m.empty() ? "" : "clang";
+    if (id == "glslc") return m == "dnf" || m == "apt" ? "glslc" : m == "pacman" || m == "zypper" || m == "apk" ? "shaderc" : "";
     if (id == "ninja") return m == "dnf" || m == "apt" ? "ninja-build" : m.empty() ? "" : "ninja";
     if (id == "cmake" || id == "gdb" || id == "git" || id == "zenity") return m.empty() ? "" : std::string(id);
     return "";

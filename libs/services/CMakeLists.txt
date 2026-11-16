@@ -5,6 +5,7 @@ target_sources(daemon_services
     explorer.cppm
     gdb.cppm
     git.cppm
+    glsl.cppm
     lsp.cppm
     notebook.cppm
     project.cppm
@@ -17,6 +18,7 @@ target_sources(daemon_services
     explorer.cpp
     gdb.cpp
     git.cpp
+    glsl.cpp
     lsp.cpp
     notebook.cpp
     project.cpp

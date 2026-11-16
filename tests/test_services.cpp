@@ -20,6 +20,7 @@ import daemon.services.terminal;
 import daemon.services.lsp;
 import daemon.services.toolchain;
 import daemon.services.settings;
+import daemon.services.glsl;
 import daemon.ui.font;
 import daemon.ui.draw;
 #include "check.hpp"
@@ -614,6 +615,76 @@ void testToolchain() {
     for (const auto& s : found) if (s.tool.id == "git") CHECK(s.found && !s.version.empty());
 }
 
+static void testGlsl() {
+    using namespace ide::glsl;
+    CHECK(isGlslPath("a/shader.frag") && isGlslPath("x.VERT") && isGlslPath("m.rchit") && isGlslPath("t.glsl") && !isGlslPath("a.cpp"));
+    CHECK(stageOf("a/lit.frag", "") == "frag" && stageOf("a/lit.vert.glsl", "") == "vert" && stageOf("x.glsl", "").empty());
+    CHECK(stageOf("x.glsl", "#pragma shader_stage(compute)\n") == "comp");
+    const std::string src =
+        "#version 450\n"
+        "#define PI 3.14159\n"
+        "struct Light { vec3 pos; float power; };\n"
+        "layout(set = 0, binding = 0) uniform Camera { mat4 view; vec3 eye; } cam;\n"
+        "layout(location = 0) in vec2 uv;\n"
+        "layout(location = 0) out vec4 color;\n"
+        "float shade(Light l, vec3 n) {\n"
+        "    vec3 d = normalize(l.pos);\n"
+        "    float k = dot(n, d);\n"
+        "    return k * l.power;\n"
+        "}\n"
+        "void main() {\n"
+        "    Light lamp;\n"
+        "    color = vec4(uv, 0.0, 1.0);\n"
+        "}\n";
+    auto has = [](const std::vector<ide::LspCompletion>& v, std::string_view name, int kind = -1) {
+        return std::ranges::any_of(v, [&](const auto& c) { return c.filterText == name && (kind < 0 || c.kind == kind); });
+    };
+    auto g = complete(src, 13, 4, "frag");   // start of a statement in main
+    CHECK(has(g, "vec3", 25) && has(g, "mix", 3) && has(g, "gl_FragCoord") && !has(g, "gl_Position") && has(g, "shade", 3) && has(g, "Light", 22));
+    CHECK(has(g, "lamp", 6) && has(g, "PI") && has(g, "cam", 6) && has(g, "uv", 6));
+    CHECK(!has(complete(src, 13, 4, "vert"), "gl_FragCoord") && has(complete(src, 13, 4, "vert"), "gl_Position"));
+    // `lamp.` shows the members of Light, `cam.` the members of the block, `uv.` swizzles
+    std::string t2 = src; t2.replace(t2.find("    color = vec4(uv, 0.0, 1.0);"), 31, "    lamp.\n    cam.\n    uv.");
+    auto m1 = complete(t2, 13, 9, "frag");
+    CHECK(has(m1, "pos", 5) && has(m1, "power", 5) && !has(m1, "vec3"));
+    auto m2 = complete(t2, 14, 8, "frag");
+    CHECK(has(m2, "view", 5) && has(m2, "eye", 5));
+    auto m3 = complete(t2, 15, 7, "frag");
+    CHECK(has(m3, "x", 5) && has(m3, "xy", 5) && has(m3, "rg", 5) && !has(m3, "z"));
+    CHECK(!complete("#v", 0, 2, "").empty() && has(complete("#v", 0, 1, ""), "version"));
+    CHECK(has(complete("layout(", 0, 7, "frag"), "location"));
+    // parameter hints
+    auto sig = signature("void main() { float a = mix(vec3(1.0), b, ", 0, 41);
+    CHECK(sig && !sig->sigs.empty() && sig->sigs[0].label.find("mix(") != std::string::npos && sig->sigs[0].active == 2);
+    auto us = signature("float f(int a, vec3 b) { return 0.0; }\nvoid main() { f(1, ", 1, 19);
+    CHECK(us && us->sigs[0].label == "float f(int a, vec3 b)" && us->sigs[0].active == 1 && us->sigs[0].params.size() == 2);
+    CHECK(!signature("void main() { if (", 0, 18));
+    CHECK(!signature("int x = 1;", 0, 5));
+    // hover / definition / outline
+    CHECK(hover(src, 8, 15, "frag").find("float dot(") != std::string::npos);
+    CHECK(hover(src, 12, 11, "frag").find("Light lamp") != std::string::npos);
+    CHECK(hover(src, 6, 7, "frag").find("float shade(Light l, vec3 n)") != std::string::npos);
+    auto def = definition(src, 7, 24);   // `l` in l.pos
+    CHECK(def && def->first == 6);
+    auto defn = definition(src, 12, 5);  // Light in `Light lamp;`
+    CHECK(defn && defn->first == 2);
+    auto syms = symbols(src);
+    CHECK(syms.size() >= 6);
+    const auto fn = std::ranges::find(syms, "shade", &ide::LspSymbol::name);
+    CHECK(fn != syms.end() && fn->kind == 12 && fn->line == 6 && fn->endLine == 10);
+    const auto st = std::ranges::find(syms, "Light", &ide::LspSymbol::name);
+    CHECK(st != syms.end() && st->kind == 23 && st->kids.size() == 2);
+    // error checking (only when a compiler is installed)
+    if (!compiler().empty()) {
+        std::string err;
+        auto bad = diagnose("#version 450\nlayout(location=0) out vec4 c;\nvoid main() {\n    c = vec4(nope);\n}\n", "frag", Target::Auto, "", err);
+        CHECK(err.empty() && bad.size() >= 1 && bad[0].line == 3 && bad[0].message.find("nope") != std::string::npos && bad[0].severity == 1);
+        CHECK(bad[0].col == 13 && bad[0].endCol == 17);   // just `nope` is underlined
+        auto good = diagnose("#version 450\nlayout(location=0) out vec4 c;\nvoid main() { c = vec4(1.0); }\n", "frag", Target::Auto, "", err);
+        CHECK(err.empty() && good.empty());
+    }
+}
+
 static void testSettings() {
     using namespace ide::settings;
     // every definition has a default that passes its own validation, and keys are unique
@@ -652,6 +723,7 @@ static void testSettings() {
 }
 
 void runServicesTests() {
+    testGlsl();
     testSettings();
     testToolchain();
     testFileOps();
