@@ -5,6 +5,11 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-16
+
+### Changed
+- Structure view icons are plainer: no coloured tiles, softer colours (one hue each for types, functions and data, grey for the rest).
+
 ## [0.6.0] - 2026-11-16
 
 ### Added
@@ -110,7 +115,8 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.6.0...HEAD
+[Unreleased]: https://example.invalid/compare/v0.6.1...HEAD
+[0.6.1]: https://example.invalid/compare/v0.6.0...v0.6.1
 [0.6.0]: https://example.invalid/compare/v0.5.0...v0.6.0
 [0.5.0]: https://example.invalid/compare/v0.4.2...v0.5.0
 [0.4.2]: https://example.invalid/compare/v0.4.1...v0.4.2

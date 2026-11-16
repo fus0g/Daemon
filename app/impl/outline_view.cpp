@@ -65,8 +65,9 @@ bool App::outlineVisible() const {
 }
 
 std::pair<char32_t, Color> App::outlineIcon(int kind) {
-    const Color purple = Color::rgb(0xb98aea), blue = Color::rgb(0x6cb6ff), orange = Color::rgb(0xf0a04b), teal = Color::rgb(0x4ec9b0),
-                gray = Color::rgb(0x9a9ea9), green = Color::rgb(0x7bc47f), pink = Color::rgb(0xe68ab8);
+    // Muted on purpose: three quiet hues (types, callables, data) and grey for everything else.
+    const Color purple = Color::rgb(0x9f8bc4), blue = Color::rgb(0x7f9fc2), orange = Color::rgb(0xc9a06a), teal = Color::rgb(0x7fb0a4),
+                gray = Color::rgb(0x8a8e98), green = gray, pink = gray;
     if (kind > kHeading && kind <= kHeading + 6) return {static_cast<char32_t>(0xF0274 + (kind - kHeading - 1)), kind == kHeading + 1 ? orange : (kind == kHeading + 2 ? blue : (kind == kHeading + 3 ? teal : gray))};   // format-header-1 .. 6
     switch (kind) {
         case 5: return {0xF0832, orange};          // class
@@ -208,7 +209,7 @@ void App::drawOutline() {
     outlineScroll_ = std::clamp(outlineScroll_, 0.0f, outlineMax_);
 
     const float indent = std::round(14 * s), tile = std::round(rh - 6 * s);
-    const int ip = std::max(11, static_cast<int>(std::round(tile * 0.68f)));
+    const int ip = std::max(11, static_cast<int>(std::round(tile * 0.74f)));
     const int first = std::max(0, static_cast<int>(std::floor(outlineScroll_ / rh)));
     const int last = std::min(static_cast<int>(outlineRows_.size()) - 1, static_cast<int>(std::floor((outlineScroll_ + lst.h) / rh)));
     for (int i = first; i <= last; ++i) {
@@ -222,7 +223,6 @@ void App::drawOutline() {
         if (r.hasKids) Icons::chevron(dl_, font_, x + (indent - static_cast<float>(cs)) / 2, y + (rh - static_cast<float>(cs)) / 2, cs, !outlineCollapsed_.contains(r.key), theme::dim);
         const auto [glyph, color] = outlineIcon(r.kind);
         const float tx = x + indent;
-        fill(tx, y + (rh - tile) / 2, tile, tile, color.alpha(40), 5 * s);   // a tinted tile behind the glyph
         Icons::glyph(dl_, font_, tx + (tile - static_cast<float>(ip)) / 2, y + (rh - static_cast<float>(ip)) / 2, ip, glyph, color);
         const float nx = tx + tile + 8 * s, maxX = o.right() - 12 * s;
         const float after = uiLabel(nx, y, rh, r.name, i == outlineCursorRow_ ? Color::rgb(0xffffff).mix(theme::accent, 0.25f) : Color::rgb(0xd1d4da), maxX);
