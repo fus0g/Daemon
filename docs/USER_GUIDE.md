@@ -77,6 +77,12 @@ install one of them to get them (Settings > Tools shows whether it is found). Fi
 `.glsl`) are not compiled. Settings > Shaders turns the check off and picks the target: Auto uses Vulkan rules for shaders with
 `set =`, push constants or `gl_VertexIndex`, OpenGL otherwise.
 
+#### Shaders in C++ strings
+A raw string literal that holds a shader (`R"(#version 450 ...)"`, or a delimiter / variable name with `glsl`, `shader`, `vert`, `frag`
+in it) is treated as GLSL while the cursor is inside it: highlighting, completion, parameter hints, hover, F12 and error checking
+all work as in a `.frag` file. The stage comes from the name in front of the string (`vertexSrc`, `fragSrc`, `computeShader`) or
+from what the shader uses (`gl_Position` is a vertex shader). Shaders that are built from several string pieces are not understood.
+
 ### Structure view
 Below the file tree the sidebar lists what is in the current file: namespaces, classes, structs, enums, functions, methods, fields
 and constants of C/C++ files (it asks clangd, so it appears once clangd has read the file; the first time can take a moment in

@@ -110,6 +110,52 @@ static void testHighlighter() {
     CHECK(langForPath("a.unknown") == nullptr);
 }
 
+static void testRawStrings() {
+    Buffer b;
+    b.setText("const char* src = R\"(\n"
+              "#version 450\n"
+              "uniform vec3 pos; /* c\n"
+              "still */ void main() {}\n"
+              ")\";\n"
+              "int x = 1;\n"
+              "auto s = R\"x(a \"quoted\"\n"
+              "more)x\"; int y;\n");
+    Highlighter h;
+    h.setLang(langForPath("a.cpp"));
+    std::vector<Tok> t;
+    h.highlight(b, 0, t);
+    CHECK(t[0] == Tok::Keyword && t[18] == Tok::String);   // const ... R"(
+    h.highlight(b, 1, t);
+    CHECK(t[0] == Tok::Preproc);                              // #version: GLSL rules inside the string
+    h.highlight(b, 2, t);
+    CHECK(t[0] == Tok::Keyword && t[8] == Tok::Type);         // uniform vec3
+    CHECK(t[18] == Tok::Comment);                              // a GLSL block comment...
+    h.highlight(b, 3, t);
+    CHECK(t[0] == Tok::Comment && t[9] == Tok::Type);          // ...continues on the next line; `void` is a type
+    CHECK(t[14] == Tok::Function);                             // main(
+    h.highlight(b, 4, t);
+    CHECK(t[0] == Tok::String && t[1] == Tok::String);         // )" closes the string
+    h.highlight(b, 5, t);
+    CHECK(t[0] == Tok::Type && t[8] == Tok::Number);           // back to C++
+    h.highlight(b, 6, t);
+    CHECK(t[16] == Tok::String && t[18] == Tok::String);       // a raw string that is not GLSL is one big string
+    h.highlight(b, 7, t);
+    CHECK(t[0] == Tok::String && t[5] == Tok::String);
+    CHECK(t[9] == Tok::Type);                                  // int y
+    // the regions
+    auto r = h.rawRegionAt(b, 2, 5);
+    CHECK(r && r->glsl && r->begin.line == 0 && r->end.line == 4 && r->end.col == 0);
+    CHECK(!h.rawRegionAt(b, 5, 3));
+    auto r2 = h.rawRegionAt(b, 7, 2);
+    CHECK(r2 && !r2->glsl);
+    auto all = h.glslRegions(b);
+    CHECK(all.size() == 1 && all[0].begin.line == 0 && all[0].end.line == 4);
+    // editing inside a raw string re-evaluates the lines below
+    b.replace({0, 20}, {0, 20}, "x", {});
+    h.highlight(b, 5, t);
+    CHECK(t[0] == Tok::Type);
+}
+
 static void testDocumentEditing() {
     Document d;
     d.lang = langForPath("x.cpp");
@@ -193,6 +239,29 @@ static void testNavigationAndSearch() {
     CHECK(br && br->second == (Pos{0, 1}));
 }
 
+static void testElectricBrace() {
+    Document d;
+    d.lang = langForPath("x.cpp");
+    d.buf.setText("void f() {\n    int x;\n    ");
+    d.setCursor({2, 4});
+    d.insertText("}");
+    CHECK(d.buf.line(2) == "}" && d.cursor.col == 1);
+    d.buf.setText("if (a) {\n        x();\n        ");
+    d.setCursor({2, 8});
+    d.insertText("}");
+    CHECK(d.buf.line(2) == "    }");                 // one level back, not all the way
+    d.buf.setText("int a = {");
+    d.setCursor({0, 9});
+    d.insertText("}");
+    CHECK(d.buf.line(0) == "int a = {}");              // not at the start of a line: an ordinary brace
+    Document t;
+    t.lang = langForPath("x.txt");
+    t.buf.setText("    ");
+    t.setCursor({0, 4});
+    t.insertText("}");
+    CHECK(t.buf.line(0) == "    }");                  // other languages are left alone
+}
+
 static void testDocumentSettings() {
     {   // closing brackets can be turned off
         Document d;
@@ -218,11 +287,13 @@ static void testDocumentSettings() {
 }
 
 void runTextTests() {
+    testElectricBrace();
     testDocumentSettings();
     testBuffer();
     testCoalescing();
     testGroups();
     testHighlighter();
+    testRawStrings();
     testDocumentEditing();
     testNavigationAndSearch();
 }

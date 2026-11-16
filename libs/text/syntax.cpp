@@ -67,6 +67,7 @@ std::vector<Lang> buildLanguages() {
                       "nullptr NULL true false", "//", "/*", "*/");
         l.preproc = true;
         l.capsHeuristics = true;
+        l.rawStrings = true;
     }
     {
         std::string types = "void bool int uint float double sampler samplerShadow atomic_uint accelerationStructureEXT rayQueryEXT";
@@ -218,10 +219,11 @@ const Lang* langForPath(std::string_view path) {
 
 namespace ide::detail {
 
-std::uint8_t scanLine(const Lang* L, std::string_view s, std::uint8_t st, std::vector<Tok>* out) {
+std::uint32_t scanLine(const Lang* L, std::string_view s, std::uint32_t state, std::vector<Tok>* out, ScanEnv* env) {
     const std::size_t n = s.size();
     if (out) out->assign(n, Tok::Normal);
     if (!L) return StNormal;
+    const std::uint8_t st = static_cast<std::uint8_t>(state & 0xff);
     auto paint = [&](std::size_t a, std::size_t b, Tok t) {
         if (!out) return;
         for (std::size_t k = a; k < b && k < n; ++k) (*out)[k] = t;
@@ -245,7 +247,32 @@ std::uint8_t scanLine(const Lang* L, std::string_view s, std::uint8_t st, std::v
         i = n;
         return false;
     };
-    if (st == StBlock) {
+    // A raw string literal: paints [from, to) of the line (GLSL inside is painted with the GLSL rules) and returns the new inner
+    // state of the embedded language.
+    auto paintRaw = [&](const RawCtx& ctx, std::size_t from, std::size_t to, std::uint32_t inner) -> std::uint32_t {
+        if (to <= from) return inner;
+        if (ctx.glsl && env && env->glslLang) {
+            std::vector<Tok> seg;
+            const std::uint32_t r = scanLine(env->glslLang, s.substr(from, to - from), inner, out ? &seg : nullptr, nullptr);
+            if (out) for (std::size_t k = 0; k < seg.size(); ++k) (*out)[from + k] = seg[k];
+            return r;
+        }
+        paint(from, to, Tok::String);
+        return 0;
+    };
+    auto rawState = [&](std::uint32_t inner, std::uint32_t idx) { return static_cast<std::uint32_t>(StRaw) | (inner << 8) | (idx << 16); };
+    if (st == StRaw && env && env->ctxs) {
+        const std::uint32_t idx = state >> 16, inner = (state >> 8) & 0xff;
+        if (idx < env->ctxs->size()) {
+            const RawCtx& ctx = (*env->ctxs)[idx];
+            const std::string close = ")" + ctx.delim + "\"";
+            const auto e = s.find(close);
+            if (e == std::string_view::npos) return rawState(paintRaw(ctx, 0, n, inner), idx);
+            paintRaw(ctx, 0, e, inner);
+            paint(e, e + close.size(), Tok::String);
+            i = e + close.size();
+        }
+    } else if (st == StBlock) {
         if (!resume(L->blockClose, Tok::Comment, false)) return StBlock;
     } else if (st == StTripleD) {
         if (!resume("\"\"\"", Tok::String, true)) return StTripleD;
@@ -333,6 +360,38 @@ std::uint8_t scanLine(const Lang* L, std::string_view s, std::uint8_t st, std::v
             std::size_t j = i;
             while (j < n && isIdentChar(static_cast<unsigned char>(s[j]))) ++j;
             std::string word(s.substr(i, j - i));
+            if (L->rawStrings && env && env->ctxs && j < n && s[j] == '"' && (word == "R" || word == "LR" || word == "uR" || word == "UR" || word == "u8R")) {
+                std::size_t p = j + 1;   // R"delim(
+                while (p < n && p - j <= 17 && s[p] != '(' && s[p] != ')' && s[p] != '"' && s[p] != ' ' && s[p] != '\\') ++p;
+                if (p < n && s[p] == '(') {
+                    const std::string delim(s.substr(j + 1, p - j - 1));
+                    const std::size_t content = p + 1;
+                    std::string hint(s.substr(0, i));
+                    for (auto& ch : hint) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                    std::uint32_t idx = 0;
+                    bool found = false;
+                    for (; idx < env->ctxs->size(); ++idx) {
+                        const RawCtx& c = (*env->ctxs)[idx];
+                        if (c.startLine == env->line && c.startCol == static_cast<int>(content) && c.delim == delim) { found = true; break; }
+                    }
+                    if (!found) {
+                        RawCtx c;
+                        c.delim = delim; c.hint = hint; c.startLine = env->line; c.startCol = static_cast<int>(content);
+                        c.glsl = env->isGlsl && env->isGlsl(delim, hint, env->line, static_cast<int>(content));
+                        env->ctxs->push_back(std::move(c));
+                        idx = static_cast<std::uint32_t>(env->ctxs->size() - 1);
+                    }
+                    const RawCtx ctx = (*env->ctxs)[idx];
+                    paint(i, content, Tok::String);
+                    const std::string close = ")" + delim + "\"";
+                    const auto e = s.find(close, content);
+                    if (e == std::string_view::npos) return rawState(paintRaw(ctx, content, n, 0), idx);
+                    paintRaw(ctx, content, e, 0);
+                    paint(e, e + close.size(), Tok::String);
+                    i = e + close.size();
+                    continue;
+                }
+            }
             Tok t = Tok::Normal;
             if (L->keywords.contains(word)) t = Tok::Keyword;
             else if (L->types.contains(word)) t = Tok::Type;
@@ -366,26 +425,134 @@ std::uint8_t scanLine(const Lang* L, std::string_view s, std::uint8_t st, std::v
 
 namespace ide {
 
+namespace {
+
+std::string lowerStr(std::string s) {
+    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+// Is the raw string whose content starts at (line, col) GLSL? Its delimiter, the text in front of it, or what is in it say so.
+bool looksLikeGlsl(Buffer& buf, const std::string& delim, const std::string& hint, int line, int col) {
+    auto named = [](const std::string& t) { return t.find("glsl") != std::string::npos || t.find("shader") != std::string::npos; };
+    const std::string d = lowerStr(delim);
+    if (named(d) || named(hint) || d == "vert" || d == "frag" || d == "vs" || d == "fs" || d == "comp" || d == "geom") return true;
+    const std::string close = ")" + delim + "\"";
+    std::string body;
+    for (int l = line; l < buf.lineCount() && l < line + 120 && body.size() < 12000; ++l) {
+        const std::string& t = buf.line(l);
+        const std::size_t from = l == line ? static_cast<std::size_t>(col) : 0;
+        if (from > t.size()) break;
+        const auto e = t.find(close, from);
+        body.append(t, from, e == std::string::npos ? std::string::npos : e - from);
+        body += '\n';
+        if (e != std::string::npos) break;
+    }
+    auto has = [&](const char* w) { return body.find(w) != std::string::npos; };
+    if (has("#version") || has("gl_Position") || has("gl_FragCoord") || has("gl_FragColor") || has("gl_VertexID") || has("gl_GlobalInvocationID") || has("gl_VertexIndex")) return true;
+    return has("void main") && (has("uniform ") || has("layout(") || has("layout (") || has("varying ") || has("attribute "));
+}
+
+const Lang* glslLanguage() {
+    static const Lang* l = [] {
+        for (const auto& x : languages()) if (x.name == "GLSL") return &x;
+        return static_cast<const Lang*>(nullptr);
+    }();
+    return l;
+}
+
+}  // namespace
+
+detail::ScanEnv Highlighter::env(Buffer& buf, int line) {
+    detail::ScanEnv e;
+    if (!lang_ || !lang_->rawStrings) return e;
+    e.ctxs = &ctxs_;
+    e.line = line;
+    e.glslLang = glslLanguage();
+    e.isGlsl = [&buf](const std::string& delim, const std::string& hint, int l, int c) { return looksLikeGlsl(buf, delim, hint, l, c); };
+    return e;
+}
+
+void Highlighter::ensure(Buffer& buf, int line) {
+    while (static_cast<int>(states_.size()) <= line) {
+        const int prev = static_cast<int>(states_.size()) - 1;
+        detail::ScanEnv e = env(buf, prev);
+        states_.push_back(detail::scanLine(lang_, buf.line(prev), states_.back(), nullptr, &e));
+    }
+}
+
 void Highlighter::highlight(Buffer& buf, int line, std::vector<Tok>& out) {
     sync(buf);
     if (!lang_) {
         out.assign(buf.line(line).size(), Tok::Normal);
         return;
     }
-    while (static_cast<int>(states_.size()) <= line) {
-        int prev = static_cast<int>(states_.size()) - 1;
-        states_.push_back(detail::scanLine(lang_, buf.line(prev), states_.back(), nullptr));
-    }
-    detail::scanLine(lang_, buf.line(line), states_[static_cast<std::size_t>(line)], &out);
+    ensure(buf, line);
+    detail::ScanEnv e = env(buf, line);
+    detail::scanLine(lang_, buf.line(line), states_[static_cast<std::size_t>(line)], &out, &e);
 }
 
 void Highlighter::sync(Buffer& buf) {
     if (buf.version() == seenVersion_) return;
     seenVersion_ = buf.version();
     int d = buf.takeDirtyLine();
-    if (d != std::numeric_limits<int>::max() && static_cast<std::size_t>(d) + 1 < states_.size())
+    if (d != std::numeric_limits<int>::max() && static_cast<std::size_t>(d) + 1 < states_.size()) {
         states_.resize(static_cast<std::size_t>(d) + 1);
+        for (auto& c : ctxs_) if (c.startLine >= d) c.startLine = -1;   // their decision may be stale; indices stay valid for old states
+    }
     if (states_.empty()) states_.push_back(detail::StNormal);
+    if (ctxs_.size() > 4096) { states_.assign(1, detail::StNormal); ctxs_.clear(); }
+}
+
+std::optional<Highlighter::RawRegion> Highlighter::rawRegionAt(Buffer& buf, int line, int col) {
+    if (!lang_ || !lang_->rawStrings || line < 0 || line >= buf.lineCount()) return std::nullopt;
+    sync(buf);
+    ensure(buf, line);
+    const std::string& text = buf.line(line);
+    detail::ScanEnv e = env(buf, line);
+    const std::uint32_t st = detail::scanLine(lang_, std::string_view(text).substr(0, static_cast<std::size_t>(std::clamp(col, 0, static_cast<int>(text.size())))),
+                                              states_[static_cast<std::size_t>(line)], nullptr, &e);
+    if ((st & 0xff) != detail::StRaw) return std::nullopt;
+    const std::uint32_t idx = st >> 16;
+    if (idx >= ctxs_.size()) return std::nullopt;
+    const detail::RawCtx ctx = ctxs_[idx];
+    RawRegion r;
+    r.begin = {ctx.startLine, ctx.startCol};
+    r.glsl = ctx.glsl;
+    r.hint = ctx.hint;
+    const std::string close = ")" + ctx.delim + "\"";
+    r.end = {buf.lineCount() - 1, static_cast<int>(buf.line(buf.lineCount() - 1).size())};
+    for (int l = line; l < buf.lineCount(); ++l) {
+        const std::size_t from = l == line ? static_cast<std::size_t>(std::min<int>(col, static_cast<int>(buf.line(l).size()))) : 0;
+        const auto at = buf.line(l).find(close, from);
+        if (at != std::string::npos) { r.end = {l, static_cast<int>(at)}; break; }
+    }
+    return r;
+}
+
+std::vector<Highlighter::RawRegion> Highlighter::glslRegions(Buffer& buf) {
+    std::vector<RawRegion> out;
+    if (!lang_ || !lang_->rawStrings) return out;
+    sync(buf);
+    const int n = buf.lineCount();
+    ensure(buf, n);   // states for every line (and one past the end)
+    for (int l = 0; l < n; ++l) {
+        const std::uint32_t st = states_[static_cast<std::size_t>(l)];
+        if ((st & 0xff) != detail::StRaw) continue;
+        const std::uint32_t idx = st >> 16;
+        if (idx >= ctxs_.size() || !ctxs_[idx].glsl) continue;
+        const detail::RawCtx& ctx = ctxs_[idx];
+        const std::string close = ")" + ctx.delim + "\"";
+        const auto at = buf.line(l).find(close);
+        if (at == std::string::npos) continue;   // the string goes on
+        RawRegion r;
+        r.begin = {ctx.startLine, ctx.startCol};
+        r.end = {l, static_cast<int>(at)};
+        r.glsl = true;
+        r.hint = ctx.hint;
+        out.push_back(std::move(r));
+    }
+    return out;
 }
 
 }  // namespace ide

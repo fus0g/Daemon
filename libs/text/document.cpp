@@ -153,6 +153,29 @@ void Document::insertRaw(std::string_view t) {  // paste: no pairing, never coal
     buf.breakGroup();
 }
 
+// Typing `}` on a line that holds only indentation moves it back one level, as in the other C-like editors.
+bool Document::tryElectricBrace() {
+    static const std::unordered_set<std::string> cLike = {"C", "C++", "GLSL", "Java", "JavaScript", "TypeScript", "Go", "Rust"};
+    if (!lang || !cLike.contains(lang->name) || hasSelection()) return false;
+    const std::string& l = buf.line(cursor.line);
+    const int col = cursor.col;
+    if (col == 0 || col > static_cast<int>(l.size())) return false;
+    for (int i = 0; i < col; ++i) if (l[static_cast<std::size_t>(i)] != ' ' && l[static_cast<std::size_t>(i)] != '\t') return false;
+    int remove = 0;
+    if (l[static_cast<std::size_t>(col - 1)] == '\t') remove = 1;
+    else {
+        const int back = col % tabWidth == 0 ? tabWidth : col % tabWidth;   // up to the previous tab stop
+        while (remove < back && remove < col && l[static_cast<std::size_t>(col - 1 - remove)] == ' ') ++remove;
+    }
+    if (remove == 0) return false;
+    buf.breakGroup();
+    buf.replace({cursor.line, col - remove}, {cursor.line, col}, "}", sel());
+    cursor = anchor = {cursor.line, col - remove + 1};
+    wantCol = -1;
+    buf.breakGroup();
+    return true;
+}
+
 void Document::newline() {
     buf.breakGroup();
     Pos a = selBegin();

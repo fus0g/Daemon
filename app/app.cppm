@@ -174,7 +174,12 @@ private:
     void glslComplete();
     void glslSignature();
     void glslAfterKey(const KeyEvent& k, std::uint64_t verBefore);
-    bool glslHover(const Document& d, Pos at, std::string& out);
+    struct GlslView { std::string text, stage; int line = 0, col = 0; Pos origin; };   // text to analyse, the cursor in it, where it starts in the document
+    std::optional<GlslView> glslViewAt(Document& d, Pos p);
+    bool glslHover(Document& d, Pos at, std::string& out);
+    void glslEmbeddedTick(Clock::time_point now, Document& d);
+    void mergeEmbeddedDiags(const std::string& path);
+    std::unordered_map<std::string, std::vector<LspDiag>> embDiags_;   // GLSL diagnostics of raw strings, by file
     bool glslGoto();
     void glslTick(Clock::time_point now);
     std::optional<Clock::time_point> glslWake() const;

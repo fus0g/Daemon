@@ -5,6 +5,15 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-16
+
+### Added
+- GLSL inside C++ raw strings: `R"(...)"` / `R"GLSL(...)GLSL"` literals that hold a shader (recognised by `#version`, `gl_` variables, `void main` with uniforms / layouts, or a name such as `fragSrc` / `glsl` / `shader` in front) are highlighted with the GLSL rules, and get the same IntelliSense as a shader file: completion (struct members, swizzles, built-ins of the stage guessed from the name or contents), parameter hints, hover, F12 and error checking with glslc, with the messages on the right lines of the C++ file. Raw strings of any other kind are now highlighted as one multi-line string.
+- Typing `}` on a line that only holds indentation moves it back one level (C, C++, GLSL, Java, JavaScript, TypeScript, Go, Rust).
+
+### Fixed
+- Shader error checking for OpenGL-style shaders no longer reports plain `uniform mat4 m;` as an error.
+
 ## [0.7.0] - 2026-11-16
 
 ### Added
@@ -120,7 +129,8 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.7.0...HEAD
+[Unreleased]: https://example.invalid/compare/v0.8.0...HEAD
+[0.8.0]: https://example.invalid/compare/v0.7.0...v0.8.0
 [0.7.0]: https://example.invalid/compare/v0.6.1...v0.7.0
 [0.6.1]: https://example.invalid/compare/v0.6.0...v0.6.1
 [0.6.0]: https://example.invalid/compare/v0.5.0...v0.6.0

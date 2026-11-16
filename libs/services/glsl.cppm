@@ -17,6 +17,9 @@ bool isGlslPath(std::string_view path);
 // `#pragma shader_stage(...)` line; empty when the file does not say (an include file, a plain .glsl).
 std::string stageOf(std::string_view path, std::string_view text);
 
+// The stage of a shader that has no file name (a raw string in C++): from a name like `fragSrc` in front of it, or its contents.
+std::string guessStage(std::string_view text, std::string_view hint);
+
 // Position inside a text: 0-based line, byte column.
 std::vector<LspCompletion> complete(std::string_view text, int line, int col, std::string_view stage);
 std::optional<LspSignatureHelp> signature(std::string_view text, int line, int col);

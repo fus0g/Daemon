@@ -90,6 +90,27 @@ std::string stageOf(std::string_view path, std::string_view text) {
     return {};
 }
 
+std::string guessStage(std::string_view text, std::string_view hint) {
+    std::string h(hint);
+    for (auto& c : h) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    auto in = [](std::string_view hay, std::string_view n) { return hay.find(n) != std::string_view::npos; };
+    if (auto s = stageOf("", text); !s.empty()) return s;
+    if (in(h, "vert")) return "vert";
+    if (in(h, "frag") || in(h, "pixel")) return "frag";
+    if (in(h, "compute") || in(h, "comp")) return "comp";
+    if (in(h, "geom")) return "geom";
+    if (in(h, "tesc") || in(h, "tcs")) return "tesc";
+    if (in(h, "tese") || in(h, "tes")) return "tese";
+    if (in(text, "gl_Position")) return "vert";
+    if (in(text, "local_size_x") || in(text, "gl_GlobalInvocationID") || in(text, "gl_LocalInvocationID")) return "comp";
+    if (in(text, "EmitVertex")) return "geom";
+    if (in(text, "traceRayEXT")) return "rgen";
+    if (in(text, "SetMeshOutputsEXT")) return "mesh";
+    if (in(text, "EmitMeshTasksEXT")) return "task";
+    if (in(text, "gl_FragCoord") || in(text, "gl_FragColor") || in(text, "gl_FragDepth") || in(text, "gl_FragData")) return "frag";
+    return {};
+}
+
 // ====================================================================================================== language data
 
 namespace {
@@ -1268,13 +1289,13 @@ std::vector<LspDiag> diagnose(std::string_view text, std::string_view stage, Tar
     o.argv = {exe};
     if (isGlslc) {
         o.argv.push_back(vulkan ? "--target-env=vulkan1.3" : "--target-env=opengl");
+        if (!vulkan) { o.argv.push_back("-fauto-map-locations"); o.argv.push_back("-fauto-bind-uniforms"); }   // plain GL shaders do not number their uniforms
         if (!includeDir.empty()) { o.argv.push_back("-I"); o.argv.push_back(includeDir); }
         o.argv.push_back("-o"); o.argv.push_back((dir / "out.spv").string());
         o.argv.push_back(base);
     } else {
-        if (vulkan) { o.argv.push_back("-V"); o.argv.push_back("--target-env"); o.argv.push_back("vulkan1.3"); } else o.argv.push_back("-G");
+        if (vulkan) { o.argv.push_back("-V"); o.argv.push_back("--target-env"); o.argv.push_back("vulkan1.3"); o.argv.push_back("-o"); o.argv.push_back((dir / "out.spv").string()); }   // (OpenGL: validated as plain GLSL)
         if (!includeDir.empty()) o.argv.push_back("-I" + includeDir);
-        o.argv.push_back("-o"); o.argv.push_back((dir / "out.spv").string());
         o.argv.push_back(base);
     }
     const auto r = Process::runCapture(o, 15000);

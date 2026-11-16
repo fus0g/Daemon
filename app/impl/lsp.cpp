@@ -103,6 +103,7 @@ void App::startLsp() {
         if (bgClosed_.contains(path)) return;   // clangd's empty publish after we closed a background file
         if (bgPending_.erase(path)) bgSettled_.push_back(path);
         if (d.empty()) diags_.erase(path); else diags_[path] = std::move(d);
+        mergeEmbeddedDiags(path);   // keep the shader diagnostics of raw strings
         dirty_ = true;
     };
     lsp_->onState = [this](LspClient::State st) {
@@ -407,7 +408,7 @@ int App::kindTier(int kind) {
 void App::requestCompletion(int triggerKind) {
     if (docs_.empty()) return;
     Document& d = doc();
-    if (isGlslDoc(d)) { glslComplete(); return; }
+    if (isGlslDoc(d) || glslViewAt(d, d.cursor)) { glslComplete(); return; }
     if (isCppDoc(d) && completeImport(d)) return;
     auto target = lspTarget(d, d.cursor);   // an ordinary C++ file, or a cell of a notebook (mapped into its virtual file)
     if (!target) return;
@@ -443,7 +444,7 @@ void App::requestCompletion(int triggerKind) {
 void App::requestSignature() {
     if (docs_.empty()) return;
     Document& d = doc();
-    if (isGlslDoc(d)) { glslSignature(); return; }
+    if (isGlslDoc(d) || glslViewAt(d, d.cursor)) { glslSignature(); return; }
     auto target = lspTarget(d, d.cursor);
     if (!target) { closeSignature(); return; }
     const Pos at = d.cursor;
@@ -597,7 +598,7 @@ void App::afterEditorKey(const KeyEvent& k, std::uint64_t verBefore) {
     Document& d = doc();
     if (comp_.open) refilterCompletion();
     const bool wasStale = compStale_ && !k.ctrl && !k.alt && !k.text.empty() && d.buf.version() != verBefore && identChar(k.text.back());
-    if (isGlslDoc(d)) { glslAfterKey(k, verBefore); return; }
+    if (isGlslDoc(d) || (d.lang && d.lang->rawStrings && glslViewAt(d, d.cursor))) { glslAfterKey(k, verBefore); return; }
     if (isCMakeDoc(d)) {
         if (k.ctrl && !k.alt && k.key == Key::Char && k.ch == ' ') { requestCMakeCompletion(); return; }
         if (k.ctrl || k.alt || k.text.empty() || d.buf.version() == verBefore) return;
@@ -891,7 +892,7 @@ void App::hoverTick(Clock::time_point now) {
     }
     const std::uint64_t seq = hoverSeq_;
     const Pos at = hover_.pos;
-    if (isGlslDoc(d)) {
+    if (isGlslDoc(d) || (d.lang && d.lang->rawStrings)) {
         std::string text;
         if (glslHover(d, at, text)) {
             if (!hover_.lines.empty()) hover_.lines.emplace_back("", 0);
@@ -1002,7 +1003,7 @@ void App::jumpTo(const std::string& path, int line, int u16col) {
 void App::gotoDefinition() {
     if (docs_.empty()) return;
     Document& d = doc();
-    if (isGlslDoc(d)) { glslGoto(); return; }
+    if ((isGlslDoc(d) || (d.lang && d.lang->rawStrings)) && glslGoto()) return;
     if (isCppDoc(d) && gotoModule(d)) return;  // `import ide.json;` jumps to the module interface
     if (!lsp_ || !lsp_->ready() || !isCppDoc(d) || !d.lspOpen) { setMessage("Language server not ready", true, 2.5f); return; }
     flushDoc(d);

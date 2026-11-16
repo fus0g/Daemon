@@ -149,6 +149,7 @@ public:
     // Typed text, including auto-pairing of brackets and quotes.
     void insertText(std::string_view t) {
         if (t.empty()) return;
+        if (t == "}" && tryElectricBrace()) return;
         if (autoPair && t.size() == 1 && tryAutoPair(t[0])) return;
         if (hasSelection()) buf.breakGroup();
         replaceSelection(t, true);
@@ -223,6 +224,7 @@ private:
     void detectIndentation();
 
     bool tryAutoPair(char c);
+    bool tryElectricBrace();
 
     void insertPair(char open, char close);
 
