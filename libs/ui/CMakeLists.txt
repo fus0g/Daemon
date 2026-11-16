@@ -40,7 +40,7 @@ foreach(sh quad.vert quad.frag glass.frag)
   set(out ${GEN_DIR}/${sh}.inc)
   if(GLSLC)
     add_custom_command(OUTPUT ${out}
-      COMMAND ${GLSLC} --target-env=vulkan1.3 -mfmt=c -o ${out} ${in}
+      COMMAND ${GLSLC} --target-env=vulkan1.3 -mfmt=num -o ${out} ${in}
       DEPENDS ${in} VERBATIM)
   else()
     add_custom_command(OUTPUT ${out}
