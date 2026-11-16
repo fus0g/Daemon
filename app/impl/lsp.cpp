@@ -439,6 +439,27 @@ void App::requestCompletion(int triggerKind) {
     });
 }
 
+void App::requestSignature() {
+    if (docs_.empty()) return;
+    Document& d = doc();
+    auto target = lspTarget(d, d.cursor);
+    if (!target) { closeSignature(); return; }
+    const Pos at = d.cursor;
+    const Document* dp = &d;
+    const std::uint64_t seq = ++sigSeq_;
+    target->c->cancel(sigReq_);
+    sigReq_ = target->c->signatureHelp(target->path, target->line, target->col, [this, seq, at, dp](LspSignatureHelp h) {
+        if (seq != sigSeq_) return;
+        if (h.sigs.empty()) { if (sig_.open) { sig_ = {}; dirty_ = true; } return; }
+        sig_ = {};
+        sig_.open = true;
+        sig_.help = std::move(h);
+        sig_.at = at;
+        sig_.owner = dp;
+        dirty_ = true;
+    });
+}
+
 void App::showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol, bool incomplete) {
     Document& d = doc();
     const std::string& ln = d.buf.line(at.line);
@@ -565,6 +586,7 @@ void App::acceptCompletion() {
     if (hasParams || ((item.detail.starts_with("command") || item.detail.starts_with("function (this")) && text.ends_with("()")))
         d.setCursor({d.cursor.line, d.cursor.col - 1});
     closeCompletion();
+    if (isCall) requestSignature();   // the cursor sits inside the new parentheses: show the parameters right away
     scrollToCursor_ = true;
     dirty_ = true;
 }
@@ -594,6 +616,8 @@ void App::afterEditorKey(const KeyEvent& k, std::uint64_t verBefore) {
         }
     }
     if (!lspAvailable(d)) return;
+    if (k.key == Key::Escape && sig_.open) closeSignature();
+    else if (sig_.open || (!k.ctrl && !k.alt && !k.text.empty() && d.buf.version() != verBefore && (k.text.back() == '(' || k.text.back() == ','))) requestSignature();
     if (k.ctrl && !k.alt && k.key == Key::Char && k.ch == ' ') { requestCompletion(1); return; }
     if (k.ctrl || k.alt || k.text.empty() || d.buf.version() == verBefore) return;
     const char c = k.text.back();
@@ -639,6 +663,81 @@ auto App::completionKindIcon(int kind) -> KindIcon {
     }
 }
 
+bool App::anchorPoint(const Document* owner, Pos p, float& x, float& top) {
+    if (docs_.empty() || !owner) return false;
+    Document& active = doc();
+    const float s = S(), cell = cw(), line = lh();
+    if (isNotebook(active) && owner != &active) {   // a cell of the notebook on screen
+        const NbView* nbv = notebooks_.at(&active).get();
+        for (const auto& c : nbv->cells) {
+            if (c.doc.get() != owner) continue;
+            const float bpad = std::round(8 * s);
+            top = nbv->viewTop + c.boxY - std::round(active.scrollY) + bpad + static_cast<float>(p.line) * line;
+            x = c.boxX + bpad + static_cast<float>(displayCol(owner->buf.line(p.line), p.col, owner->tabWidth)) * cell;
+            return true;
+        }
+        return false;
+    }
+    if (owner != &active) return false;
+    x = L_.textX - std::round(active.scrollX) + static_cast<float>(displayCol(active.buf.line(p.line), p.col, active.tabWidth)) * cell;
+    top = L_.editor.y + static_cast<float>(p.line) * line - std::round(active.scrollY);
+    return true;
+}
+
+void App::drawSignature() {
+    if (!sig_.open || docs_.empty() || sig_.help.sigs.empty()) return;
+    float ax = 0, top = 0;
+    if (!anchorPoint(sig_.owner, sig_.at, ax, top)) return;
+    const LspSignature& sg = sig_.help.sigs[static_cast<std::size_t>(sig_.help.activeSig)];
+    const float s = S(), cell = cw(), line = lh(), rowH = std::round(line + 4 * s);
+    // Text: "1/2 " when there are overloads, then the signature with the parameter being typed picked out.
+    const std::string count = sig_.help.sigs.size() > 1 ? std::format("{}/{}  ", sig_.help.activeSig + 1, sig_.help.sigs.size()) : std::string();
+    std::string text = sg.label;
+    int a0 = -1, a1 = -1;
+    if (sg.active >= 0 && sg.active < static_cast<int>(sg.params.size()) && sg.params[static_cast<std::size_t>(sg.active)].first >= 0) {
+        a0 = sg.params[static_cast<std::size_t>(sg.active)].first;
+        a1 = std::min<int>(sg.params[static_cast<std::size_t>(sg.active)].second, static_cast<int>(text.size()));
+    }
+    const std::size_t maxChars = std::max<std::size_t>(20, static_cast<std::size_t>((L_.editor.w * 0.9f - 28 * s) / cell)) - count.size();
+    std::string head;   // a very long signature is cut at the front so the active parameter stays visible
+    if (utf8Length(text) > maxChars && a0 > 0) {
+        const int cut = std::max(0, a0 - static_cast<int>(maxChars) / 3);
+        if (cut > 0) { text = text.substr(static_cast<std::size_t>(cut)); a0 -= cut; a1 -= cut; head = "..."; }
+    }
+    std::string doc = sg.active >= 0 && sg.active < static_cast<int>(sg.paramDocs.size()) ? sg.paramDocs[static_cast<std::size_t>(sg.active)] : std::string();
+    if (doc.empty()) doc = sg.doc;
+    if (const auto nl = doc.find('\n'); nl != std::string::npos) doc.resize(nl);
+    const std::size_t shownChars = std::min(utf8Length(count) + utf8Length(head) + utf8Length(text), maxChars + count.size());
+    const std::size_t docChars = std::min(utf8Length(doc), maxChars);
+    const float w = std::round((static_cast<float>(std::max(shownChars, docChars)) + 3) * cell + 20 * s);
+    const int rows = doc.empty() ? 1 : 2;
+    const float h = static_cast<float>(rows) * rowH + 8 * s;
+    float x = std::clamp(ax - 10 * s, L_.editor.x + 4 * s, std::max(L_.editor.x + 4 * s, L_.editor.right() - w - 4 * s));
+    float y = top - h - 4 * s;   // above the line, so it does not cover the completion list below it
+    if (y < L_.editor.y) y = top + line + 4 * s;
+    const Rect r{x, y, w, h};
+    glassPanel(r, 10 * s);
+    const float ty = r.y + 4 * s + (rowH - line) / 2, maxX = r.right() - 8 * s;
+    float tx = r.x + 10 * s;
+    auto put = [&](const std::string& t, Color c) {
+        if (t.empty()) return;
+        label(tx, ty, t, c, maxX);
+        tx += static_cast<float>(utf8Length(t)) * cell;
+    };
+    put(count, theme::lineNum);
+    put(head, theme::dim);
+    if (a0 >= 0 && a1 > a0 && a1 <= static_cast<int>(text.size())) {
+        put(text.substr(0, static_cast<std::size_t>(a0)), theme::dim);
+        const float ux = tx;
+        put(text.substr(static_cast<std::size_t>(a0), static_cast<std::size_t>(a1 - a0)), theme::text);
+        fill(ux, ty + line - std::round(2 * s), std::min(tx, maxX) - ux, std::max(1.0f, std::round(1.5f * s)), theme::accent, s);
+        put(text.substr(static_cast<std::size_t>(a1)), theme::dim);
+    } else {
+        put(text, theme::dim);
+    }
+    if (!doc.empty()) label(r.x + 10 * s, ty + rowH, doc, theme::lineNum, maxX);
+}
+
 void App::drawCompletion() {
     if (!comp_.open || comp_.shown.empty() || docs_.empty()) return;
     Document& active = doc();
@@ -658,8 +757,21 @@ void App::drawCompletion() {
     maxDetail = std::min<std::size_t>(maxDetail, 28);
     const float iconW = std::round(26 * s);
     float w = iconW + static_cast<float>(std::min<std::size_t>(maxLabel, 60) + maxDetail + 4) * cell + 22 * s;
-    w = std::min(w, L_.editor.w * 0.9f);
-    const float h = static_cast<float>(rows) * rowH + 8 * s;
+    // A footer for the selected entry with everything the list had to cut: return type, name and all parameters with their types.
+    std::string footDetail, footLabel;
+    if (comp_.sel >= 0 && comp_.sel < n) {
+        const auto& si = comp_.all[static_cast<std::size_t>(comp_.shown[static_cast<std::size_t>(comp_.sel)])];
+        footLabel = si.label;
+        while (!footLabel.empty() && footLabel.front() == ' ') footLabel.erase(0, 1);
+        footDetail = si.detail;
+        const bool fn = si.kind == 2 || si.kind == 3 || si.kind == 4;
+        if (!fn && utf8Length(footLabel) <= 60 && utf8Length(footDetail) <= maxDetail) footLabel.clear();   // nothing was cut
+    }
+    const float footH = footLabel.empty() ? 0.0f : rowH + 6 * s;
+    const float footW = (static_cast<float>(utf8Length(footDetail) + utf8Length(footLabel) + (footDetail.empty() ? 0 : 2)) + 2) * cell + 24 * s;
+    w = std::min(std::max(w, footW), L_.editor.w * 0.9f);
+    const float listH = static_cast<float>(rows) * rowH + 8 * s;
+    const float h = listH + footH;
     const float sx = std::round(d.scrollX), sy = std::round(d.scrollY);
     float x, y;
     const NbView* nbv = isNotebook(active) && comp_.owner != &active ? notebooks_.at(&active).get() : nullptr;
@@ -701,9 +813,18 @@ void App::drawCompletion() {
         }
     }
     if (n > rows) {
-        const float tx = r.right() - 5 * s, th = (h - 8 * s) * static_cast<float>(rows) / static_cast<float>(n);
-        const float ty = r.y + 4 * s + (h - 8 * s - th) * static_cast<float>(comp_.scroll) / static_cast<float>(n - rows);
+        const float tx = r.right() - 5 * s, th = (listH - 8 * s) * static_cast<float>(rows) / static_cast<float>(n);
+        const float ty = r.y + 4 * s + (listH - 8 * s - th) * static_cast<float>(comp_.scroll) / static_cast<float>(n - rows);
         fill(tx, ty, 2.5f * s, th, theme::scrollbar, 1.2f * s);
+    }
+    if (footH > 0) {
+        const float fy = r.y + listH;
+        fill(r.x + 8 * s, fy - 1, r.w - 16 * s, std::max(1.0f, std::round(0.8f * s)), theme::border);
+        const float fty = fy + (footH - line) / 2 + 1;
+        float fx = r.x + 12 * s;
+        const float fmax = r.right() - 10 * s;
+        if (!footDetail.empty()) { label(fx, fty, footDetail, theme::dim, fmax); fx += static_cast<float>(utf8Length(footDetail) + 2) * cell; }
+        label(fx, fty, footLabel, theme::text, fmax);
     }
 }
 

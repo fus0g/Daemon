@@ -104,6 +104,7 @@ void App::draw() {
     drawToolbar();
     drawStatus();
     drawCompletion();
+    drawSignature();
     drawHover();
     drawMenu();
     drawDebugBar();

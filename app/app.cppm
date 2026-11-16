@@ -124,6 +124,20 @@ private:
         bool incomplete = false;  // the server cut the list: typing more asks again instead of filtering
         bool member = false;      // after . -> : the server's order is kept, kinds are not regrouped
     };
+    // Signature help: which parameter you are typing, shown above the call while the cursor is inside it.
+    struct Signature {
+        bool open = false;
+        LspSignatureHelp help;
+        Pos at;
+        const Document* owner = nullptr;
+    };
+    Signature sig_;
+    std::uint64_t sigSeq_ = 0;
+    int sigReq_ = -1;
+    void requestSignature();
+    void closeSignature() { if (sig_.open) { sig_ = {}; dirty_ = true; } ++sigSeq_; }
+    void drawSignature();
+    bool anchorPoint(const Document* owner, Pos p, float& x, float& top);   // screen position of a text position (editor or notebook cell)
     bool compStale_ = false;      // the last list was incomplete: the next identifier character asks the server again
     std::unordered_map<std::string, int> compUsed_;   // accepted completions this session: they come first next time
     struct Hover {

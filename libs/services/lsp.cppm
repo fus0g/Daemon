@@ -26,6 +26,18 @@ struct LspCompletion {
     int kind = 0;
 };
 
+// textDocument/signatureHelp: the signature(s) of the call the cursor is in and which parameter is being typed.
+struct LspSignature {
+    std::string label, doc;                       // "int f(int a, const char *b)"
+    std::vector<std::pair<int, int>> params;      // [start, end) of each parameter inside label (byte offsets)
+    std::vector<std::string> paramDocs;
+    int active = -1;                              // parameter being typed, -1 unknown
+};
+struct LspSignatureHelp {
+    std::vector<LspSignature> sigs;
+    int activeSig = 0;
+};
+
 struct LspLocation {
     std::string path;
     int line = 0, col = 0;  // LSP coordinates
@@ -108,6 +120,9 @@ public:
     void definition(const std::string& path, int line, int col, std::function<void(std::vector<LspLocation>)> cb);
 
     void hover(const std::string& path, int line, int col, std::function<void(std::string)> cb);
+
+    // Returns the request id (for cancel()). An empty result means the cursor is not inside a call.
+    int signatureHelp(const std::string& path, int line, int col, std::function<void(LspSignatureHelp)> cb);
 
     // clangd extension: the matching header for a source file and vice versa.
     void switchSourceHeader(const std::string& path, std::function<void(std::string)> cb) {

@@ -5,6 +5,12 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-16
+
+### Added
+- Parameter hints: while the cursor is inside a call, a small panel above it shows the signature with the parameter you are typing underlined, its type and name, the return type, and the parameter's documentation when there is some (more than one overload: "1/3"). It appears when you accept a function from the completion list, when you type `(` or `,`, and follows the cursor until you leave the call (Esc closes it). Works in notebook cells too.
+- Completion list: a footer under the list shows the selected entry in full - return type, name and every parameter with its type - for functions, and for anything the list had to cut short.
+
 ## [0.4.2] - 2026-11-14
 
 ### Changed
@@ -99,7 +105,8 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.4.2...HEAD
+[Unreleased]: https://example.invalid/compare/v0.5.0...HEAD
+[0.5.0]: https://example.invalid/compare/v0.4.2...v0.5.0
 [0.4.2]: https://example.invalid/compare/v0.4.1...v0.4.2
 [0.4.1]: https://example.invalid/compare/v0.4.0...v0.4.1
 [0.4.0]: https://example.invalid/compare/v0.3.1...v0.4.0

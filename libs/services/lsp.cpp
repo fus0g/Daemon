@@ -204,6 +204,40 @@ void LspClient::hover(const std::string& path, int line, int col, std::function<
     });
 }
 
+int LspClient::signatureHelp(const std::string& path, int line, int col, std::function<void(LspSignatureHelp)> cb) {
+    auto params = positionParams(path, line, col);
+    params.set("context", json::object().set("triggerKind", 1).set("isRetrigger", false));
+    return request("textDocument/signatureHelp", std::move(params), [cb = std::move(cb)](const json::Value& r, bool err) {
+        LspSignatureHelp out;
+        if (!err && r.isObject()) {
+            auto docText = [](const json::Value& d) { return d.isString() ? d.str() : d["value"].str(); };
+            out.activeSig = r["activeSignature"].integer();
+            const int activeParam = r["activeParameter"].integer(-1);
+            if (auto* sigs = r["signatures"].array()) {
+                for (const auto& s : *sigs) {
+                    LspSignature sg;
+                    sg.label = s["label"].str();
+                    sg.doc = docText(s["documentation"]);
+                    sg.active = s["activeParameter"].isNumber() ? s["activeParameter"].integer() : activeParam;
+                    if (auto* ps = s["parameters"].array()) {
+                        for (const auto& p : *ps) {
+                            const auto& l = p["label"];
+                            std::pair<int, int> range{-1, -1};
+                            if (auto* a = l.array(); a && a->size() == 2) range = {(*a)[0].integer(), (*a)[1].integer()};
+                            else if (l.isString()) { const auto at = sg.label.find(l.str()); if (at != std::string::npos) range = {static_cast<int>(at), static_cast<int>(at + l.str().size())}; }
+                            sg.params.push_back(range);
+                            sg.paramDocs.push_back(docText(p["documentation"]));
+                        }
+                    }
+                    out.sigs.push_back(std::move(sg));
+                }
+            }
+            if (out.activeSig < 0 || out.activeSig >= static_cast<int>(out.sigs.size())) out.activeSig = 0;
+        }
+        cb(std::move(out));
+    });
+}
+
 int LspClient::request(const std::string& method, json::Value params, std::function<void(const json::Value&, bool)> cb,
             bool immediate) {
     if (!proc_) { cb(json::Value(), true); return -1; }
