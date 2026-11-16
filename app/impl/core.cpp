@@ -454,6 +454,7 @@ std::optional<Clock::time_point> App::nextWake() const {
     }
     if (lsp_ && healTries_ < 3 && nextHeal_ != Clock::time_point{}) consider(nextHeal_);
     if (hover_.pending) consider(hover_.due);
+    if (auto ow = outlineWake()) consider(*ow);
     consider(nextSettingsCheck_ > Clock::now() ? nextSettingsCheck_ : Clock::now() + std::chrono::milliseconds(1500));
     if (bar_.shown && !menu_.open) consider(bar_.lastUse + std::chrono::milliseconds(2250));
     return t;
@@ -535,6 +536,7 @@ void App::update(Clock::time_point now, float dt) {
     if (stepAnimations(dt)) { animating_ = true; dirty_ = true; }
     barTick(now);
     settingsPoll(now);
+    outlineTick(now);
     pollTasks();
     if (scriptPos_ < script_.size()) stepScript();
     lspSync(now);

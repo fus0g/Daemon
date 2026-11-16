@@ -74,6 +74,7 @@ private:
     struct Layout {
         Rect title, island, tabs, editor, prompt, status;
         Rect side, split, sideList;   // sidebar island, draggable gap, scrolling file list
+        Rect outline, outlineHead, outlineList, outlineSplit;   // structure view under the file list (empty when off), its header, rows, drag handle
         float sideRow = 0;
         Rect toolbar, panel;          // CMake toolbar row and the build/run output panel
         Rect activity, crumbs, minimap;  // right-edge activity bar, breadcrumb row, code minimap
@@ -138,6 +139,32 @@ private:
     void closeSignature() { if (sig_.open) { sig_ = {}; dirty_ = true; } ++sigSeq_; }
     void drawSignature();
     bool anchorPoint(const Document* owner, Pos p, float& x, float& top);   // screen position of a text position (editor or notebook cell)
+    // ---- structure view (app/impl/outline_view.cpp): the symbols of the current file under the explorer
+    struct OutlineRow { std::string name, detail, key; int kind = 0, line = 0, col = 0, endLine = 0, depth = 0; bool hasKids = false; };
+    struct OutlineData {
+        std::vector<LspSymbol> tree;
+        std::uint64_t version = ~0ull;      // text version the tree describes
+        std::uint64_t askedVersion = ~0ull; // text version a request was sent for
+        Clock::time_point due{};
+        bool ready = false;                 // a tree has arrived (even an empty one)
+    };
+    std::unordered_map<const Document*, OutlineData> outlines_;
+    std::vector<OutlineRow> outlineRows_;
+    const Document* outlineRowsDoc_ = nullptr;
+    std::uint64_t outlineRowsVer_ = ~0ull, outlineGen_ = 0, outlineRowsGen_ = ~0ull;
+    std::unordered_set<std::string> outlineCollapsed_;
+    bool outlineOpen_ = true, outlineSplitDrag_ = false;
+    float outlineScroll_ = 0, outlineMax_ = 0;
+    int outlineHover_ = -1, outlineCursorRow_ = -1, outlineLastCursorRow_ = -2;
+    bool outlineVisible() const;
+    void outlineTick(Clock::time_point now);
+    std::optional<Clock::time_point> outlineWake() const;
+    void outlineRebuild();
+    void drawOutline();
+    bool outlineClick(Button b);                 // true when the press was for the structure view
+    bool outlineScrollBy(float dy);
+    void outlineMoved();
+    static std::pair<char32_t, Color> outlineIcon(int kind);
     bool compStale_ = false;      // the last list was incomplete: the next identifier character asks the server again
     std::unordered_map<std::string, int> compUsed_;   // accepted completions this session: they come first next time
     struct Hover {

@@ -102,6 +102,7 @@ void App::onPointerMove(float lx, float ly) {
     else if (splitDragNode_) c = splitDragNode_->sideBySide ? Cursor::ResizeW : Cursor::ResizeN;
     else if (Node* g = gapAt(mx_, my_); g && !tabDrag_.active) c = g->sideBySide ? Cursor::ResizeW : Cursor::ResizeN;
     else if (splitDrag_ || (sidebar_ && L_.split.contains(mx_, my_))) c = Cursor::ResizeW;
+    else if (outlineSplitDrag_ || (L_.outlineSplit.h > 0 && L_.outlineSplit.contains(mx_, my_))) c = Cursor::ResizeN;
     else if (panelDrag_ || (panelOpen_ && L_.panel.contains(mx_, my_) && my_ < L_.panel.y + 6 * S())) c = Cursor::ResizeN;
     else if (Pane* hp = paneAt(mx_, my_); hp && hp->cur && isPreview(*hp->cur) && hp->editor.contains(mx_, my_)) c = previewHoverAt(*hp) ? Cursor::Hand : Cursor::Default;
     else if (Pane* np = paneAt(mx_, my_); np && np->cur && isNotebook(*np->cur) && np->editor.contains(mx_, my_)) {
@@ -135,6 +136,13 @@ void App::onPointerMove(float lx, float ly) {
         sidebarWidth_ = std::clamp(w / S(), 150.0f, L_.status.w / S() * 0.5f);
         dirty_ = true;
     }
+    if (outlineSplitDrag_) {   // the divider between the file list and the structure view
+        const float avail = std::max(1.0f, L_.side.h - (L_.sideList.y - L_.side.y) - sideCardH());
+        const float below = L_.side.bottom() - sideCardH() - my_ - L_.outlineHead.h;
+        settings::current().set("outline.heightPercent", static_cast<int>(std::lround(below / avail * 100.0f / 5.0f) * 5));
+        dirty_ = true;
+    }
+    outlineMoved();
     int hr = -1;
     if (sidebar_ && !sideGit_ && !sideSearch_ && !sideDebug_ && L_.sideList.contains(mx_, my_)) {
         hr = static_cast<int>(std::floor((my_ - L_.sideList.y + sideScroll_) / L_.sideRow));
@@ -388,6 +396,7 @@ void App::onPointerButton(Button b, bool pressed, float lx, float ly) {
         if (tabDrag_.doc && tabDrag_.active) performDrop();
         tabDrag_ = {};
         splitDragNode_ = nullptr;
+        if (outlineSplitDrag_) { outlineSplitDrag_ = false; settings::save(settings::current()); }
         dragging_ = scrollbarDrag_ = splitDrag_ = panelDrag_ = miniDrag_ = nbDragging_ = false;   // (the button is up: no drag of any kind goes on)
         return;
     }
@@ -401,6 +410,7 @@ void App::onPointerButton(Button b, bool pressed, float lx, float ly) {
             if (b == Button::Left && L_.sideList.contains(mx_, my_)) gitPanelClick(); else gitMsgFocus_ = false;
             return;
         }
+        if (outlineClick(b)) return;
         if (!explorer_.isOpen()) { if (b == Button::Left) browseOpen(false); return; }
         const auto& rows = explorer_.rows();
         int row = -1;
@@ -580,6 +590,7 @@ void App::onScroll(float dxPx, float dyPx, int stepsX, int stepsY) {
         dirty_ = true;
         return;
     }
+    if (sidebar_ && outlineScrollBy(stepsY != 0 ? static_cast<float>(stepsY) * 3 * std::round(uiH() + 9 * S()) : dyPx * S())) return;
     if (sidebar_ && L_.side.contains(mx_, my_)) {
         sideTarget_ += stepsY != 0 ? static_cast<float>(stepsY) * 3 * L_.sideRow : dyPx * S();
         clampSide();

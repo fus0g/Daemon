@@ -38,6 +38,15 @@ struct LspSignatureHelp {
     int activeSig = 0;
 };
 
+// textDocument/documentSymbol: the outline of a file (classes, functions, ...), as a tree.
+struct LspSymbol {
+    std::string name, detail;
+    int kind = 0;                       // LSP SymbolKind: 5 class, 6 method, 12 function, 23 struct, ...
+    int line = 0, col = 0;              // where the name is (selection range start), LSP coordinates
+    int endLine = 0;                    // last line of the whole symbol
+    std::vector<LspSymbol> kids;
+};
+
 struct LspLocation {
     std::string path;
     int line = 0, col = 0;  // LSP coordinates
@@ -120,6 +129,8 @@ public:
     void definition(const std::string& path, int line, int col, std::function<void(std::vector<LspLocation>)> cb);
 
     void hover(const std::string& path, int line, int col, std::function<void(std::string)> cb);
+
+    int documentSymbols(const std::string& path, std::function<void(std::vector<LspSymbol>)> cb);
 
     // Returns the request id (for cancel()). An empty result means the cursor is not inside a call.
     int signatureHelp(const std::string& path, int line, int col, std::function<void(LspSignatureHelp)> cb);

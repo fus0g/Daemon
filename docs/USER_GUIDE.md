@@ -68,6 +68,13 @@ of other languages open for reading and editing but cannot be run.
 
 `daemon --nb-run in.dcxxnb [out.dcxxnb]` runs all cells without a window and writes the outputs (handy for CI).
 
+### Structure view
+Below the file tree the sidebar lists what is in the current file: namespaces, classes, structs, enums, functions, methods, fields
+and constants of C/C++ files (it asks clangd, so it appears once clangd has read the file; the first time can take a moment in
+large module projects) and the headings of Markdown files. Icons show the kind, grey text the type or signature. Click a row to jump
+to the symbol, click the arrow to fold it; the symbol the cursor is in is highlighted and scrolled into view. Click the STRUCTURE
+header to collapse the view, drag the divider above it to resize. Turn it off or set its height in Settings > Appearance.
+
 ### File explorer
 
 Right-click a row (or the empty area) for the context menu. With the sidebar focused:

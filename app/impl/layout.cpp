@@ -119,7 +119,21 @@ void App::layout() {
     L_.side = sideShown ? Rect{L_.island.right() + m, top, std::max(0.0f, contentRight - (L_.island.right() + m)), h} : Rect{};
     L_.split = sideShown ? Rect{L_.island.right(), top, m, h} : Rect{};
     L_.sideRow = std::round(uh + 10 * s);
-    L_.sideList = sideShown ? Rect{L_.side.x, L_.side.y + tabH, L_.side.w, std::max(0.0f, L_.side.h - tabH - sideCardH())} : Rect{};
+    L_.outline = L_.outlineHead = L_.outlineList = L_.outlineSplit = {};
+    float outlineTotal = 0;
+    if (sideShown && outlineVisible()) {   // the structure view takes the lower part of the explorer
+        const float avail = std::max(0.0f, L_.side.h - tabH - sideCardH());
+        const float headH = std::round(uh + 14 * s);
+        float bodyH = 0;
+        if (outlineOpen_) bodyH = std::clamp(std::round(static_cast<float>(cfgI("outline.heightPercent")) / 100.0f * avail), std::round(90 * s), std::max(std::round(90 * s), avail - std::round(120 * s) - headH));
+        outlineTotal = std::min(avail, headH + bodyH);
+        const float oy = L_.side.bottom() - sideCardH() - outlineTotal;
+        L_.outline = {L_.side.x, oy, L_.side.w, outlineTotal};
+        L_.outlineHead = {L_.side.x, oy, L_.side.w, std::min(headH, outlineTotal)};
+        L_.outlineList = {L_.side.x, oy + headH, L_.side.w, std::max(0.0f, outlineTotal - headH)};
+        L_.outlineSplit = outlineOpen_ ? Rect{L_.side.x, oy - std::round(4 * s), L_.side.w, std::round(8 * s)} : Rect{};
+    }
+    L_.sideList = sideShown ? Rect{L_.side.x, L_.side.y + tabH, L_.side.w, std::max(0.0f, L_.side.h - tabH - sideCardH() - outlineTotal)} : Rect{};
     L_.tabs = {L_.island.x, L_.island.y, L_.island.w, tabH};
     L_.panel = {L_.island.x, L_.island.bottom() + (panelH > 0 ? m * easeInOut(panelAnim_) : 0), L_.island.w, panelH};
     (void)crumbH;

@@ -38,6 +38,8 @@ const std::vector<Def>& defs() {
         v.push_back(boolean("editor.cursorBlink", "Editor", "Blinking cursor", "The caret blinks while you are idle.", true));
         v.push_back(boolean("editor.autoReload", "Editor", "Reload changed files", "Reload a file that changed on disk when it has no unsaved edits.", true));
 
+        v.push_back(boolean("outline.show", "Appearance", "Structure view", "List the classes, functions and headings of the current file under the file explorer.", true));
+        v.push_back(integer("outline.heightPercent", "Appearance", "Structure view height", "Share of the sidebar the structure view takes (drag the divider to change it).", 38, 15, 70, "%", 5));
         v.push_back(integer("appearance.uiFontSize", "Appearance", "Interface font size", "Size of menus, tabs, the sidebar and the status bar.", 13, 10, 20, "px"));
         v.push_back(boolean("appearance.animations", "Appearance", "Animations", "Slide the panels, tabs and the menu bar instead of switching at once.", true));
         v.push_back(boolean("appearance.startMaximized", "Appearance", "Start maximized", "Open the window maximized.", true, true));

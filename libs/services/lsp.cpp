@@ -86,6 +86,7 @@ std::expected<void, std::string> LspClient::start(std::vector<std::string> argv,
     textDoc.set("hover", json::object().set("contentFormat", json::array().push("plaintext")));
     textDoc.set("publishDiagnostics", json::object());
     textDoc.set("definition", json::object().set("linkSupport", false));
+    textDoc.set("documentSymbol", json::object().set("hierarchicalDocumentSymbolSupport", true));
     params.set("capabilities", json::object().set("textDocument", textDoc).set("workspace", json::object()));
     request("initialize", std::move(params), [this](const json::Value&, bool error) {
         if (error) { setState(State::Failed); return; }
@@ -201,6 +202,36 @@ void LspClient::hover(const std::string& path, int line, int col, std::function<
             }
         }
         cb(std::move(text));
+    });
+}
+
+int LspClient::documentSymbols(const std::string& path, std::function<void(std::vector<LspSymbol>)> cb) {
+    json::Value params = json::object().set("textDocument", json::object().set("uri", pathToUri(path)));
+    return request("textDocument/documentSymbol", std::move(params), [cb = std::move(cb)](const json::Value& r, bool err) {
+        std::vector<LspSymbol> out;
+        if (!err && r.isArray()) {
+            std::function<LspSymbol(const json::Value&)> conv = [&](const json::Value& v) {
+                LspSymbol s;
+                s.name = v["name"].str();
+                s.detail = v["detail"].str();
+                s.kind = v["kind"].integer();
+                if (v["location"].isObject()) {   // flat SymbolInformation
+                    s.line = v["location"]["range"]["start"]["line"].integer();
+                    s.col = v["location"]["range"]["start"]["character"].integer();
+                    s.endLine = v["location"]["range"]["end"]["line"].integer();
+                    if (v["containerName"].isString() && s.detail.empty()) s.detail = v["containerName"].str();
+                } else {
+                    const auto& sel = v["selectionRange"].isObject() ? v["selectionRange"] : v["range"];
+                    s.line = sel["start"]["line"].integer();
+                    s.col = sel["start"]["character"].integer();
+                    s.endLine = v["range"]["end"]["line"].integer(s.line);
+                }
+                if (auto* k = v["children"].array()) for (const auto& c : *k) s.kids.push_back(conv(c));
+                return s;
+            };
+            for (const auto& v : *r.array()) out.push_back(conv(v));
+        }
+        cb(std::move(out));
     });
 }
 

@@ -276,6 +276,8 @@ void App::drawSidebar() {
         }
     }
 
+    drawOutline();
+
     // Header (opaque, so scrolled rows disappear beneath it).
     fill(sd.x, sd.y, sd.w, headH, theme::sideBg);
     std::string title = explorer_.isOpen() ? explorer_.rootName() : "Explorer";
