@@ -307,6 +307,85 @@ void Document::moveLines(int dir) {
     buf.breakGroup();
 }
 
+void Document::copyLines(int dir) {
+    if (dir > 0) { duplicateLines(); return; }
+    buf.breakGroup();
+    auto [a, b] = lineSpan();
+    const std::string text = buf.slice({a, 0}, {b, static_cast<int>(buf.line(b).size())}) + "\n";
+    const Selection before = sel();
+    buf.replace({a, 0}, {a, 0}, text, before);
+    anchor = before.anchor;   // the copy went above: the cursor stays on the upper one
+    cursor = before.cursor;
+    wantCol = -1;
+    buf.breakGroup();
+}
+
+void Document::joinLines() {
+    auto [a, b] = lineSpan();
+    if (a == b) { if (b + 1 >= buf.lineCount()) return; ++b; }
+    buf.breakGroup();
+    const Selection before = sel();
+    Pos joinAt{a, 0};
+    std::string out = buf.line(a);
+    for (int l = a + 1; l <= b; ++l) {
+        std::string next = buf.line(l);
+        const auto first = next.find_first_not_of(" \t");
+        next = first == std::string::npos ? std::string() : next.substr(first);
+        while (!out.empty() && (out.back() == ' ' || out.back() == '\t') && next.empty()) out.pop_back();
+        joinAt = {a, static_cast<int>(out.size())};
+        const bool glue = !next.empty() && !out.empty() && out.back() != ' ' && out.back() != '(' && out.back() != '[' && next.front() != ')' && next.front() != ']' && next.front() != ',' && next.front() != ';';
+        if (glue) out += ' ';
+        out += next;
+    }
+    buf.replace({a, 0}, {b, static_cast<int>(buf.line(b).size())}, out, before);
+    cursor = anchor = {a, joinAt.col};
+    wantCol = -1;
+    buf.breakGroup();
+}
+
+void Document::toggleCase() {
+    Pos from = selBegin(), to = selEnd();
+    const bool had = hasSelection();
+    if (!had) { auto [wa, wb] = wordRange(cursor); if (wb.col <= wa.col || wa.line != wb.line) return; from = wa; to = wb; }
+    std::string t = buf.slice(from, to);
+    const bool anyLower = std::ranges::any_of(t, [](unsigned char c) { return std::islower(c) != 0; });
+    for (auto& c : t) c = static_cast<char>(anyLower ? std::toupper(static_cast<unsigned char>(c)) : std::tolower(static_cast<unsigned char>(c)));
+    buf.breakGroup();
+    const Selection before = sel();
+    const Pos end = buf.replace(from, to, t, before);
+    if (had) select(from, end); else cursor = anchor = before.cursor;
+    buf.breakGroup();
+}
+
+void Document::insertLineBelow() {
+    buf.breakGroup();
+    const int line = selEnd().line;
+    const std::string& l = buf.line(line);
+    const auto first = l.find_first_not_of(" \t");
+    std::string indent = l.substr(0, first == std::string::npos ? l.size() : first);
+    const auto last = l.find_last_not_of(" \t");
+    if (last != std::string::npos && (l[last] == '{' || l[last] == '(' || l[last] == '[' || (l[last] == ':' && lang && lang->name == "Python"))) indent += indentUnit();
+    const Pos at{line, static_cast<int>(l.size())};
+    const Selection before = sel();
+    buf.replace(at, at, "\n" + indent, before);
+    cursor = anchor = {line + 1, static_cast<int>(indent.size())};
+    wantCol = -1;
+    buf.breakGroup();
+}
+
+void Document::insertLineAbove() {
+    buf.breakGroup();
+    const int line = selBegin().line;
+    const std::string& l = buf.line(line);
+    const auto first = l.find_first_not_of(" \t");
+    const std::string indent = l.substr(0, first == std::string::npos ? l.size() : first);
+    const Selection before = sel();
+    buf.replace({line, 0}, {line, 0}, indent + "\n", before);
+    cursor = anchor = {line, static_cast<int>(indent.size())};
+    wantCol = -1;
+    buf.breakGroup();
+}
+
 void Document::indentLines(bool outdent) {
     auto [a, b] = lineSpan();
     buf.beginGroup();

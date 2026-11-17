@@ -1819,7 +1819,11 @@ private:
     Completion comp_;
     std::uint64_t compSeq_ = 0, hoverSeq_ = 0;
     Hover hover_;
-    std::vector<NavEntry> navBack_;
+    std::vector<NavEntry> navBack_, navFwd_;
+    void navPush(NavEntry e) { navBack_.push_back(std::move(e)); if (navBack_.size() > 100) navBack_.erase(navBack_.begin()); navFwd_.clear(); }
+    void navForward();
+    std::vector<std::string> closedTabs_;   // paths of closed tabs, newest last (Ctrl+Shift+T brings one back)
+    void reopenClosedTab();
 
     Explorer explorer_;
     Menu menu_;   // (the MenuBar state `bar_` is declared with closeMenu above)

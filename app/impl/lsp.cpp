@@ -158,7 +158,7 @@ bool App::gotoModule(Document& d) {
     }
     const ModuleDecl* m = findModule(full);
     if (!m) return false;
-    navBack_.push_back({d.path, d.cursor});
+    navPush({d.path, d.cursor});
     const std::string path = m->path.string();
     openFile(path);
     if (docs_.empty()) return true;
@@ -1136,16 +1136,25 @@ void App::gotoDefinition() {
     const NavEntry from{d.path, d.cursor};
     lsp_->definition(d.path, l, c, [this, from](std::vector<LspLocation> locs) {
         if (locs.empty()) { setMessage("No definition found", true, 2.5f); return; }
-        navBack_.push_back(from);
-        if (navBack_.size() > 100) navBack_.erase(navBack_.begin());
+        navPush(from);
         jumpTo(locs[0].path, locs[0].line, locs[0].col);
     });
 }
 
 void App::navBack() {
     if (navBack_.empty()) { setMessage("Nothing to go back to", false, 1.5f); return; }
+    if (!docs_.empty()) navFwd_.push_back({doc().path, doc().cursor});
     NavEntry e = navBack_.back();
     navBack_.pop_back();
+    openFile(e.path);
+    if (!docs_.empty()) { doc().setCursor(e.pos); scrollToCursor_ = true; }
+}
+
+void App::navForward() {
+    if (navFwd_.empty()) { setMessage("Nothing to go forward to", false, 1.5f); return; }
+    NavEntry e = navFwd_.back();
+    navFwd_.pop_back();
+    if (!docs_.empty()) navBack_.push_back({doc().path, doc().cursor});
     openFile(e.path);
     if (!docs_.empty()) { doc().setCursor(e.pos); scrollToCursor_ = true; }
 }

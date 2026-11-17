@@ -5,6 +5,11 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-17
+
+### Added
+- Editor shortcuts: **Ctrl+D** duplicates the line (or the selection; Ctrl+Shift+D still works), **Ctrl+J** joins lines, **Ctrl+Shift+U** toggles upper / lower case of the selection or the word, **Ctrl+Enter** / **Ctrl+Shift+Enter** open a new indented line below / above without splitting the current one, **Alt+Shift+Up/Down** copy the line up / down, **Ctrl+Shift+Up/Down** move it (like Alt+Up/Down), **Ctrl+R** replace, **Ctrl+1..9** go to tab N (9: the last), **Ctrl+Shift+T** reopen the last closed tab, **Alt+Right** go forward after Alt+Left. Ctrl+C / Ctrl+X without a selection already copied / cut the whole line. The Selection, File and Go menus list them.
+
 ## [0.10.0] - 2026-11-17
 
 ### Added
@@ -147,7 +152,8 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.10.0...HEAD
+[Unreleased]: https://example.invalid/compare/v0.11.0...HEAD
+[0.11.0]: https://example.invalid/compare/v0.10.0...v0.11.0
 [0.10.0]: https://example.invalid/compare/v0.9.1...v0.10.0
 [0.9.1]: https://example.invalid/compare/v0.9.0...v0.9.1
 [0.9.0]: https://example.invalid/compare/v0.8.0...v0.9.0

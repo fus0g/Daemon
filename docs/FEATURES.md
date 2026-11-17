@@ -40,7 +40,12 @@ expansion, hover values, Debug console, floating control bar.
 | F5, Shift+F5, Ctrl+Shift+F5, F6 | debug: continue/start, stop, restart, pause |
 | F9, F10, F11, Shift+F11, Ctrl+F10, Ctrl+Shift+F10 | breakpoint, step over, into, out, run to cursor, set next statement |
 | Ctrl+F2, Ctrl+Shift+R | stop run, reload CMake |
-| Ctrl+Z/Y, Ctrl+/, Ctrl+D/K (Shift), Alt+Up/Down, Ctrl+]/[ | undo/redo, comment, duplicate/delete line, move line, indent |
+| Ctrl+Z/Y, Ctrl+/, Ctrl+]/[ | undo/redo, comment, indent |
+| Ctrl+D, Ctrl+Shift+K, Ctrl+J, Ctrl+Shift+U | duplicate line (or selection), delete line, join lines, toggle case |
+| Alt+Up/Down (also Ctrl+Shift+Up/Down), Alt+Shift+Up/Down | move line(s), copy line(s) up / down |
+| Ctrl+Enter, Ctrl+Shift+Enter | new line below / above, without splitting the current one |
+| Ctrl+C / Ctrl+X without a selection | copy / cut the whole line |
+| Ctrl+R, Ctrl+1..9, Ctrl+Shift+T, Alt+Left/Right | replace, go to tab N (9: last), reopen closed tab, back / forward |
 | F12, Alt+Left, Alt+O, Ctrl+Space | definition, back, header/source, completion |
 | Ctrl+Tab, Ctrl+PgUp/PgDn | switch tabs |
 

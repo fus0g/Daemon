@@ -173,6 +173,11 @@ public:
 
     // Moves the selected lines (or the current one) up (-1) or down (+1).
     void moveLines(int dir);
+    void copyLines(int dir);          // duplicate the line(s) above (-1) or below (+1); the cursor goes with the copy
+    void joinLines();                 // the line (or the selected lines) and the next one become one
+    void toggleCase();                // selection (or the word) to UPPER case, or lower case when it already is all upper
+    void insertLineBelow();           // a new, indented line below the current one, without splitting it
+    void insertLineAbove();
 
     void indentLines(bool outdent);
 

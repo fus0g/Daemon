@@ -239,6 +239,48 @@ static void testNavigationAndSearch() {
     CHECK(br && br->second == (Pos{0, 1}));
 }
 
+static void testLineCommands() {
+    Document d;
+    d.lang = langForPath("x.cpp");
+    d.buf.setText("one\n    two\nthree");
+    d.setCursor({1, 6});
+    d.duplicateLines();
+    CHECK(d.buf.lineCount() == 4 && d.buf.line(2) == "    two" && d.cursor.line == 2);
+    d.undo();
+    CHECK(d.buf.lineCount() == 3);
+    // copy up keeps the cursor on the upper copy
+    d.setCursor({1, 5});
+    d.copyLines(-1);
+    CHECK(d.buf.lineCount() == 4 && d.buf.line(1) == "    two" && d.buf.line(2) == "    two" && d.cursor.line == 1);
+    d.undo();
+    // join
+    d.buf.setText("foo(\n    1,\n    2\n);");
+    d.setCursor({0, 2});
+    d.joinLines();
+    CHECK(d.buf.line(0) == "foo(1," && d.buf.lineCount() == 3);
+    d.select({0, 0}, {2, 1});
+    d.joinLines();
+    CHECK(d.buf.lineCount() == 1 && d.buf.line(0) == "foo(1, 2);");
+    // case
+    d.buf.setText("hello World");
+    d.select({0, 0}, {0, 5});
+    d.toggleCase();
+    CHECK(d.buf.line(0) == "HELLO World" && d.hasSelection());
+    d.toggleCase();
+    CHECK(d.buf.line(0) == "hello World");
+    d.setCursor({0, 8});
+    d.toggleCase();
+    CHECK(d.buf.line(0) == "hello WORLD");
+    // new lines
+    d.buf.setText("void f() {\n    int x;\n}");
+    d.setCursor({0, 3});
+    d.insertLineBelow();
+    CHECK(d.buf.lineCount() == 4 && d.buf.line(0) == "void f() {" && d.buf.line(1) == "    " && d.cursor.line == 1 && d.cursor.col == 4);
+    d.setCursor({2, 6});
+    d.insertLineAbove();
+    CHECK(d.buf.line(2) == "    " && d.buf.line(3) == "    int x;" && d.cursor.line == 2);
+}
+
 static void testElectricBrace() {
     Document d;
     d.lang = langForPath("x.cpp");
@@ -287,6 +329,7 @@ static void testDocumentSettings() {
 }
 
 void runTextTests() {
+    testLineCommands();
     testElectricBrace();
     testDocumentSettings();
     testBuffer();

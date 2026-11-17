@@ -454,6 +454,7 @@ void App::editorKeyImpl(const KeyEvent& k) {
     if (k.key == Key::F12) { gotoDefinition(); scrollToCursor_ = false; return; }
     if (alt && !ctrl && k.key == Key::Char && k.ch == 'o') { switchHeaderSource(); scrollToCursor_ = false; return; }
     if (alt && !ctrl && k.key == Key::Left) { navBack(); return; }
+    if (alt && !ctrl && k.key == Key::Right) { navForward(); return; }
     if (debugKey(k)) { scrollToCursor_ = false; return; }
     if (k.key == Key::F9 && ctrl) { cmakeBuild(false); scrollToCursor_ = false; return; }
     if (k.key == Key::F10 && shift) { cmakeBuild(true); scrollToCursor_ = false; return; }
@@ -462,7 +463,7 @@ void App::editorKeyImpl(const KeyEvent& k) {
 
     if (ctrl && !alt && k.key == Key::Char) {
         switch (k.ch) {
-            case 'r': if (shift) cmakeReload(); scrollToCursor_ = false; break;
+            case 'r': if (shift) cmakeReload(); else openPrompt(PromptKind::Replace); scrollToCursor_ = false; break;
             case '`': if (panelOpen_ && panelTab_ == 3 && termFocus_) togglePanel(); else openTerminal(); scrollToCursor_ = false; break;
             case 'm': if (shift) { panelOpen_ = true; panelTab_ = 2; dirty_ = true; scrollToCursor_ = false; } break;   // Problems
             case 's': if (shift) openPrompt(PromptKind::SaveAs); else saveCurrent(); break;
@@ -485,13 +486,20 @@ void App::editorKeyImpl(const KeyEvent& k) {
             case 'v': if (shift) { togglePreview(); scrollToCursor_ = false; } else paste(); break;
             case 'l': d.selectLine(d.cursor.line); break;
             case '/': d.toggleComment(); break;
-            case 'd': if (shift) d.duplicateLines(); break;
+            case 'd': d.duplicateLines(); break;                    // Ctrl+D (Ctrl+Shift+D too)
+            case 'j': d.joinLines(); break;
+            case 'u': if (shift) d.toggleCase(); else scrollToCursor_ = false; break;
+            case 't': if (shift) reopenClosedTab(); else scrollToCursor_ = false; break;
             case 'k': if (shift) d.deleteLines(); break;
             case ']': d.indentLines(false); break;
             case '[': d.indentLines(true); break;
             case '=': case '+': zoom(1); break;
             case '-': zoom(-1); break;
             case '0': zoom(0, true); break;
+            case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9':   // Ctrl+1..9: that tab (9: the last)
+                if (!docs_.empty()) switchTab(k.ch == '9' ? static_cast<int>(docs_.size()) - 1 : std::min(static_cast<int>(k.ch - '1'), static_cast<int>(docs_.size()) - 1));
+                scrollToCursor_ = false;
+                break;
             default: scrollToCursor_ = false; break;
         }
         return;
@@ -500,8 +508,8 @@ void App::editorKeyImpl(const KeyEvent& k) {
     switch (k.key) {
         case Key::Left: d.moveLeft(shift, ctrl); break;
         case Key::Right: d.moveRight(shift, ctrl); break;
-        case Key::Up: if (alt) d.moveLines(-1); else d.moveVertical(-1, shift); break;
-        case Key::Down: if (alt) d.moveLines(1); else d.moveVertical(1, shift); break;
+        case Key::Up: if (alt && shift) d.copyLines(-1); else if (alt || (ctrl && shift)) d.moveLines(-1); else d.moveVertical(-1, shift); break;
+        case Key::Down: if (alt && shift) d.copyLines(1); else if (alt || (ctrl && shift)) d.moveLines(1); else d.moveVertical(1, shift); break;
         case Key::Home: if (ctrl) d.docStart(shift); else d.home(shift); break;
         case Key::End: if (ctrl) d.docEnd(shift); else d.end(shift); break;
         case Key::PageUp:
@@ -514,7 +522,7 @@ void App::editorKeyImpl(const KeyEvent& k) {
             break;
         case Key::Backspace: if (ctrl) d.deleteWordBack(); else d.backspace(); break;
         case Key::Delete: if (ctrl) d.deleteWordForward(); else d.deleteForward(); break;
-        case Key::Enter: d.newline(); break;
+        case Key::Enter: if (ctrl && shift) d.insertLineAbove(); else if (ctrl) d.insertLineBelow(); else d.newline(); break;   // Ctrl+Enter: a new line below, Ctrl+Shift+Enter: above
         case Key::Tab:
             if (ctrl) switchTab(cur_ + (shift ? -1 : 1));
             else if (shift) d.indentLines(true);

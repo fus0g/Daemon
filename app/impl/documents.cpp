@@ -181,6 +181,7 @@ void App::closeTab(int i, bool force) {
         }
     }
     closeArmed_ = -1;
+    if (const std::string& p = docs_[static_cast<std::size_t>(i)]->path; !p.empty() && !isPreview(*docs_[static_cast<std::size_t>(i)])) { std::erase(closedTabs_, p); closedTabs_.push_back(p); if (closedTabs_.size() > 30) closedTabs_.erase(closedTabs_.begin()); }
     // Keep focus in the same pane: after closing the current tab, move to its neighbour there.
     Document* keep = nullptr;
     if (i == cur_) {
@@ -209,6 +210,18 @@ void App::closeTab(int i, bool force) {
     if (previews_.empty()) releasePictures();
     scrollToCursor_ = true;
     dirty_ = true;
+}
+
+void App::reopenClosedTab() {
+    while (!closedTabs_.empty()) {
+        const std::string p = closedTabs_.back();
+        closedTabs_.pop_back();
+        std::error_code ec;
+        if (!fs::is_regular_file(p, ec)) continue;
+        openFile(p);
+        return;
+    }
+    setMessage("No closed tab to reopen", false, 1.5f);
 }
 
 void App::saveCurrent() {

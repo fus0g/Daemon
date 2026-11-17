@@ -93,8 +93,7 @@ bool App::glslGoto() {
     if (!v) return false;
     auto def = glsl::definition(v->text, v->line, v->col);
     if (!def) { setMessage("No definition found", true, 2.5f); return true; }
-    navBack_.push_back({d.path, d.cursor});
-    if (navBack_.size() > 100) navBack_.erase(navBack_.begin());
+    navPush({d.path, d.cursor});
     d.setCursor({def->first + v->origin.line, def->second + (def->first == 0 ? v->origin.col : 0)});
     scrollToCursor_ = true;
     dirty_ = true;

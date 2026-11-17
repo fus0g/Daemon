@@ -5,7 +5,7 @@ Detailed reference for every feature. For a short overview see the [README](../R
 ## Keys
 
 `Ctrl+O/N/S/Shift+S/W/Q` open/new/save/save as/close tab/quit - `Ctrl+Shift+O` open folder, `Ctrl+B` toggle sidebar, `Ctrl+Shift+E` focus it (arrows, Enter, `F5` refresh; drag the gap to resize) - `Ctrl+F/H/G` find/replace/go to line (`F3` next) -
-`Ctrl+Z/Y` undo/redo - `Ctrl+/` comment - `Ctrl+Shift+D/K` duplicate/delete line - `Alt+Up/Down` move line -
+`Ctrl+Z/Y` undo/redo - `Ctrl+/` comment - `Ctrl+D` duplicate line - `Ctrl+Shift+K` delete line - `Ctrl+J` join - `Ctrl+Enter` new line below - `Alt+Up/Down` move line - `Alt+Shift+Up/Down` copy line -
 `Ctrl+Shift+V` Markdown preview - `Ctrl+]/[` indent - `Ctrl+Tab`, `Ctrl+PgUp/PgDn` switch tab - `Ctrl +/-/0` or `Ctrl+wheel` zoom.
 
 ### Markdown preview
