@@ -138,6 +138,17 @@ CMakeDefs scanCMakeDefs(std::string_view text);
 std::vector<CMakeItem> cmakeCompletions(const CMakeKnowledge& kb, std::string_view before, std::string_view full,
                                                const std::vector<std::string>& knownTargets);
 
+// Folder and file names for the path being typed in an argument: `src/ma`, `../`, `"${CMAKE_CURRENT_SOURCE_DIR}/include/`.
+struct CMakePathResult {
+    std::vector<CMakeItem> items;   // folders (kind 19, inserted with a trailing /) and files (kind 17)
+    std::size_t typed = 0;          // characters of the last path segment already typed (the completion replaces them)
+    bool exclusive = false;         // the text is clearly a path (has a /): offer nothing but these
+};
+// `before` is all text up to the cursor. Relative paths start at `fileDir`; `${CMAKE_SOURCE_DIR}`-like variables are expanded
+// with `sourceRoot` / `buildDir`. Empty when the cursor is not in an argument of a command, or the folder cannot be resolved.
+std::optional<CMakePathResult> cmakePathCompletions(std::string_view before, const std::filesystem::path& fileDir,
+                                                    const std::filesystem::path& sourceRoot, const std::filesystem::path& buildDir);
+
 // ---------------------------------------------------------------------------------------------
 // C++20 modules support for clangd.
 //

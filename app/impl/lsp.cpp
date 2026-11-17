@@ -463,7 +463,7 @@ void App::requestSignature() {
     });
 }
 
-void App::showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol, bool incomplete) {
+void App::showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol, bool incomplete, bool pathMode) {
     Document& d = doc();
     const std::string& ln = d.buf.line(at.line);
     int a = at.col;
@@ -476,6 +476,7 @@ void App::showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol
     comp_.anchor = {at.line, a};
     comp_.dotted = anchorCol >= 0;
     comp_.incomplete = incomplete;
+    comp_.path = pathMode;
     compStale_ = incomplete;
     comp_.member = a > 0 && (ln[static_cast<std::size_t>(a - 1)] == '.' || (ln[static_cast<std::size_t>(a - 1)] == '>' && a >= 2 && ln[static_cast<std::size_t>(a - 2)] == '-'));
     comp_.open = true;
@@ -483,7 +484,7 @@ void App::showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol
     dirty_ = true;
 }
 
-void App::requestCMakeCompletion() {
+void App::requestCMakeCompletion(bool pathOnly) {
     if (docs_.empty()) return;
     Document& d = doc();
     if (!cmakeKb_.ready()) cmakeKb_.load();
@@ -494,6 +495,27 @@ void App::requestCMakeCompletion() {
         else if (i == d.cursor.line) before += l.substr(0, static_cast<std::size_t>(d.cursor.col));
         full += l; full += '\n';
     }
+    // Folder and file names inside an argument (src/ma, ../, "${CMAKE_CURRENT_SOURCE_DIR}/inc).
+    std::vector<LspCompletion> pathItems;
+    if (!d.path.empty()) {
+        const fs::path fileDir = fs::path(d.path).parent_path();
+        const fs::path srcRoot = cmakeOpen_ && !cmakeRoot_.empty() ? cmakeRoot_ : (explorer_.isOpen() ? explorer_.rootPath() : fileDir);
+        const fs::path buildDir = cmakeOpen_ ? profile().dir : srcRoot / "build";
+        if (auto pr = cmakePathCompletions(before, fileDir, srcRoot, buildDir)) {
+            for (auto& c : pr->items) {
+                LspCompletion it;
+                it.label = std::move(c.label); it.detail = std::move(c.detail); it.insertText = std::move(c.insert); it.sortText = std::move(c.sort); it.kind = c.kind;
+                it.filterText = it.insertText;
+                pathItems.push_back(std::move(it));
+            }
+            if (pr->exclusive) {   // clearly a path: nothing but its entries
+                if (pathItems.empty()) { closeCompletion(); return; }
+                showCompletion(std::move(pathItems), d.cursor, d.cursor.col - static_cast<int>(pr->typed), false, true);
+                return;
+            }
+        }
+    }
+    if (pathOnly) { closeCompletion(); return; }
     std::vector<std::string> targets;
     for (const auto& t : targets_) targets.push_back(t.name);
     std::vector<LspCompletion> items;
@@ -506,6 +528,7 @@ void App::requestCMakeCompletion() {
         it.kind = c.kind;
         items.push_back(std::move(it));
     }
+    for (auto& p : pathItems) items.push_back(std::move(p));   // commands that take files: their folder's entries next to the usual names
     if (items.empty()) { closeCompletion(); return; }
     showCompletion(std::move(items), d.cursor);
 }
@@ -516,8 +539,8 @@ void App::refilterCompletion() {
     if (d.cursor.line != comp_.anchor.line || d.cursor.col < comp_.anchor.col) { closeCompletion(); return; }
     const std::string& ln = d.buf.line(comp_.anchor.line);
     const std::string prefix = ln.substr(static_cast<std::size_t>(comp_.anchor.col), static_cast<std::size_t>(d.cursor.col - comp_.anchor.col));
-    const bool dotted = comp_.dotted;
-    if (!std::ranges::all_of(prefix, [dotted](char c) { return identChar(c) || (dotted && (c == '.' || c == ':')); })) { closeCompletion(); return; }
+    const bool dotted = comp_.dotted, pathMode = comp_.path;
+    if (!std::ranges::all_of(prefix, [dotted, pathMode](char c) { return identChar(c) || (dotted && (c == '.' || c == ':')) || (pathMode && (c == '.' || c == '-' || c == '+' || c == '~' || c == '@')); })) { closeCompletion(); return; }
     struct Ranked { int match, kind, used; int idx; };
     std::vector<Ranked> scored;
     for (int i = 0; i < static_cast<int>(comp_.all.size()); ++i) {
@@ -578,6 +601,7 @@ void App::acceptCompletion() {
     std::string text = item.insertText.empty() ? item.label : item.insertText;
     while (!text.empty() && text.front() == ' ') text.erase(0, 1);
     ++compUsed_[item.label];
+    const bool pathItem = (comp_.path || isCMakeDoc(d)) && item.kind == 19 && item.insertText.ends_with("/");   // a folder: keep going inside it
     const bool isCall = item.kind == 2 || item.kind == 3 || item.kind == 4;  // method, function, constructor
     const std::string& ln = d.buf.line(d.cursor.line);
     bool addParens = isCall && text.find('(') == std::string::npos && !(d.cursor.col < static_cast<int>(ln.size()) && ln[static_cast<std::size_t>(d.cursor.col)] == '(');
@@ -589,6 +613,7 @@ void App::acceptCompletion() {
     if (hasParams || ((item.detail.starts_with("command") || item.detail.starts_with("function (this")) && text.ends_with("()")))
         d.setCursor({d.cursor.line, d.cursor.col - 1});
     closeCompletion();
+    if (pathItem) { requestCMakeCompletion(); return; }
     if (isCall) requestSignature();   // the cursor sits inside the new parentheses: show the parameters right away
     scrollToCursor_ = true;
     dirty_ = true;
@@ -606,6 +631,7 @@ void App::afterEditorKey(const KeyEvent& k, std::uint64_t verBefore) {
         const std::string& ln = d.buf.line(d.cursor.line);
         const int col = d.cursor.col;
         if (identChar(c)) { if (!comp_.open) requestCMakeCompletion(); }
+        else if (c == '/' || c == '.' || c == '~') requestCMakeCompletion(true);   // path segments
         else if ((c == '{' || c == '<') && col >= 2 && ln[static_cast<std::size_t>(col - 2)] == '$') requestCMakeCompletion();
         else if (c == ' ' || c == '(') requestCMakeCompletion();
         else closeCompletion();

@@ -154,6 +154,13 @@ what is behind it (`ext-background-effect-v1`, supported by GNOME 51+ and KWin).
 opaque, and the code editor is near-black. Without alpha support or the protocol the chrome falls back to a solid colour;
 set `DAEMON_OPAQUE=1` to force that.
 
+## Paths in CMake files
+Inside a command's arguments, typing a path completes folder and file names: `add_executable(app src/` lists the sources in `src`,
+`add_subdirectory(` lists the folders (the ones with a CMakeLists.txt first), `include(` the `.cmake` files, `"${CMAKE_SOURCE_DIR}/`
+the project root. Tab on a folder inserts `name/` and opens the list for what is inside. Relative paths start at the folder of the
+CMake file; `${CMAKE_SOURCE_DIR}`, `${CMAKE_CURRENT_SOURCE_DIR}`, `${CMAKE_CURRENT_LIST_DIR}`, `${PROJECT_SOURCE_DIR}` and the
+`*_BINARY_DIR` variables, `$ENV{NAME}` and `~/` are expanded; other variables are left alone.
+
 ## C++20 modules IntelliSense
 
 Daemon starts clangd with `--experimental-modules-support` and `--completion-parse=always`. CMake + GCC projects that

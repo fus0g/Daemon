@@ -615,6 +615,44 @@ void testToolchain() {
     for (const auto& s : found) if (s.tool.id == "git") CHECK(s.found && !s.version.empty());
 }
 
+static void testCMakePaths() {
+    namespace fs = std::filesystem;
+    const fs::path base = fs::temp_directory_path() / ("ide-cmakepath-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directories(base / "src");
+    fs::create_directories(base / "include");
+    fs::create_directories(base / "third_party" / "lib");
+    fs::create_directories(base / ".hidden");
+    auto touch = [](const fs::path& p) { std::ofstream(p) << "x"; };
+    touch(base / "CMakeLists.txt"); touch(base / "src" / "main.cpp"); touch(base / "src" / "util.cpp"); touch(base / "src" / "notes.txt");
+    touch(base / "include" / "a.hpp"); touch(base / "third_party" / "lib" / "CMakeLists.txt"); touch(base / "modules.cmake");
+    auto names = [](const std::optional<CMakePathResult>& r) { std::set<std::string> s; if (r) for (const auto& i : r->items) s.insert(i.label); return s; };
+    // add_subdirectory( : folders only, the ones with a CMakeLists.txt first
+    auto r1 = cmakePathCompletions("project(x)\nadd_subdirectory(", base, base, base / "build");
+    CHECK(r1 && !r1->exclusive && names(r1) == std::set<std::string>({"include/", "src/", "third_party/"}));
+    CHECK(r1 && std::ranges::any_of(r1->items, [](const auto& i) { return i.label == "third_party/" && i.sort[0] == '1'; }));
+    auto r1b = cmakePathCompletions("add_subdirectory(third_party/", base, base, base / "build");
+    CHECK(r1b && r1b->exclusive && names(r1b) == std::set<std::string>({"lib/"}) && r1b->items[0].sort[0] == '0' && r1b->items[0].detail.find("CMakeLists") != std::string::npos);
+    // sources: folders and source files, not notes.txt
+    auto r2 = cmakePathCompletions("add_executable(app src/", base, base, base / "build");
+    CHECK(r2 && r2->exclusive && r2->typed == 0 && names(r2) == std::set<std::string>({"main.cpp", "util.cpp"}));
+    auto r3 = cmakePathCompletions("target_sources(app PRIVATE \"${CMAKE_CURRENT_SOURCE_DIR}/src/ma", base, base, base / "build");
+    CHECK(r3 && r3->typed == 2 && names(r3).contains("main.cpp"));
+    auto r4 = cmakePathCompletions("include_directories(../", base / "src", base, base / "build");
+    CHECK(r4 && names(r4) == std::set<std::string>({"include/", "src/", "third_party/"}));
+    auto r5 = cmakePathCompletions("include(", base, base, base / "build");
+    CHECK(r5 && names(r5).contains("modules.cmake") && names(r5).contains("CMakeLists.txt") && !names(r5).contains(".hidden/"));
+    auto r6 = cmakePathCompletions("file(GLOB S \"${CMAKE_SOURCE_DIR}/src/", base / "third_party", base, base / "build");
+    CHECK(r6 && names(r6).contains("notes.txt") && names(r6).contains("main.cpp"));
+    auto r7 = cmakePathCompletions("set(X /no/such/dir/", base, base, base / "build");
+    CHECK(r7 && r7->exclusive && r7->items.empty());
+    CHECK(!cmakePathCompletions("set(X ${UNKNOWN}/a", base, base, base / "build"));
+    CHECK(!cmakePathCompletions("src/", base, base, base / "build"));                     // not inside a command
+    CHECK(!cmakePathCompletions("add_subdirectory(a) # src/", base, base, base / "build"));  // comment
+    CHECK(!cmakePathCompletions("project(demo", base, base, base / "build"));              // project() takes no paths, no slash
+    std::error_code ec;
+    fs::remove_all(base, ec);
+}
+
 static void testGlsl() {
     using namespace ide::glsl;
     CHECK(isGlslPath("a/shader.frag") && isGlslPath("x.VERT") && isGlslPath("m.rchit") && isGlslPath("t.glsl") && !isGlslPath("a.cpp"));
@@ -723,6 +761,7 @@ static void testSettings() {
 }
 
 void runServicesTests() {
+    testCMakePaths();
     testGlsl();
     testSettings();
     testToolchain();

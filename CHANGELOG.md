@@ -5,6 +5,11 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-17
+
+### Added
+- CMake files: folder and file name completion in arguments. Type a path (`src/`, `../`, `"${CMAKE_CURRENT_SOURCE_DIR}/include/`, `~/`) and the entries of that folder appear; picking a folder continues inside it. `${CMAKE_SOURCE_DIR}`, `${CMAKE_CURRENT_LIST_DIR}`, `${PROJECT_SOURCE_DIR}`, `${CMAKE_BINARY_DIR}` and friends are understood. Commands that take files offer their folder's entries next to the usual names without a slash: `add_subdirectory` only folders (the ones with a CMakeLists.txt first), `include` folders and `.cmake` files, `add_executable` / `add_library` / `target_sources` folders and source files, others everything. Hidden entries show once you type a dot.
+
 ## [0.8.0] - 2026-11-16
 
 ### Added
@@ -129,7 +134,8 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.8.0...HEAD
+[Unreleased]: https://example.invalid/compare/v0.9.0...HEAD
+[0.9.0]: https://example.invalid/compare/v0.8.0...v0.9.0
 [0.8.0]: https://example.invalid/compare/v0.7.0...v0.8.0
 [0.7.0]: https://example.invalid/compare/v0.6.1...v0.7.0
 [0.6.1]: https://example.invalid/compare/v0.6.0...v0.6.1

@@ -701,3 +701,142 @@ std::optional<std::string> importNameAt(std::string_view line, std::size_t col) 
 }
 
 }  // namespace ide
+
+namespace ide {
+
+std::optional<CMakePathResult> cmakePathCompletions(std::string_view before, const fs::path& fileDir, const fs::path& sourceRoot, const fs::path& buildDir) {
+    // The innermost unclosed command and whether the cursor is inside a string on the last line.
+    std::vector<std::string> stack;
+    bool str = false, comment = false;
+    std::size_t strStart = 0;
+    for (std::size_t i = 0; i < before.size(); ++i) {
+        const char c = before[i];
+        if (comment) { if (c == '\n') comment = false; continue; }
+        if (str) { if (c == '\\') ++i; else if (c == '"') str = false; continue; }
+        if (c == '"') { str = true; strStart = i; continue; }
+        if (c == '#') { comment = true; continue; }
+        if (c == '(') {
+            std::size_t e = i;
+            while (e > 0 && std::isspace(static_cast<unsigned char>(before[e - 1]))) --e;
+            std::size_t b = e;
+            while (b > 0 && (std::isalnum(static_cast<unsigned char>(before[b - 1])) || before[b - 1] == '_')) --b;
+            std::string cmd(before.substr(b, e - b));
+            for (auto& ch : cmd) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            stack.push_back(cmd);
+        } else if (c == ')' && !stack.empty()) stack.pop_back();
+    }
+    if (comment || stack.empty() || stack.back().empty()) return std::nullopt;
+    const std::string& cmd = stack.back();
+
+    // The token under the cursor.
+    std::size_t start = before.size();
+    if (str) {
+        const auto nl = before.rfind('\n');
+        if (nl != std::string_view::npos && nl > strStart) return std::nullopt;   // strings that span lines: not a path
+        start = strStart + 1;
+    } else {
+        while (start > 0) {
+            const char c = before[start - 1];
+            if (std::isalnum(static_cast<unsigned char>(c)) || std::strchr("_.+-/~@${}:", c)) --start; else break;
+        }
+    }
+    const std::string token(before.substr(start));
+    const bool hasSlash = token.find('/') != std::string::npos;
+    static const std::set<std::string> pathCmds = {
+        "add_subdirectory", "include", "include_directories", "target_include_directories", "link_directories", "add_executable",
+        "add_library", "target_sources", "file", "configure_file", "install", "set_source_files_properties", "source_group",
+        "target_precompile_headers", "add_custom_command", "add_test", "find_path", "find_file", "find_library", "execute_process",
+    };
+    const bool pathy = pathCmds.contains(cmd);
+    if (!hasSlash && !(pathy && !token.starts_with("${") && token.find('$') == std::string::npos)) return std::nullopt;
+
+    // Folder part (up to and including the last /) and the segment being typed.
+    const auto slash = token.rfind('/');
+    const std::string dirPart = slash == std::string::npos ? std::string() : token.substr(0, slash + 1);
+    const std::string seg = slash == std::string::npos ? token : token.substr(slash + 1);
+    if (seg.find('$') != std::string::npos || seg.find('{') != std::string::npos) return std::nullopt;
+
+    fs::path dir;
+    std::string rest = dirPart;
+    auto home = [] { const char* h = std::getenv("HOME"); return fs::path(h && *h ? h : "/"); };
+    if (rest.starts_with("${")) {
+        const auto close = rest.find('}');
+        if (close == std::string::npos) return std::nullopt;
+        const std::string var = rest.substr(2, close - 2);
+        rest = rest.substr(close + 1);
+        if (var == "CMAKE_CURRENT_SOURCE_DIR" || var == "CMAKE_CURRENT_LIST_DIR") dir = fileDir;
+        else if (var == "CMAKE_SOURCE_DIR" || var == "PROJECT_SOURCE_DIR" || var == "CMAKE_HOME_DIRECTORY" || var.ends_with("_SOURCE_DIR")) dir = sourceRoot;
+        else if (var == "CMAKE_BINARY_DIR" || var == "CMAKE_CURRENT_BINARY_DIR" || var == "PROJECT_BINARY_DIR" || var.ends_with("_BINARY_DIR")) dir = buildDir;
+        else if (var == "HOME") dir = home();
+        else return std::nullopt;
+    } else if (rest.starts_with("$ENV{")) {
+        const auto close = rest.find('}');
+        if (close == std::string::npos) return std::nullopt;
+        const std::string var = rest.substr(5, close - 5);
+        const char* v = std::getenv(var.c_str());
+        if (!v || !*v) return std::nullopt;
+        dir = v;
+        rest = rest.substr(close + 1);
+    } else if (rest.starts_with("~/")) {
+        dir = home();
+        rest = rest.substr(1);
+    } else if (rest.starts_with("/")) {
+        dir = "/";
+    } else {
+        dir = fileDir;
+    }
+    if (rest.find('$') != std::string::npos) return std::nullopt;
+    while (rest.starts_with("/")) rest.erase(0, 1);
+    fs::path target = dir / rest;
+    std::error_code ec;
+    if (!fs::is_directory(target, ec)) return hasSlash ? std::make_optional(CMakePathResult{{}, seg.size(), true}) : std::nullopt;
+
+    const bool dirsOnly = cmd == "add_subdirectory" || cmd == "include_directories" || cmd == "target_include_directories" || cmd == "link_directories";
+    auto ext = [](const fs::path& p) { std::string e = p.extension().string(); for (auto& c : e) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return e; };
+    static const std::set<std::string> sourceExt = {".c", ".cc", ".cpp", ".cxx", ".c++", ".cppm", ".ixx", ".mpp", ".h", ".hh", ".hpp", ".hxx", ".inl", ".ipp", ".cu", ".cuh", ".m", ".mm", ".s", ".asm", ".rc", ".glsl", ".vert", ".frag", ".comp", ".ui", ".qrc"};
+    const bool sourcesOnly = cmd == "add_executable" || cmd == "add_library" || cmd == "target_sources";
+    const bool cmakeOnly = cmd == "include";
+
+    CMakePathResult res;
+    res.typed = seg.size();
+    res.exclusive = hasSlash;
+    std::vector<fs::directory_entry> entries;
+    for (const auto& e : fs::directory_iterator(target, fs::directory_options::skip_permission_denied, ec)) {
+        entries.push_back(e);
+        if (entries.size() > 4000) break;
+    }
+    std::ranges::sort(entries, [](const auto& a, const auto& b) { return a.path().filename().string() < b.path().filename().string(); });
+    for (const auto& e : entries) {
+        const std::string name = e.path().filename().string();
+        if (name.starts_with('.') && !seg.starts_with('.')) continue;
+        std::error_code ec2;
+        const bool isDir = e.is_directory(ec2);
+        if (isDir) {
+            CMakeItem it;
+            it.label = name + "/";
+            it.insert = name + "/";
+            it.kind = 19;
+            const bool hasLists = fs::exists(e.path() / "CMakeLists.txt", ec2);
+            it.detail = cmd == "add_subdirectory" && hasLists ? "folder with CMakeLists.txt" : "folder";
+            it.sort = (cmd == "add_subdirectory" && hasLists ? "0" : "1") + name;
+            res.items.push_back(std::move(it));
+            continue;
+        }
+        if (dirsOnly) continue;
+        const std::string x = ext(e.path());
+        if (sourcesOnly && !sourceExt.contains(x)) continue;
+        if (cmakeOnly && x != ".cmake" && name != "CMakeLists.txt") continue;
+        CMakeItem it;
+        it.label = name;
+        it.insert = name;
+        it.kind = 17;
+        std::error_code ec3;
+        const auto size = e.file_size(ec3);
+        it.detail = ec3 ? "file" : size < 1024 ? std::format("{} B", size) : size < 1024 * 1024 ? std::format("{} KB", size / 1024) : std::format("{:.1f} MB", static_cast<double>(size) / 1048576.0);
+        it.sort = "2" + name;
+        res.items.push_back(std::move(it));
+    }
+    return res;
+}
+
+}  // namespace ide

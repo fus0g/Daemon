@@ -125,6 +125,7 @@ private:
         const Document* owner = nullptr;   // the document (or notebook cell) the popup belongs to
         bool incomplete = false;  // the server cut the list: typing more asks again instead of filtering
         bool member = false;      // after . -> : the server's order is kept, kinds are not regrouped
+        bool path = false;        // file / folder names: . - + ~ @ belong to the word
     };
     // Signature help: which parameter you are typing, shown above the call while the cursor is inside it.
     struct Signature {
@@ -667,11 +668,11 @@ private:
 
     void requestCompletion(int triggerKind);
 
-    void showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol = -1, bool incomplete = false);
+    void showCompletion(std::vector<LspCompletion> items, Pos at, int anchorCol = -1, bool incomplete = false, bool pathMode = false);
     static int kindTier(int kind);
 
     // CMake files: completion is computed locally from the installed cmake's own name lists.
-    void requestCMakeCompletion();
+    void requestCMakeCompletion(bool pathOnly = false);
 
     void refilterCompletion();
 
