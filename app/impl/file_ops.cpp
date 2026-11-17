@@ -243,6 +243,7 @@ void App::openMenu(float x, float y, const std::string* path) {
         add("Move to Trash", "Del", Act::Trash);
         add("Delete Permanently", "Shift+Del", Act::DeleteForever);
         sep();
+        if (isDir) add("Open in New Window", "", Act::NewWindow);
         add("Copy Path", "", Act::CopyPath);
         add("Copy Relative Path", "", Act::CopyRelPath);
         sep();
@@ -316,6 +317,7 @@ void App::runAct(Act a, const std::string& target) {
         case Act::CopyPath: win_.setClipboard(target); setMessage("Copied path", false, 1.5f); break;
         case Act::CopyRelPath: win_.setClipboard(relToRoot(t)); setMessage("Copied relative path", false, 1.5f); break;
         case Act::Refresh: explorer_.refresh(); setMessage("Refreshed", false, 1.5f); break;
+        case Act::NewWindow: openNewWindow(target); break;
         case Act::Sep: case Act::Custom: break;
     }
     dirty_ = true;
@@ -461,6 +463,10 @@ void App::editorKeyImpl(const KeyEvent& k) {
     if (k.key == Key::F9 && shift) { cmakeBuild(true, true); scrollToCursor_ = false; return; }
     if (k.key == Key::F2 && ctrl) { cmakeStop(); scrollToCursor_ = false; return; }
 
+    if (ctrl && alt && k.key == Key::Char && !shift) {   // Ctrl+Alt+N: a new window, Ctrl+Alt+O: open a folder in a new window
+        if (k.ch == 'n') { openNewWindow(); scrollToCursor_ = false; return; }
+        if (k.ch == 'o') { pickNewWindow_ = true; browseOpen(false); scrollToCursor_ = false; return; }
+    }
     if (ctrl && !alt && k.key == Key::Char) {
         switch (k.ch) {
             case 'r': if (shift) cmakeReload(); else openPrompt(PromptKind::Replace); scrollToCursor_ = false; break;

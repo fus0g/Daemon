@@ -28,6 +28,9 @@ struct ProcessOptions {
                                   // output, echoed input) and stdin / stdout / stderr are all the terminal
 };
 
+// Starts a program that outlives us and is not our child (a second Daemon window): double fork, stdio to /dev/null.
+bool spawnDetached(const std::vector<std::string>& argv, const std::string& cwd = {});
+
 // Finds an executable by name on $PATH (or checks a path with a slash).
 std::optional<std::string> findExecutable(const std::string& name);
 

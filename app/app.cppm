@@ -91,7 +91,7 @@ private:
     struct Node;
     enum class Zone;
     enum class Act { Open, NewFile, NewFolder, Rename, Trash, DeleteForever, Copy, Cut, Paste, Duplicate, CopyPath,
-                     CopyRelPath, Refresh, Sep, Custom };
+                     CopyRelPath, Refresh, NewWindow, Sep, Custom };
     struct MenuItem {
         std::string label, hint;
         Act act;
@@ -1530,7 +1530,7 @@ private:
         kDlgNew = 1, kDlgOpen = 2, kDlgRecent = 100, kDlgRecentDel = 200, kDlgTmpl = 300,
         kDlgName = 400, kDlgLoc = 401, kDlgBrowseBtn = 402, kDlgStd = 410, kDlgGit = 420, kDlgCreate = 430, kDlgCancel = 431,
         kDlgBm = 500, kDlgPath = 550, kDlgUp = 551, kDlgHidden = 552, kDlgOk = 553, kDlgBrowseCancel = 554, kDlgEntry = 600,
-        kDlgSettings = 3, kDlgSetupCopy = 700, kDlgSetupRun = 701, kDlgSetupRecheck = 702, kDlgSetupDl = 710,   // the last four: the Tools section of the settings
+        kDlgSettings = 3, kDlgNewWindow = 4, kDlgSetupCopy = 700, kDlgSetupRun = 701, kDlgSetupRecheck = 702, kDlgSetupDl = 710,   // the last four: the Tools section of the settings
     };
     enum class DlgKind { None, Welcome, NewProject, Browse, Settings };
     struct BrowseEntry { std::string name; bool cmake = false; };
@@ -1564,7 +1564,7 @@ private:
 
     static std::string homeDir() { const char* h = std::getenv("HOME"); return h && *h ? h : "/"; }
 
-    void dlgClose() { dlg_.kind = DlgKind::None; dlgHits_.clear(); dirty_ = true; }
+    void dlgClose() { dlg_.kind = DlgKind::None; dlgHits_.clear(); pickNewWindow_ = false; dirty_ = true; }
     // Toolchain check (app/impl/setup.cpp): what is missing, and how to install it on this distribution.
     std::vector<toolchain::Status> tools_;
     toolchain::Distro distro_;
@@ -1578,6 +1578,8 @@ private:
     void setupOpen() { settingsOpen("Tools"); }   // the toolchain check lives in Settings > Tools
     float drawToolsBody(float x, float y, float w, float top, float bottom);
     void setupClick(int id);
+    bool pickNewWindow_ = false;              // the folder picked next opens in a new window
+    void openNewWindow(const std::string& folder = {});   // another Daemon process
     void welcomeOpen() { dlg_ = {}; dlg_.kind = DlgKind::Welcome; dirty_ = true; }
 
     std::string uniqueProjectName(const std::string& parent, const std::string& base);

@@ -30,6 +30,7 @@ expansion, hover values, Debug console, floating control bar.
 | keys | action |
 |---|---|
 | Ctrl+, | settings |
+| Ctrl+Alt+N / Ctrl+Alt+O | new window / open a folder in a new window |
 | Ctrl+O / Ctrl+Shift+O | open file / open folder |
 | Ctrl+N, Ctrl+S, Ctrl+Shift+S, Ctrl+W, Ctrl+Q | new, save, save as, close tab, quit |
 | Ctrl+B / Ctrl+Shift+E | toggle sidebar / focus explorer (then arrows, Enter, F2, Del, Ctrl+C/X/V, F5) |

@@ -49,6 +49,7 @@ extern "C" int daemon_main(int argc, char** argv) {
             const std::string in = argv[++i];
             return runNotebook(in, i + 1 < argc && argv[i + 1][0] != '-' ? std::string(argv[++i]) : std::string());
         }
+        if (a == "--new-window") { opts.newWindow = true; continue; }
         if (a == "--screenshot" && i + 1 < argc) { opts.screenshot = argv[++i]; continue; }
         if (a == "--keys" && i + 1 < argc) { opts.keys = argv[++i]; continue; }
         if (a == "--font-size" && i + 1 < argc) { opts.fontSize = std::stof(argv[++i]); continue; }

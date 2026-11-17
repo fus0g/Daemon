@@ -11,6 +11,7 @@ struct Options {
     std::string keys;         // scripted input, e.g. "ctrl+f|t:foo|enter" (for tests and screenshots)
     int screenshotFrames = 4;
     float fontSize = 14;      // code font, logical pixels (em size)
+    bool newWindow = false;   // --new-window: a fresh window, not the last project
 };
 
 // Release version ("0.1.0") and the full build identifier ("0.1.0+3f2a1bc" for development builds).

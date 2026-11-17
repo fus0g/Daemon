@@ -96,7 +96,7 @@ void App::browseOpen(bool forLocation) {
         return [this, chosen, forLocation, failed] {
             pickerBusy_ = false;
             if (failed) { browseOpenBuiltin(forLocation); return; }
-            if (chosen.empty()) return;   // cancelled
+            if (chosen.empty()) { pickNewWindow_ = false; return; }   // cancelled
             if (forLocation) {
                 if (dlg_.kind != DlgKind::NewProject) newProjectOpen();
                 dlg_.location = {chosen, chosen.size()};
@@ -148,9 +148,20 @@ void App::browseConfirm() {
     }
 }
 
+void App::openNewWindow(const std::string& folder) {
+    std::error_code ec;
+    const fs::path exe = fs::read_symlink("/proc/self/exe", ec);
+    if (ec) { setMessage("Cannot find the Daemon program to start a new window", true, 4); return; }
+    std::vector<std::string> argv = {exe.string(), "--new-window"};
+    if (!folder.empty()) argv.push_back(folder);
+    if (!spawnDetached(argv)) { setMessage("Could not start a new window", true, 4); return; }
+    setMessage(folder.empty() ? "New window opened" : "Opening " + fs::path(folder).filename().string() + " in a new window", false, 2.5f);
+}
+
 void App::openProject(const std::string& path) {
     std::error_code ec;
     if (!fs::is_directory(path, ec)) { setMessage("Not a folder: " + path, true, 3); return; }
+    if (pickNewWindow_) { pickNewWindow_ = false; dlgClose(); openNewWindow(path); return; }
     dlgClose();
     openFolder(path);
 }
@@ -299,6 +310,7 @@ void App::dlgClick(Button b, float x, float y) {
     if (id == kDlgNew) { newProjectOpen(); return; }
     if (id == kDlgOpen) { browseOpen(false); return; }
     if (id == kDlgSettings) { settingsOpen(); return; }
+    if (id == kDlgNewWindow) { dlgClose(); openNewWindow(); return; }
     if (id >= kDlgRecentDel && id < kDlgRecentDel + 100) {
         const auto idx = static_cast<std::size_t>(id - kDlgRecentDel);
         if (idx < dlgRecentShown_.size()) { std::erase(state_.recent, dlgRecentShown_[idx]); saveState(state_); }
@@ -306,7 +318,7 @@ void App::dlgClick(Button b, float x, float y) {
     }
     if (id >= kDlgRecent && id < kDlgRecent + 100) {
         const auto idx = static_cast<std::size_t>(id - kDlgRecent);
-        if (idx < dlgRecentShown_.size()) openProject(dlgRecentShown_[idx]);
+        if (idx < dlgRecentShown_.size()) { if (win_.shiftDown()) pickNewWindow_ = true; openProject(dlgRecentShown_[idx]); }   // Shift+click: in a new window
         return;
     }
     if (id >= kDlgTmpl && id < kDlgTmpl + 50) {
@@ -452,6 +464,8 @@ void App::drawWelcome(const Rect& r) {
         const bool bad = std::ranges::any_of(tools_, [](const auto& t) { return !t.ok(); });
         welcomeAction({lx, by, cw0, rowH}, "Settings", bad ? "tools missing" : "Ctrl+,", kDlgSettings, 0xF08BB, false);
     }
+    by += rowH + 10 * s;
+    welcomeAction({lx, by, cw0, rowH}, "New Window", "Ctrl+Alt+N", kDlgNewWindow, 0xF08C6, false);
 
     // Recent projects.
     const float rx = r.x + sideW + 40 * s, rw = r.right() - rx - 30 * s;

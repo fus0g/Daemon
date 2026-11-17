@@ -9,7 +9,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_CXX_MODULE_STD ON)
 
-project(daemon VERSION 0.11.0 LANGUAGES C CXX)
+project(daemon VERSION 0.12.0 LANGUAGES C CXX)
 
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
   message(FATAL_ERROR "Daemon is Linux-only (Wayland + Vulkan).")

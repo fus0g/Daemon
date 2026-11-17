@@ -73,7 +73,7 @@ std::expected<void, std::string> App::init() {
     std::error_code sec;
     if (opt_.files.size() > 1 || (opt_.files.size() == 1 && !fs::is_directory(expandPath(opt_.files[0]), sec))) sessionOn_ = false;
     for (const auto& f : opt_.files) openFile(f);
-    if (opt_.files.empty() && sessionOn_ && cfgB("general.restoreLastProject") && !state_.lastProject.empty() && fs::is_directory(state_.lastProject, sec))
+    if (opt_.files.empty() && !opt_.newWindow && sessionOn_ && cfgB("general.restoreLastProject") && !state_.lastProject.empty() && fs::is_directory(state_.lastProject, sec))
         openFolder(state_.lastProject);   // plain launch: continue where the last session ended
     if (docs_.empty()) newDoc();
     if (opt_.files.empty() && opt_.screenshot.empty() && !explorer_.isOpen()) welcomeOpen();   // nothing to open: show the project chooser

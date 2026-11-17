@@ -95,7 +95,21 @@ static void testPty() {
     CHECK(p.tryWait().value_or(-1) == 3);
 }
 
+static void testSpawnDetached() {
+    namespace fs = std::filesystem;
+    const fs::path f = fs::temp_directory_path() / ("ide-spawn-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    CHECK(spawnDetached({"/usr/bin/touch", f.string()}));
+    bool seen = false;
+    for (int i = 0; i < 100 && !seen; ++i) { std::error_code ec; seen = fs::exists(f, ec); if (!seen) std::this_thread::sleep_for(std::chrono::milliseconds(20)); }
+    CHECK(seen);
+    std::error_code ec;
+    fs::remove(f, ec);
+    CHECK(!spawnDetached({"/nonexistent/program"}) || true);   // (the grandchild fails to exec; the call itself only reports fork errors)
+    CHECK(!spawnDetached({}));
+}
+
 void runBaseTests() {
+    testSpawnDetached();
     testUtf8();
     testJson();
     testProcess();

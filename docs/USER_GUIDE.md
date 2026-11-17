@@ -197,6 +197,12 @@ With no arguments Daemon starts on a welcome screen (also reachable by clicking 
   "CMake" badge on folders that contain a `CMakeLists.txt`.
 - **Recent projects** are kept in `$XDG_CONFIG_HOME/daemon/state.json` (default `~/.config/daemon/state.json`).
 
+### New windows
+`Ctrl+Alt+N` (File > New Window) opens another Daemon window; `Ctrl+Alt+O` (File > Open Folder in New Window...) opens a chosen folder in
+a new one; the explorer's right-click menu has *Open in New Window* for folders and Shift+click on a recent project does the same.
+Each window is a separate program, so they share the settings file and the recent list but not their tabs. Opening the same project in
+two windows works, but both write that project's saved session, so the one closed last wins.
+
 ### Sessions
 
 Daemon remembers, per project, which files are open, how the editor is split, which tab is active and where the cursor and

@@ -198,6 +198,28 @@ std::optional<int> Process::tryWait() {
     return std::nullopt;
 }
 
+bool spawnDetached(const std::vector<std::string>& argv, const std::string& cwd) {
+    if (argv.empty()) return false;
+    std::vector<char*> args;
+    for (const auto& a : argv) args.push_back(const_cast<char*>(a.c_str()));
+    args.push_back(nullptr);
+    const pid_t first = ::fork();
+    if (first < 0) return false;
+    if (first == 0) {
+        if (::fork() != 0) ::_exit(0);   // the grandchild is adopted by init: no zombie, no tie to us
+        ::setsid();
+        const int devnull = ::open("/dev/null", O_RDWR);
+        if (devnull >= 0) { ::dup2(devnull, 0); ::dup2(devnull, 1); ::dup2(devnull, 2); }
+        for (int fd = 3; fd < 256; ++fd) ::close(fd);
+        if (!cwd.empty() && ::chdir(cwd.c_str()) != 0) ::_exit(126);
+        ::execv(argv[0].c_str(), args.data());
+        ::_exit(127);
+    }
+    int st = 0;
+    ::waitpid(first, &st, 0);
+    return WIFEXITED(st) && WEXITSTATUS(st) == 0;
+}
+
 auto Process::runCapture(const ProcessOptions& opts, int timeoutMs, const std::atomic<bool>* cancel) -> Result {
     Result res;
     Process p;

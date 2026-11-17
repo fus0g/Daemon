@@ -5,6 +5,11 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-17
+
+### Added
+- New windows: **File > New Window** (Ctrl+Alt+N, also on the welcome screen) starts another Daemon with an empty window; **File > Open Folder in New Window...** (Ctrl+Alt+O) asks for a folder and opens it in its own window; right-click a folder in the explorer > **Open in New Window**; Shift+click a recent project on the welcome screen. Every window is its own process (`daemon --new-window [folder]`), so a crash or a long build in one does not touch the others. A new window does not reopen the last project.
+
 ## [0.11.0] - 2026-11-17
 
 ### Added
@@ -152,7 +157,8 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.11.0...HEAD
+[Unreleased]: https://example.invalid/compare/v0.12.0...HEAD
+[0.12.0]: https://example.invalid/compare/v0.11.0...v0.12.0
 [0.11.0]: https://example.invalid/compare/v0.10.0...v0.11.0
 [0.10.0]: https://example.invalid/compare/v0.9.1...v0.10.0
 [0.9.1]: https://example.invalid/compare/v0.9.0...v0.9.1
