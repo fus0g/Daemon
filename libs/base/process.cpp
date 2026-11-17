@@ -2,6 +2,7 @@
 // process - implementation of module daemon.base.process.
 module;
 #include <fcntl.h>
+#include <sys/resource.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -102,6 +103,7 @@ std::expected<void, std::string> Process::start(const ProcessOptions& o) {
     }
     if (pid == 0) {  // child
         ::setsid();  // own process group: lets us signal the whole tree
+        if (o.niceLevel > 0) ::setpriority(PRIO_PROCESS, 0, o.niceLevel);
         int devnull = ::open("/dev/null", O_RDWR);
         ::dup2(o.pipeStdin ? in[0] : devnull, 0);
         ::dup2(out[1], 1);
@@ -165,7 +167,7 @@ long Process::read(std::string& out) {
     }
 }
 
-bool Process::write(std::string_view data) {
+bool Process::write(std::string_view data, int stallMs) {
     std::size_t off = 0;
     while (off < data.size()) {
         if (inFd_ < 0) return false;
@@ -174,7 +176,7 @@ bool Process::write(std::string_view data) {
         if (n < 0 && errno == EINTR) continue;
         if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
             pollfd p{inFd_, POLLOUT, 0};
-            if (::poll(&p, 1, 2000) <= 0) return false;
+            if (::poll(&p, 1, stallMs) <= 0) return false;
             continue;
         }
         return false;

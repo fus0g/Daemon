@@ -971,6 +971,7 @@ bool Session::Impl::compile(const std::string& unitName, const std::string& sour
     if (!writeFile(src, source)) { diagnostics = "cannot write " + src.string(); return false; }
     ProcessOptions o;
     o.cwd = dir;
+    o.niceLevel = settings::current().b("performance.lowPriorityBuilds") ? 10 : 0;
     o.argv = {cxx};
     for (const auto& f : baseFlags()) o.argv.push_back(f);
     if (shared) {
@@ -1043,6 +1044,7 @@ bool Session::Impl::prepare(int cell, std::string& error) {
         note(cell, "Building the std module (first run, about 5 s)...");
         ProcessOptions o;
         o.cwd = dir;
+        o.niceLevel = settings::current().b("performance.lowPriorityBuilds") ? 10 : 0;
         o.argv = {cxx};
         for (const auto& f : baseFlags()) o.argv.push_back(f);
         for (const char* f : {"-fsearch-include-path", "-fmodule-only", "-c", "bits/std.cc"}) o.argv.push_back(f);
@@ -1052,6 +1054,7 @@ bool Session::Impl::prepare(int cell, std::string& error) {
         if (!compile("nb_support", std::string(kSupportSource), false, diag)) { error = "could not build the notebook support module:\n" + diag; return false; }
         ProcessOptions k;
         k.cwd = dir;
+        k.niceLevel = settings::current().b("performance.lowPriorityBuilds") ? 10 : 0;
         k.argv = {cxx, "-O1", "-std=c++17", "-o", "nb_kernel", "nb_kernel.cpp", "-ldl"};
         auto kr = Process::runCapture(k, 120000, &aborting);
         if (kr.exitCode != 0) { error = "could not build the notebook runner:\n" + kr.output; return false; }

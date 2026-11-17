@@ -456,6 +456,7 @@ std::optional<Clock::time_point> App::nextWake() const {
     if (hover_.pending) consider(hover_.due);
     if (auto ow = outlineWake()) consider(*ow);
     if (auto gw = glslWake()) consider(*gw);
+    if (compInFlight_ && compLocalDue_ != Clock::time_point{}) consider(compLocalDue_);
     consider(nextSettingsCheck_ > Clock::now() ? nextSettingsCheck_ : Clock::now() + std::chrono::milliseconds(1500));
     if (bar_.shown && !menu_.open) consider(bar_.lastUse + std::chrono::milliseconds(2250));
     return t;
@@ -539,6 +540,7 @@ void App::update(Clock::time_point now, float dt) {
     settingsPoll(now);
     outlineTick(now);
     glslTick(now);
+    if (compInFlight_ && compLocalDue_ != Clock::time_point{} && now >= compLocalDue_) { compLocalDue_ = {}; showLocalCompletion(); }
     pollTasks();
     if (scriptPos_ < script_.size()) stepScript();
     lspSync(now);

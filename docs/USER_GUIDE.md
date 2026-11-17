@@ -136,7 +136,8 @@ keys are left alone. A coloured label means the value is not the default; the ar
 | Appearance | interface font size, animations, start maximized (restart) |
 | General | reopen the last project, restore open tabs |
 | Git | change markers, inline blame |
-| C/C++ intelligence | use clangd, clangd program, background indexing |
+| C/C++ intelligence | use clangd, clangd program, clang-tidy checks (off), background indexing |
+| Performance | build at low priority |
 | Terminal | shell |
 | Notebooks | compiler, extra compiler flags |
 | Shaders | error checking on/off, target API (Auto / Vulkan / OpenGL) |

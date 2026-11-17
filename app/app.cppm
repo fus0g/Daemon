@@ -126,6 +126,7 @@ private:
         bool incomplete = false;  // the server cut the list: typing more asks again instead of filtering
         bool member = false;      // after . -> : the server's order is kept, kinds are not regrouped
         bool path = false;        // file / folder names: . - + ~ @ belong to the word
+        bool local = false;       // placeholder list of words from the file, replaced when clangd answers
     };
     // Signature help: which parameter you are typing, shown above the call while the cursor is inside it.
     struct Signature {
@@ -184,6 +185,18 @@ private:
     bool glslGoto();
     void glslTick(Clock::time_point now);
     std::optional<Clock::time_point> glslWake() const;
+    // Completion requests are not cancelled by the next keystroke (typing fast would then never get an answer): one is in flight
+    // at a time, what is typed meanwhile is remembered, and the answer is filtered with what has been typed by then.
+    std::uint64_t lspSig_ = 0;                  // sum of the document versions at the last look (did anything change?)
+    Clock::time_point lspLastEdit_{}, lspDirtySince_{};
+    bool compInFlight_ = false;
+    int compPending_ = 0;                       // trigger kind of a request asked for while one was in flight (0: none)
+    std::uint64_t compEpoch_ = 0;               // bumped whenever the popup is dismissed: older answers are dropped
+    Clock::time_point compSentAt_{}, compLocalDue_{};
+    struct CompCacheEntry { std::string prefix; std::vector<LspCompletion> items; };
+    std::unordered_map<std::string, CompCacheEntry> compCache_;   // last answer per file and scope (`std::`, or none): shown at once next time
+    std::string compScopeKey(const Document& d, Pos at, std::string& prefix, bool& member) const;
+    void showLocalCompletion();                 // words of the file, shown at once while clangd is still thinking
     bool compStale_ = false;      // the last list was incomplete: the next identifier character asks the server again
     std::unordered_map<std::string, int> compUsed_;   // accepted completions this session: they come first next time
     struct Hover {
@@ -664,7 +677,7 @@ private:
 
     static int matchScore(std::string_view prefix, std::string_view text);
 
-    void closeCompletion() { if (comp_.open) { comp_ = {}; dirty_ = true; } }
+    void closeCompletion() { ++compEpoch_; if (comp_.open) { comp_ = {}; dirty_ = true; } }
 
     void requestCompletion(int triggerKind);
 

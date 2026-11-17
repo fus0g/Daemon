@@ -101,12 +101,7 @@ std::expected<void, std::string> LspClient::start(std::vector<std::string> argv,
 
 void LspClient::stop() {
     if (proc_) {
-        if (ready_) {
-            // Polite shutdown; the process is killed regardless when the object goes away.
-            send(frame(json::dump(makeRequest("shutdown", json::Value(), nextId_++))));
-            send(frame(json::dump(makeNotification("exit", json::Value()))));
-        }
-        proc_->closeStdin();
+        stopWriter();   // (the server is terminated below / by the writer; there is no time for a polite shutdown)
         proc_->terminate();
         proc_.reset();
     }
@@ -119,6 +114,7 @@ void LspClient::stop() {
 
 void LspClient::pump() {
     if (!proc_) return;
+    if (wr_ && wr_->failed && state_ != State::Stopped) setState(State::Failed);
     long n = proc_->read(buffer_);
     parseBuffer();
     if (n == 0) {  // server closed its output

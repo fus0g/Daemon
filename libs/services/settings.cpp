@@ -40,6 +40,7 @@ const std::vector<Def>& defs() {
 
         v.push_back(boolean("outline.show", "Appearance", "Structure view", "List the classes, functions and headings of the current file under the file explorer.", true));
         v.push_back(integer("outline.heightPercent", "Appearance", "Structure view height", "Share of the sidebar the structure view takes (drag the divider to change it).", 38, 15, 70, "%", 5));
+        v.push_back(boolean("performance.lowPriorityBuilds", "Performance", "Build at low priority", "CMake builds, notebook cells and shader checks run with a lower priority, so typing and completion stay instant while the compiler uses every core (builds take a little longer).", true));
         v.push_back(integer("appearance.uiFontSize", "Appearance", "Interface font size", "Size of menus, tabs, the sidebar and the status bar.", 13, 10, 20, "px"));
         v.push_back(boolean("appearance.animations", "Appearance", "Animations", "Slide the panels, tabs and the menu bar instead of switching at once.", true));
         v.push_back(boolean("appearance.startMaximized", "Appearance", "Start maximized", "Open the window maximized.", true, true));
@@ -52,6 +53,7 @@ const std::vector<Def>& defs() {
 
         v.push_back(boolean("lsp.enabled", "C/C++ intelligence", "Use clangd", "Completion, diagnostics, hover and go to definition.", true));
         v.push_back(text("lsp.clangd", "C/C++ intelligence", "clangd program", "Name or path of clangd. Empty: look it up in PATH (the IDE_CLANGD variable wins)."));
+        v.push_back(boolean("lsp.clangTidy", "C/C++ intelligence", "Run clang-tidy checks", "Extra warnings from clang-tidy. They run after every parse and delay completion, so they are off by default.", false));
         v.push_back(boolean("lsp.backgroundIndex", "C/C++ intelligence", "Index the project in the background", "Faster navigation and references across files, at the cost of some CPU.", true));
 
         v.push_back(boolean("glsl.diagnostics", "Shaders", "Check shaders for errors", "Compile the shader with glslc (or glslangValidator) while you type and mark the errors. Needs one of them installed.", true));

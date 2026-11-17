@@ -164,9 +164,48 @@ private:
 
     static bool trace() { static const bool on = std::getenv("IDE_LSP_TRACE") != nullptr; return on; }
 
+    // Messages go to the server from a writer thread: a big didChange to a busy server (slow CPU, parsing) fills the pipe and must
+    // never stall the UI thread.
     void send(const std::string& framed) {
         if (trace()) std::println(std::cerr, ">> {}", framed.substr(framed.find("\r\n\r\n") + 4, 240));
-        if (proc_ && !proc_->write(framed)) setState(State::Failed);
+        if (!proc_) return;
+        if (!wr_) startWriter();
+        {
+            std::lock_guard lk(wr_->m);
+            wr_->q.push_back(framed);
+        }
+        wr_->cv.notify_one();
+    }
+    struct Writer {
+        std::mutex m;
+        std::condition_variable cv;
+        std::deque<std::string> q;
+        bool stop = false;
+        std::atomic<bool> failed{false};
+    };
+    void startWriter() {
+        wr_ = std::make_shared<Writer>();
+        wthread_ = std::thread([w = wr_, p = proc_.get()] {
+            std::unique_lock lk(w->m);
+            while (true) {
+                w->cv.wait(lk, [&] { return w->stop || !w->q.empty(); });
+                if (w->stop) return;
+                std::string msg = std::move(w->q.front());
+                w->q.pop_front();
+                lk.unlock();
+                const bool ok = p->write(msg, 30000);
+                lk.lock();
+                if (!ok) { w->failed = true; return; }
+            }
+        });
+    }
+    void stopWriter() {
+        if (!wr_) return;
+        { std::lock_guard lk(wr_->m); wr_->stop = true; wr_->q.clear(); }
+        wr_->cv.notify_all();
+        if (proc_) proc_->terminate();   // a write that waits for a busy server ends when the server is gone
+        if (wthread_.joinable()) wthread_.join();
+        wr_.reset();
     }
 
     // Messages other than initialize wait until the server answered it.
@@ -194,6 +233,8 @@ private:
     }
 
     std::unique_ptr<Process> proc_;
+    std::shared_ptr<Writer> wr_;
+    std::thread wthread_;
     std::string root_, buffer_;
     std::vector<std::string> queued_;
     std::unordered_map<int, std::function<void(const json::Value&, bool)>> pending_;

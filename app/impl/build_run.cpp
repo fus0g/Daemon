@@ -78,6 +78,7 @@ void App::startBuildProc(TaskKind kind, std::vector<std::string> argv, const std
     ProcessOptions o;
     o.argv = std::move(argv);
     o.cwd = cmakeRoot_.string();
+    o.niceLevel = cfgB("performance.lowPriorityBuilds") ? 10 : 0;   // the compiler must not make typing lag
     std::string cmd;
     for (const auto& a : o.argv) cmd += (cmd.empty() ? "" : " ") + a;
     buildOut_.push_back({"$ " + cmd, 4, -1});

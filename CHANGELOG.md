@@ -5,6 +5,14 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-11-17
+
+### Changed
+- Completion no longer loses keystrokes: a request used to be cancelled by the next key, so typing fast (or a slow CPU in power-saving mode) meant the answer never arrived. Now one request is in flight at a time, what you type meanwhile is remembered, and the answer is filtered with the longer text; a new request is made only when the list was cut off or the scope changed.
+- Completion appears at once: the last answer for the same scope (`std::`, or a plain name) is shown immediately and replaced when clangd answers; without one, words from the file appear after 35 ms.
+- The language server no longer waits behind other work: text goes to clangd from a writer thread (a big file could stall typing when clangd was busy), clangd runs at normal priority instead of nice 10 (only its background indexing is idle priority), keeps its preamble in memory, and no longer runs clang-tidy checks after every parse (Settings > C/C++ intelligence > Run clang-tidy checks turns them back on). Changes are sent after a pause in typing instead of every 120 ms.
+- CMake builds, notebook cells and shader checks run at lower priority (Settings > Performance > Build at low priority), so the editor stays responsive while the compiler uses every core. Builds may take a little longer.
+
 ## [0.9.0] - 2026-11-17
 
 ### Added
@@ -134,7 +142,8 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.9.0...HEAD
+[Unreleased]: https://example.invalid/compare/v0.9.1...HEAD
+[0.9.1]: https://example.invalid/compare/v0.9.0...v0.9.1
 [0.9.0]: https://example.invalid/compare/v0.8.0...v0.9.0
 [0.8.0]: https://example.invalid/compare/v0.7.0...v0.8.0
 [0.7.0]: https://example.invalid/compare/v0.6.1...v0.7.0

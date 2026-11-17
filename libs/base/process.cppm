@@ -23,6 +23,7 @@ struct ProcessOptions {
     bool pipeStdin = false;       // give the child a pipe on stdin (otherwise /dev/null)
     bool mergeStderr = true;      // stderr shares the stdout pipe (otherwise stderr is discarded)
     std::vector<std::pair<std::string, std::string>> env;   // variables to set (the rest is inherited)
+    int niceLevel = 0;            // > 0: run at lower priority (the editor stays responsive while a compiler uses every core)
     bool usePty = false;          // run on a pseudo-terminal: the program behaves as in a terminal (prompts, line-buffered
                                   // output, echoed input) and stdin / stdout / stderr are all the terminal
 };
@@ -64,7 +65,7 @@ public:
     // Reads whatever is available. Returns the byte count, 0 at end of stream, -1 if nothing is ready.
     long read(std::string& out);
 
-    bool write(std::string_view data);
+    bool write(std::string_view data, int stallMs = 2000);   // gives up when the reader takes nothing for stallMs
 
     void closeStdin() {
         if (inFd_ >= 0) { ::close(inFd_); inFd_ = -1; }

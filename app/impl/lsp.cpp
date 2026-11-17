@@ -69,11 +69,11 @@ void App::startLsp() {
     std::vector<std::string> argv = {*exe, "--background-index", "--header-insertion=never", "--log=error",
                                      "--experimental-modules-support",
                                      "--completion-parse=always",  // real AST completions, never the text-based fallback
-                                     // resource limits: clangd defaults to every core and GBs of RAM
-                                     "-j=2", "--limit-results=1000", "--background-index-priority=low", "--pch-storage=disk", "--malloc-trim"};
+                                     // Foreground work (completion, diagnostics) runs at normal priority; only the background indexing is
+                                     // idle priority. The preamble stays in memory: reading it back from disk costs on every keystroke.
+                                     "-j=2", "--limit-results=1000", "--background-index-priority=low", "--pch-storage=memory", "--malloc-trim"};
+    if (!cfgB("lsp.clangTidy")) argv.push_back("--clang-tidy=false");   // tidy checks run after every parse and make completion wait behind them
     if (const char* o = std::getenv("IDE_BGINDEX"); (o && *o == '0') || (!o && !cfgB("lsp.backgroundIndex"))) std::erase(argv, std::string("--background-index"));
-    // run the language server at low CPU priority so typing and the UI stay smooth and the machine stays cool
-    argv.insert(argv.begin(), {"nice", "-n", "10"});
     clangdModules_ = false;
     if (cmakeOpen_ && fs::exists(compileCommands(profile()))) {
         // GCC-style module builds get a Clang-flavoured database so clangd can build BMIs (import std; import foo;).
@@ -355,11 +355,19 @@ void App::flushDoc(Document& d) {
 void App::lspSync(Clock::time_point now) {
     if (!lsp_) { lspFlushAt_.reset(); return; }
     const bool pending = std::ranges::any_of(docs_, [](const auto& d) { return d->lspOpen && d->buf.version() != d->lspSent; });
-    if (!pending) { lspFlushAt_.reset(); return; }
-    if (!lspFlushAt_) lspFlushAt_ = now + std::chrono::milliseconds(120);
-    if (now >= *lspFlushAt_) {
+    if (!pending) { lspFlushAt_.reset(); lspDirtySince_ = {}; return; }
+    // Wait for a pause in typing (each didChange makes the server parse the file again, and a parse in progress delays the next
+    // completion), but never longer than a second.
+    std::uint64_t sig = 0;
+    for (const auto& d : docs_) sig += d->buf.version();
+    if (lspDirtySince_ == Clock::time_point{}) lspDirtySince_ = now;
+    if (sig != lspSig_) { lspSig_ = sig; lspLastEdit_ = now; }
+    const auto due = std::min(lspLastEdit_ + std::chrono::milliseconds(180), lspDirtySince_ + std::chrono::milliseconds(1000));
+    lspFlushAt_ = due;
+    if (now >= due) {
         for (auto& d : docs_) flushDoc(*d);
         lspFlushAt_.reset();
+        lspDirtySince_ = {};
     }
 }
 
@@ -410,15 +418,40 @@ void App::requestCompletion(int triggerKind) {
     Document& d = doc();
     if (isGlslDoc(d) || glslViewAt(d, d.cursor)) { glslComplete(); return; }
     if (isCppDoc(d) && completeImport(d)) return;
+    const auto now = Clock::now();
+    if (compInFlight_ && now - compSentAt_ < std::chrono::milliseconds(2500)) { compPending_ = std::max(compPending_, triggerKind); return; }   // see compInFlight_ (no text is sent either)
     auto target = lspTarget(d, d.cursor);   // an ordinary C++ file, or a cell of a notebook (mapped into its virtual file)
     if (!target) return;
+    if (compInFlight_) target->c->cancel(compReq_);   // clangd has not answered for seconds: ask afresh
     NbView* nbv = nbOfCell(d);
     const Pos at = d.cursor;
     const Document* dp = &d;
-    const std::uint64_t seq = ++compSeq_;
-    target->c->cancel(compReq_);  // a newer keystroke supersedes the pending request
-    compReq_ = target->c->completion(target->path, target->line, target->col, triggerKind, [this, seq, at, dp, nbv](std::vector<LspCompletion> items, bool incomplete) {
-        if (seq != compSeq_ || docs_.empty()) return;
+    const std::uint64_t epoch = compEpoch_;
+    compInFlight_ = true;
+    compPending_ = 0;
+    compSentAt_ = now;
+    compLocalDue_ = nbv ? Clock::time_point{} : now + std::chrono::milliseconds(35);
+    std::string reqPrefix;
+    bool reqMember = false;
+    const std::string reqKey = nbv ? std::string() : compScopeKey(d, at, reqPrefix, reqMember);
+    if (!nbv && !reqMember && !comp_.open) {   // the last answer for this scope, at once; clangd's replaces it
+        if (auto it = compCache_.find(reqKey); it != compCache_.end() && !it->second.items.empty() &&
+            std::ranges::equal(it->second.prefix, reqPrefix.substr(0, it->second.prefix.size()), [](char x, char y) { return std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y)); }) &&
+            reqPrefix.size() >= it->second.prefix.size()) {
+            showCompletion(it->second.items, at, -1, false);
+            if (comp_.open) comp_.local = true;
+        }
+    }
+    compReq_ = target->c->completion(target->path, target->line, target->col, triggerKind, [this, epoch, at, dp, nbv, now, reqKey, reqPrefix, reqMember](std::vector<LspCompletion> items, bool incomplete) {
+        compInFlight_ = false;
+        compLocalDue_ = {};
+        if (std::getenv("IDE_LSP_TRACE")) std::println(std::cerr, "completion: {} items in {} ms", items.size(), std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - now).count());
+        if (docs_.empty()) return;
+        if (!nbv && !reqMember && !items.empty()) {   // remembered for the next time this scope is typed
+            if (compCache_.size() > 32) compCache_.clear();
+            compCache_[reqKey] = {reqPrefix, items};
+        }
+        const int pending = std::exchange(compPending_, 0);
         if (nbv && items.empty() && !nbv->lsp.warm && nbv->lsp.retries < 40) {   // clangd answers nothing while it still parses: ask again shortly
             ++nbv->lsp.retries;
             nbv->lsp.retryAt = Clock::now() + std::chrono::milliseconds(400);
@@ -436,9 +469,75 @@ void App::requestCompletion(int triggerKind) {
         const std::string& ln = d.buf.line(at.line);
         int a = at.col;
         while (a > 0 && identChar(ln[static_cast<std::size_t>(a - 1)])) --a;
-        if (d.cursor.line != at.line || d.cursor.col < a) return;  // cursor moved away meanwhile
-        showCompletion(std::move(items), at, -1, incomplete);
+        const bool sameWord = d.cursor.line == at.line && d.cursor.col >= a && epoch == compEpoch_;
+        bool again = pending != 0;   // something was typed while waiting: is this answer still what is needed?
+        if (sameWord) {
+            // typed past the point of the request inside the same identifier: the list is filtered with the longer prefix
+            const bool typedAhead = d.cursor.col > at.col;
+            showCompletion(std::move(items), at, -1, incomplete);
+            if (comp_.open && !(incomplete && typedAhead) && pending != 2) again = false;
+        } else if (!pending) return;   // the cursor moved away and nothing new was asked for
+        if (again) requestCompletion(pending ? pending : 3);
     });
+}
+
+// The scope the identifier at `at` is written in: "path|std::" for `std::vec`, "path|" for a plain name. `member` is set after . and ->
+// (those lists depend on the object and are not cached).
+std::string App::compScopeKey(const Document& d, Pos at, std::string& prefix, bool& member) const {
+    const std::string& ln = d.buf.line(at.line);
+    int a = std::min<int>(at.col, static_cast<int>(ln.size()));
+    int e = a;
+    while (a > 0 && identChar(ln[static_cast<std::size_t>(a - 1)])) --a;
+    prefix = ln.substr(static_cast<std::size_t>(a), static_cast<std::size_t>(e - a));
+    member = a > 0 && (ln[static_cast<std::size_t>(a - 1)] == '.' || (ln[static_cast<std::size_t>(a - 1)] == '>' && a >= 2 && ln[static_cast<std::size_t>(a - 2)] == '-'));
+    int q = a;   // the qualifier: ident(::ident)*:: in front
+    while (q >= 2 && ln[static_cast<std::size_t>(q - 1)] == ':' && ln[static_cast<std::size_t>(q - 2)] == ':') {
+        q -= 2;
+        while (q > 0 && identChar(ln[static_cast<std::size_t>(q - 1)])) --q;
+    }
+    return d.path + "|" + ln.substr(static_cast<std::size_t>(q), static_cast<std::size_t>(a - q));
+}
+
+// Words of the file, as an instant placeholder while clangd is still working (replaced by its answer).
+void App::showLocalCompletion() {
+    if (docs_.empty() || comp_.open) return;
+    Document& d = doc();
+    if (!isCppDoc(d) || nbOfCell(d)) return;
+    const std::string& ln = d.buf.line(d.cursor.line);
+    int a = d.cursor.col;
+    while (a > 0 && identChar(ln[static_cast<std::size_t>(a - 1)])) --a;
+    const std::string prefix = ln.substr(static_cast<std::size_t>(a), static_cast<std::size_t>(d.cursor.col - a));
+    if (prefix.size() < 2) return;
+    if (a > 0 && (ln[static_cast<std::size_t>(a - 1)] == '.' || ln[static_cast<std::size_t>(a - 1)] == ':' || (ln[static_cast<std::size_t>(a - 1)] == '>' && a >= 2 && ln[static_cast<std::size_t>(a - 2)] == '-'))) return;   // members: only clangd knows
+    std::unordered_set<std::string> seen;
+    std::vector<LspCompletion> items;
+    auto consider = [&](const std::string& w, int kind, const char* detail) {
+        if (w == prefix || w.size() < 3 || matchScore(prefix, w) < 0 || !seen.insert(w).second) return;
+        LspCompletion c;
+        c.label = c.insertText = c.filterText = w;
+        c.sortText = w;
+        c.kind = kind;
+        c.detail = detail;
+        items.push_back(std::move(c));
+    };
+    if (d.lang) {
+        for (const auto& w : d.lang->keywords) consider(w, 14, "keyword");
+        for (const auto& w : d.lang->types) consider(w, 7, "type");
+    }
+    const int n = std::min(d.buf.lineCount(), 30000);
+    for (int i = 0; i < n && items.size() < 400; ++i) {
+        const std::string& l = d.buf.line(i);
+        for (std::size_t p = 0; p < l.size();) {
+            if (!identChar(l[p]) || std::isdigit(static_cast<unsigned char>(l[p]))) { ++p; continue; }
+            std::size_t e = p;
+            while (e < l.size() && identChar(l[e])) ++e;
+            if (!(i == d.cursor.line && static_cast<int>(p) == a)) consider(l.substr(p, e - p), 1, "word");
+            p = e;
+        }
+    }
+    if (items.empty()) return;
+    showCompletion(std::move(items), d.cursor);
+    if (comp_.open) comp_.local = true;
 }
 
 void App::requestSignature() {
