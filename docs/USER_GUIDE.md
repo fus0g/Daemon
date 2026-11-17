@@ -68,6 +68,11 @@ of other languages open for reading and editing but cannot be run.
 
 `daemon --nb-run in.dcxxnb [out.dcxxnb]` runs all cells without a window and writes the outputs (handy for CI).
 
+### Parameter hints in the text
+In C/C++ files each argument of a call gets the parameter's name in a small grey label in front of it (`flags:`, `title:`, `w:`),
+so a call reads without opening the declaration. Settings > Editor: Parameter name hints and Type hints (the deduced type after
+`auto`). The labels belong to the display, not to the file; the line you are typing on shows none until clangd has caught up.
+
 ### GLSL shaders
 Files with a shader extension (`.vert`, `.frag`, `.comp`, `.glsl`, `.rgen`, ... also `shader.vert.glsl`) open as GLSL with their own
 completion, parameter hints, hover, F12 and structure view. The shader stage comes from the extension or from a
@@ -132,7 +137,7 @@ keys are left alone. A coloured label means the value is not the default; the ar
 
 | Section | Settings |
 |---|---|
-| Editor | font size, tab width, indent with spaces, detect indentation, close brackets and quotes, minimap, breadcrumbs, blinking cursor, reload changed files |
+| Editor | parameter name hints, type hints, font size, tab width, indent with spaces, detect indentation, close brackets and quotes, minimap, breadcrumbs, blinking cursor, reload changed files |
 | Appearance | interface font size, animations, start maximized (restart) |
 | General | reopen the last project, restore open tabs |
 | Git | change markers, inline blame |

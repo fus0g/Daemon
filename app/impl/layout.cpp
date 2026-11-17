@@ -388,7 +388,7 @@ void App::ensureCursorVisible(Document& d) {
     float cy = static_cast<float>(d.cursor.line) * lh();
     if (cy - margin < d.targetY) d.targetY = std::max(0.0f, cy - margin);
     else if (cy + lh() + margin > d.targetY + e.h) d.targetY = cy + lh() + margin - e.h;
-    float cx = static_cast<float>(displayCol(d.buf.line(d.cursor.line), d.cursor.col, d.tabWidth)) * cw();
+    float cx = colX(d, d.cursor.line, d.cursor.col);
     if (cx < d.scrollX) d.scrollX = std::max(0.0f, cx - 6 * cw());
     else if (cx + 2 * cw() > d.scrollX + L_.textW) d.scrollX = cx + 2 * cw() - L_.textW + 6 * cw();
 }
@@ -397,7 +397,7 @@ Pos App::posAt(Document& d, float mx, float my) const {
     float y = my - L_.editor.y + std::round(d.scrollY);
     int line = std::clamp(static_cast<int>(std::floor(y / lh())), 0, d.buf.lineCount() - 1);
     float x = mx - L_.textX + std::round(d.scrollX);
-    int dcol = std::max(0, static_cast<int>(std::floor(x / cw() + 0.5f)));
+    const int dcol = dcolFromX(d, line, x);
     return {line, byteColAt(d.buf.line(line), dcol, d.tabWidth)};
 }
 

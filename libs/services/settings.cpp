@@ -33,6 +33,8 @@ const std::vector<Def>& defs() {
         v.push_back(boolean("editor.insertSpaces", "Editor", "Indent with spaces", "Tab and the indent commands insert spaces instead of tab characters.", true));
         v.push_back(boolean("editor.detectIndent", "Editor", "Detect indentation", "Use the tabs or spaces a file already uses; these settings apply to new and unclear files.", true));
         v.push_back(boolean("editor.autoPair", "Editor", "Close brackets and quotes", "Typing ( [ { \" ' also types the closing character.", true));
+        v.push_back(boolean("inlay.parameters", "Editor", "Parameter name hints", "Show the name of each parameter in front of the argument in a call, e.g. `SDL_Init(flags: SDL_INIT_VIDEO)` (from clangd).", true));
+        v.push_back(boolean("inlay.types", "Editor", "Type hints", "Show the deduced type after `auto` variables.", false));
         v.push_back(boolean("editor.minimap", "Editor", "Minimap", "Show the code overview at the right edge of the editor.", true));
         v.push_back(boolean("editor.breadcrumbs", "Editor", "Breadcrumbs", "Show the path of the file above the code.", true));
         v.push_back(boolean("editor.cursorBlink", "Editor", "Blinking cursor", "The caret blinks while you are idle.", true));

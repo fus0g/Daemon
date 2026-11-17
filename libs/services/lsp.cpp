@@ -86,6 +86,7 @@ std::expected<void, std::string> LspClient::start(std::vector<std::string> argv,
     textDoc.set("hover", json::object().set("contentFormat", json::array().push("plaintext")));
     textDoc.set("publishDiagnostics", json::object());
     textDoc.set("definition", json::object().set("linkSupport", false));
+    textDoc.set("inlayHint", json::object());
     textDoc.set("documentSymbol", json::object().set("hierarchicalDocumentSymbolSupport", true));
     params.set("capabilities", json::object().set("textDocument", textDoc).set("workspace", json::object()));
     request("initialize", std::move(params), [this](const json::Value&, bool error) {
@@ -226,6 +227,30 @@ int LspClient::documentSymbols(const std::string& path, std::function<void(std::
                 return s;
             };
             for (const auto& v : *r.array()) out.push_back(conv(v));
+        }
+        cb(std::move(out));
+    });
+}
+
+int LspClient::inlayHints(const std::string& path, int firstLine, int lastLine, std::function<void(std::vector<LspInlay>)> cb) {
+    auto range = json::object();
+    range.set("start", json::object().set("line", firstLine).set("character", 0));
+    range.set("end", json::object().set("line", lastLine + 1).set("character", 0));
+    json::Value params = json::object().set("textDocument", json::object().set("uri", pathToUri(path))).set("range", range);
+    return request("textDocument/inlayHint", std::move(params), [cb = std::move(cb)](const json::Value& r, bool err) {
+        std::vector<LspInlay> out;
+        if (!err && r.isArray()) {
+            for (const auto& h : *r.array()) {
+                LspInlay x;
+                x.line = h["position"]["line"].integer();
+                x.col = h["position"]["character"].integer();
+                x.kind = h["kind"].integer();
+                x.padLeft = h["paddingLeft"].boolean();
+                x.padRight = h["paddingRight"].boolean();
+                if (h["label"].isString()) x.label = h["label"].str();
+                else if (auto* parts = h["label"].array()) for (const auto& p : *parts) x.label += p["value"].str();
+                if (!x.label.empty()) out.push_back(std::move(x));
+            }
         }
         cb(std::move(out));
     });

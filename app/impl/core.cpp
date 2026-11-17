@@ -253,7 +253,7 @@ void App::stepScript() {
         if (tok == "hover" && !docs_.empty()) {  // test hook: hover the text cursor
             layout();
             Document& hd = doc();
-            mx_ = L_.textX - std::round(hd.scrollX) + (static_cast<float>(displayCol(hd.buf.line(hd.cursor.line), hd.cursor.col, hd.tabWidth)) + 0.5f) * cw();
+            mx_ = L_.textX - std::round(hd.scrollX) + colX(hd, hd.cursor.line, hd.cursor.col) + 0.5f * cw();
             my_ = L_.editor.y + (static_cast<float>(hd.cursor.line) + 0.5f) * lh() - std::round(hd.scrollY);
             hover_ = {};
             hover_.pos = hd.cursor;
@@ -455,6 +455,7 @@ std::optional<Clock::time_point> App::nextWake() const {
     if (lsp_ && healTries_ < 3 && nextHeal_ != Clock::time_point{}) consider(nextHeal_);
     if (hover_.pending) consider(hover_.due);
     if (auto ow = outlineWake()) consider(*ow);
+    if (auto iw = inlayWake()) consider(*iw);
     if (auto gw = glslWake()) consider(*gw);
     if (compInFlight_ && compLocalDue_ != Clock::time_point{}) consider(compLocalDue_);
     consider(nextSettingsCheck_ > Clock::now() ? nextSettingsCheck_ : Clock::now() + std::chrono::milliseconds(1500));
@@ -539,6 +540,7 @@ void App::update(Clock::time_point now, float dt) {
     barTick(now);
     settingsPoll(now);
     outlineTick(now);
+    inlayTick(now);
     glslTick(now);
     if (compInFlight_ && compLocalDue_ != Clock::time_point{} && now >= compLocalDue_) { compLocalDue_ = {}; showLocalCompletion(); }
     pollTasks();
@@ -572,7 +574,7 @@ bool App::chaseEdges(float& lo, float& hi, float tlo, float thi, float dt, float
 bool App::stepCaret(const Document& d, float dt) {
     const float cell = cw(), line = lh(), s = S();
     const float w = std::max(2.0f, std::round(1.6f * s));
-    const float tx = static_cast<float>(displayCol(d.buf.line(d.cursor.line), d.cursor.col, d.tabWidth)) * cell;
+    const float tx = colX(d, d.cursor.line, d.cursor.col);
     const float ty = static_cast<float>(d.cursor.line) * line + 1;
     const float tyb = ty + line - 2;
     const bool reset = !caret_.init || caret_.doc != &d || caret_.cell != cell || caret_.line != line ||

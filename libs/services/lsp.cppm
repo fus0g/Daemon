@@ -47,6 +47,14 @@ struct LspSymbol {
     std::vector<LspSymbol> kids;
 };
 
+// textDocument/inlayHint: small labels clangd wants shown inside the text (`flags:` in front of an argument, `: int` after an `auto`).
+struct LspInlay {
+    int line = 0, col = 0;     // LSP coordinates
+    std::string label;
+    int kind = 0;              // 1 type, 2 parameter
+    bool padLeft = false, padRight = false;
+};
+
 struct LspLocation {
     std::string path;
     int line = 0, col = 0;  // LSP coordinates
@@ -133,6 +141,8 @@ public:
     int documentSymbols(const std::string& path, std::function<void(std::vector<LspSymbol>)> cb);
 
     // Returns the request id (for cancel()). An empty result means the cursor is not inside a call.
+    int inlayHints(const std::string& path, int firstLine, int lastLine, std::function<void(std::vector<LspInlay>)> cb);
+
     int signatureHelp(const std::string& path, int line, int col, std::function<void(LspSignatureHelp)> cb);
 
     // clangd extension: the matching header for a source file and vice versa.

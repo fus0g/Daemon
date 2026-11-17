@@ -196,6 +196,7 @@ void App::closeTab(int i, bool force) {
     previews_.erase(closingDoc);
     eraseNotebook(closingDoc);
     outlines_.erase(closingDoc);
+    inlays_.erase(closingDoc);
     if (isGlslDoc(*closingDoc)) { glsl_.erase(closingDoc); diags_.erase(closingDoc->path); }
     if (closingDoc->lang && closingDoc->lang->rawStrings) { glsl_.erase(closingDoc); embDiags_.erase(closingDoc->path); }
     lspDetach(*docs_[static_cast<std::size_t>(i)]);

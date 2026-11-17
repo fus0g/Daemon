@@ -142,6 +142,25 @@ private:
     void closeSignature() { if (sig_.open) { sig_ = {}; dirty_ = true; } ++sigSeq_; }
     void drawSignature();
     bool anchorPoint(const Document* owner, Pos p, float& x, float& top);   // screen position of a text position (editor or notebook cell)
+    // ---- inlay hints (app/impl/inlay_view.cpp): parameter names in front of arguments, drawn inside the line
+    struct InlayHint { int col = 0, kind = 2; std::string text; mutable float w = 0, wFor = 0; };   // col: byte column; w: pixels it takes (cached for the font size wFor)
+    struct InlayData {
+        std::map<int, std::vector<InlayHint>> byLine;
+        std::uint64_t version = ~0ull, askedVersion = ~0ull, dueVersion = ~0ull;
+        int lines = 0, from = 0, to = -1;
+        Clock::time_point due{};
+        bool busy = false, ready = false;
+    };
+    std::unordered_map<const Document*, InlayData> inlays_;
+    const std::vector<InlayHint>* inlayLine(const Document& d, int line) const;   // null when there are none, or the line is being edited
+    float inlayW(const InlayHint& h) const;
+    float inlayShift(const Document& d, int line, int byteCol) const;            // how far the hints in front of the column push the text
+    float colX(const Document& d, int line, int byteCol) const;                   // x of a column relative to the text origin, hints included
+    int dcolFromX(const Document& d, int line, float x) const;                    // the inverse: the display column under an x
+    void inlayTick(Clock::time_point now);
+    std::optional<Clock::time_point> inlayWake() const;
+    void drawInlay(const InlayHint& h, float x, float y);
+
     // ---- structure view (app/impl/outline_view.cpp): the symbols of the current file under the explorer
     struct OutlineRow { std::string name, detail, key; int kind = 0, line = 0, col = 0, endLine = 0, depth = 0; bool hasKids = false; };
     struct OutlineData {

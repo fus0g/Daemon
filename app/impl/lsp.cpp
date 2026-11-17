@@ -808,7 +808,7 @@ bool App::anchorPoint(const Document* owner, Pos p, float& x, float& top) {
         return false;
     }
     if (owner != &active) return false;
-    x = L_.textX - std::round(active.scrollX) + static_cast<float>(displayCol(active.buf.line(p.line), p.col, active.tabWidth)) * cell;
+    x = L_.textX - std::round(active.scrollX) + colX(active, p.line, p.col);
     top = L_.editor.y + static_cast<float>(p.line) * line - std::round(active.scrollY);
     return true;
 }
@@ -913,7 +913,7 @@ void App::drawCompletion() {
         y = top + line + 2 * s;
         if (y + h > L_.editor.bottom() && top - h - 2 * s >= nbv->viewTop) y = top - h - 2 * s;   // above the line, unless that would cover the toolbar
     } else {
-        x = L_.textX - sx + static_cast<float>(displayCol(d.buf.line(comp_.anchor.line), comp_.anchor.col, d.tabWidth)) * cell - iconW;
+        x = L_.textX - sx + colX(d, comp_.anchor.line, comp_.anchor.col) - iconW;
         y = L_.editor.y + static_cast<float>(comp_.anchor.line + 1) * line - sy + 2 * s;
         if (y + h > L_.editor.bottom()) y = L_.editor.y + static_cast<float>(comp_.anchor.line) * line - sy - h - 2 * s;  // flip above
     }

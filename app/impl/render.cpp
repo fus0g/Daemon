@@ -382,15 +382,15 @@ void App::drawEditor(Document& d) {
         if (dbgLine_.line > 0 && dbgLine_.line - 1 == ln && dbgLine_.file == d.path) fill(e.x, y, e.w, line, Color::rgb(0xe5c07b, 38));
         if (showMatches)
             for (int c : findAll(str, findText_, matchCase_)) {
-                float x0 = baseX + static_cast<float>(displayCol(str, c, d.tabWidth)) * cell;
-                float x1 = baseX + static_cast<float>(displayCol(str, c + static_cast<int>(findText_.size()), d.tabWidth)) * cell;
+                float x0 = baseX + colX(d, ln, c);
+                float x1 = baseX + colX(d, ln, c + static_cast<int>(findText_.size()));
                 fill(x0, y + 1, x1 - x0, line - 2, theme::match, 3 * s);
             }
         if (hasSel && ln >= selA.line && ln <= selB.line) {
             int c0 = ln == selA.line ? selA.col : 0;
             int c1 = ln == selB.line ? selB.col : static_cast<int>(str.size());
-            float x0 = baseX + static_cast<float>(displayCol(str, c0, d.tabWidth)) * cell;
-            float x1 = baseX + static_cast<float>(displayCol(str, c1, d.tabWidth)) * cell;
+            float x0 = baseX + colX(d, ln, c0);
+            float x1 = baseX + colX(d, ln, c1);
             if (ln < selB.line) x1 += cell * 0.6f;
             fill(x0, y, x1 - x0, line, focused_ && drawActive_ ? theme::selection : theme::selectionIdle);
         }
@@ -399,7 +399,7 @@ void App::drawEditor(Document& d) {
         for (Pos p : {bracket->first, bracket->second}) {
             if (p.line < first || p.line > last) continue;
             const std::string& str = d.buf.line(p.line);
-            float x = baseX + static_cast<float>(displayCol(str, p.col, d.tabWidth)) * cell;
+            float x = baseX + colX(d, p.line, p.col);
             float y = e.y + static_cast<float>(p.line) * line - sy, t = std::max(1.0f, std::round(s));
             fill(x, y, cell, t, theme::bracket); fill(x, y + line - t, cell, t, theme::bracket);
             fill(x, y, t, line, theme::bracket); fill(x + cell - t, y, t, line, theme::bracket);
@@ -424,8 +424,11 @@ void App::drawEditor(Document& d) {
                 for (int g = 0; g < cols / d.tabWidth; ++g)
                     fill(baseX + static_cast<float>(g * d.tabWidth) * cell, y, std::max(1.0f, std::round(s * 0.5f)), line, theme::guide);
         }
+        const auto* hints = inlayLine(d, ln);
+        std::size_t hi = 0;
         for (std::size_t i = 0; i < str.size() && x < right;) {
             const std::size_t start = i;
+            while (hints && hi < hints->size() && (*hints)[hi].col <= static_cast<int>(start)) { drawInlay((*hints)[hi], x, y); x += inlayW((*hints)[hi]); ++hi; }
             char32_t cp = decodeUtf8(str, i);
             if (cp == '\t') {
                 int adv = d.tabWidth - dcol % d.tabWidth;
@@ -440,6 +443,7 @@ void App::drawEditor(Document& d) {
             x += cell;
             ++dcol;
         }
+        while (hints && hi < hints->size() && x < right) { drawInlay((*hints)[hi], x, y); x += inlayW((*hints)[hi]); ++hi; }   // hints at the end of the line
     }
 
     // Diagnostics: squiggles under the offending text; the worst severity per line marks the gutter.
@@ -452,8 +456,8 @@ void App::drawEditor(Document& d) {
                 int sc = ln == dg.line ? byteColFromUtf16(str, dg.col) : static_cast<int>(std::min(str.find_first_not_of(" \t"), str.size()));
                 int ec = ln == dg.endLine ? byteColFromUtf16(str, dg.endCol) : static_cast<int>(str.size());
                 if (ec <= sc) ec = static_cast<int>(utf8Next(str, static_cast<std::size_t>(sc)));
-                float x0 = baseX + static_cast<float>(displayCol(str, sc, d.tabWidth)) * cell;
-                float x1 = std::max(x0 + cell, baseX + static_cast<float>(displayCol(str, ec, d.tabWidth)) * cell);
+                float x0 = baseX + colX(d, ln, sc);
+                float x1 = std::max(x0 + cell, baseX + colX(d, ln, ec));
                 const float y = e.y + static_cast<float>(ln + 1) * line - sy - std::round(3.5f * s);
                 const float step = std::max(2.0f, std::round(2.0f * s)), th = std::max(1.0f, std::round(1.2f * s));
                 int k = 0;
@@ -476,7 +480,7 @@ void App::drawEditor(Document& d) {
             const std::string& cl = d.buf.line(d.cursor.line);
             const float by = e.y + static_cast<float>(d.cursor.line) * line - sy;
             const float limit = (L_.minimap.w > 0 ? L_.minimap.x : e.right()) - 14 * s;
-            const float bx = baseX + static_cast<float>(displayCol(cl, static_cast<int>(cl.size()), d.tabWidth) + 3) * cell;
+            const float bx = baseX + colX(d, d.cursor.line, static_cast<int>(cl.size())) + 3 * cell;
             if (by > e.y - line && by < e.bottom() && bx < limit - 14 * cell) {
                 std::string t = blameText(*bc);
                 const std::size_t maxCells = static_cast<std::size_t>((limit - bx) / cell);

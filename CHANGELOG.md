@@ -5,6 +5,11 @@ project uses [Semantic Versioning](https://semver.org/) (see `docs/RELEASING.md`
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-17
+
+### Added
+- Parameter name hints (inlay hints) in C/C++: in a call, a small grey label with the parameter's name sits in front of each argument, as in the JetBrains IDEs - `SDL_Init(flags: SDL_INIT_VIDEO)`. The text after a label moves aside, and selection, caret, squiggles, completion popup and mouse clicks all take the labels into account. The hints come from clangd for the visible lines, refresh a moment after you stop typing, and are hidden on the line you are editing. Settings > Editor: Parameter name hints (on), Type hints (the deduced type after `auto`, off).
+
 ## [0.9.1] - 2026-11-17
 
 ### Changed
@@ -142,7 +147,8 @@ First tagged release.
 ### Performance
 - Prefers the integrated GPU, frame-paced presentation, bounded clangd resource use, idle editor does not wake up.
 
-[Unreleased]: https://example.invalid/compare/v0.9.1...HEAD
+[Unreleased]: https://example.invalid/compare/v0.10.0...HEAD
+[0.10.0]: https://example.invalid/compare/v0.9.1...v0.10.0
 [0.9.1]: https://example.invalid/compare/v0.9.0...v0.9.1
 [0.9.0]: https://example.invalid/compare/v0.8.0...v0.9.0
 [0.8.0]: https://example.invalid/compare/v0.7.0...v0.8.0
