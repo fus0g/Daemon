@@ -605,7 +605,9 @@ void App::revealInSidebar() {
 
 void App::updateTitle() {
     if (docs_.empty()) return;
-    std::string t = doc().name + (doc().modified() ? " *" : "") + " - Daemon";
+    // The window's name (task switcher, overview) is the project, not whichever file is open; without a project, the file.
+    const bool unsaved = std::ranges::any_of(docs_, [](const auto& d) { return d->modified(); });
+    std::string t = (explorer_.isOpen() ? explorer_.rootName() : doc().name) + (unsaved ? " *" : "") + " - Daemon";
     if (t != lastTitle_) { lastTitle_ = t; win_.setTitle(t); }
 }
 
